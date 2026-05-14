@@ -14,4 +14,5 @@ public interface ICompanyRepository
     void SetInterestLevel(int id, InterestLevel level);
     void SetLastScan(int id, DateTime when);
     void SetAtsInfo(int id, string? atsType, string? atsSlug, string? careersUrl);
+    Jobnet.Models.CompanyProfile? GetProfile(int companyId);
 }
