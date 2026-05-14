@@ -20,6 +20,7 @@ public partial class MainWindowViewModel : ObservableObject
     private readonly IJobDataService _data;
     private readonly IDiscoveryService? _discovery;
     private readonly Func<SettingsWindow>? _settingsWindowFactory;
+    private readonly Func<CompanyProfileWindow>? _profileWindowFactory;
     private List<JobViewModel> _allJobs = new();
 
     public ObservableCollection<CompanyViewModel> Companies { get; } = new();
@@ -50,11 +51,13 @@ public partial class MainWindowViewModel : ObservableObject
 
     public MainWindowViewModel(IJobDataService data,
                                 IDiscoveryService? discovery = null,
-                                Func<SettingsWindow>? settingsWindowFactory = null)
+                                Func<SettingsWindow>? settingsWindowFactory = null,
+                                Func<CompanyProfileWindow>? profileWindowFactory = null)
     {
         _data = data;
         _discovery = discovery;
         _settingsWindowFactory = settingsWindowFactory;
+        _profileWindowFactory = profileWindowFactory;
 
         CompaniesView = CollectionViewSource.GetDefaultView(Companies);
         CompaniesView.Filter = FilterCompany;
@@ -204,5 +207,15 @@ public partial class MainWindowViewModel : ObservableObject
         var window = _settingsWindowFactory();
         window.Owner = Application.Current.MainWindow;
         window.ShowDialog();
+    }
+
+    public void OpenCompanyProfile(int companyId)
+    {
+        if (_profileWindowFactory is null) return;
+        var window = _profileWindowFactory();
+        if (window.DataContext is CompanyProfileViewModel vm)
+            vm.Load(companyId);
+        window.Owner = Application.Current.MainWindow;
+        window.Show();
     }
 }

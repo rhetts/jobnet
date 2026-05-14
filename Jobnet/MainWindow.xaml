@@ -89,7 +89,8 @@
                          ItemContainerStyle="{StaticResource CompanyItem}"
                          BorderThickness="0"
                          Background="Transparent"
-                         ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                         MouseDoubleClick="CompanyList_MouseDoubleClick">
                     <ListBox.ItemTemplate>
                         <DataTemplate DataType="{x:Type vm:CompanyViewModel}">
                             <Grid Margin="12,8">

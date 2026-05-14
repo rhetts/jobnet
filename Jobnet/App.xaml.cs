@@ -56,6 +56,10 @@ public partial class App : Application
                 services.AddTransient<SettingsViewModel>();
                 services.AddTransient<Views.SettingsWindow>();
                 services.AddSingleton<Func<Views.SettingsWindow>>(sp => () => sp.GetRequiredService<Views.SettingsWindow>());
+
+                services.AddTransient<CompanyProfileViewModel>();
+                services.AddTransient<Views.CompanyProfileWindow>();
+                services.AddSingleton<Func<Views.CompanyProfileWindow>>(sp => () => sp.GetRequiredService<Views.CompanyProfileWindow>());
             })
             .Build();
     }
