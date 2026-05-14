@@ -1,6 +1,6 @@
 # Jobnet — Requirements Document
 
-**Version:** 0.4 (Phase 4 — Brave Search discovery, API usage tracking)
+**Version:** 0.6 (Phase 5/6 — ATS detection + adapters, Claude Haiku, company profiler)
 **Last Updated:** 2026-05-14
 **Purpose:** Living requirements document. Update as decisions are made and scope evolves.
 
@@ -529,6 +529,13 @@ CREATE INDEX idx_page_fetches_sha    ON page_fetches(content_sha256);
 | 38 | Discovery vs. job refresh API quota | Discovery uses Brave Search (default) or Google CSE. Job refresh uses ATS APIs or direct HTTP. Quota tracker covers both. |
 | 39 | Discovery URL filtering | `DomainExtractor` skips ~50 well-known non-company domains: job aggregators, social, news, B2B review sites (clutch, goodfirms, themanifest, designrush, sortlist, g2, capterra), startup directories (topstartups, getlatka, builtin), industry directories (gamecompanies, cloudtango), lead-gen scrapers (aeroleads, zoominfo), gov/edu (canada.ca, gc.ca, bcit.ca, vcc.ca, bcsc.bc.ca, etc.). Matcher uses hostname-suffix matching so `bcsc.bc.ca` is skipped without false-matching real `*.bc.ca` companies. |
 | 40 | Bad-result cleanup | `companies-delete` CLI handles cleanup: by domain, by ID, `--discovered-today` (bulk), `--all` (wipe). Cascades to jobs and job_areas. |
+| 41 | Rate limiting | Per-provider min-delay enforced by `RateLimiter`. Configurable via `api_min_delay_ms.{provider}`. Defaults: Brave 1100ms (free tier's 1qps), Google 500ms, ATS APIs 300ms, Claude 100ms, generic http_fetch 500ms. Threadsafe via per-provider semaphore. |
+| 42 | Claude API | Direct HTTP to api.anthropic.com/v1/messages, model alias `claude-haiku-4-5`. API key in `claude_api_key` config. Used for: classifier fallback when heuristic has no match, and company profiler. Graceful degradation: empty key → service returns Source=none, profile-company errors out cleanly. |
+| 43 | ATS detection slug-guess | When a careers page hints at an ATS (e.g. `data-api="ashby"`) but the slug isn't in the static HTML, guess from domain stem / no-dash variant / name-based, then verify by calling the ATS's public API. Klue → confirmed via this path. |
+| 44 | Company profiles | `companies` table extended with 8 profile columns (summary, products[], industries[], tech_signals[], hq_hint, size_hint, generated_at, model). CompanyProfiler fetches homepage + /about, strips HTML (regex), sends ≤8KB to Haiku with strict-JSON schema, parses + persists. UI: double-click company in main view to open CompanyProfileWindow. |
+| 45 | ATS adapters cardinality | One adapter per ATS implements `IAtsJobSource`. `JobRefresher` orchestrates: enumerate companies with detected ATS, dispatch to adapter, classify each title (heuristic→Claude), upsert with hash tier 1 (`<ats>:<native_id>`), mark previously-active-now-missing jobs as removed. |
+| 46 | Field normalization at refresh boundary | ATS APIs return varied employment_type / remote_type strings ("FullTime", "Full-time", "On-Site"). `JobRefresher` normalizes to the schema's CHECK enum values before insert. |
+| 47 | Self-test suite | `test` CLI runs 37 assertions across classifier, DomainExtractor, RateLimiter, migrations, pragmas. Exits 0 on pass, 1 on any failure. Reuse for CI when set up. |
 
 ## 9. Remaining Open Questions
 
@@ -549,12 +556,15 @@ Build sequence (each phase produces something runnable):
 | 3.6 | Heuristic classifier + Claude Haiku fallback stub; `classify` CLI command | ✅ done |
 | 4 | Company discovery via **Brave Search** (Google CSE fallback); `discover` CLI; `DomainExtractor` skip-list; auth/quota fast-abort | ✅ done |
 | 4.5 | API usage tracker (`api_usage` table) with per-provider soft caps; `usage` CLI; warning event when caps cross | ✅ done |
-| 5 | ATS detection: redirect-follow + HTML fingerprinting, slug extraction, parser assignment | next |
-| 6 | ATS API adapters: Greenhouse, Lever, Ashby, Workable, SmartRecruiters |  |
-| 7 | Claude integration: Playwright fetch → HTML strip → Claude CLI subprocess → JSON parse. Wire `ClaudeHaikuClassifier` fallback. |  |
-| 8 | Refresh pipeline: tie phases 5-7 together, hashing, diff/upsert, scan_log, page_fetches cache |  |
-| 9 | Job classification on insert (heuristic → Haiku fallback); apply level_id + areas |  |
-| 10 | Filters, interest marking, refresh log UI, polish |  |
+| 4.6 | Rate limiter (per-provider min-delay); self-test CLI (`test`) with 37 assertions; `companies-delete` cleanup CLI | ✅ done |
+| 5 | ATS detection: HTTP fetch + redirect follow + HTML fingerprint + slug-guess-and-verify against ATS API. Supports Greenhouse / Lever / Ashby / Workable / SmartRecruiters / Recruitee. `detect-ats <domain> \| --all \| --missing` | ✅ done |
+| 6 | Claude Haiku API client (replaces stub); real `ClaudeHaikuClassifier` with closed-taxonomy prompts; `test-claude` CLI | ✅ done |
+| 6.5 | Company profiler: HtmlTextExtractor + Haiku summarizes homepage/about; CompanyProfile model + 8 new DB columns; `profile-company <domain> \| --all-missing` CLI; CompanyProfileWindow opened via double-click | ✅ done |
+| 6.6 | ATS API adapters: Greenhouse, Lever, Ashby. `IJobRefresher` orchestrates fetch + classify + upsert + mark-removed; `refresh-jobs [--company X]` CLI; GUI Refresh Jobs button wired | ✅ done |
+| 7 | Playwright headless browser for non-API ATS detection; HTML strip + Claude extraction for free-form careers pages | next |
+| 8 | Refresh pipeline polish: scheduled background runs, scan_log UI, page_fetches cache for Claude calls |  |
+| 9 | Right-click context menus (Mark Interesting / Open / Copy), click-to-open-in-browser on jobs, filter UI |  |
+| 10 | Filter UI for area/level multiselect, interest level dropdown, search across descriptions; status bar polish |  |
 
 ### CLI command reference (current)
 
@@ -575,3 +585,8 @@ Build sequence (each phase produces something runnable):
 | `discover [--pages N]` | Run company discovery via the configured search engine |
 | `usage` | Show today's API call counts vs. soft caps |
 | `seed-fake` | Populate DB with fake test data (idempotent) |
+| `test` | Run the self-test suite (classifier + DomainExtractor + RateLimiter + migrations) — exit 0/1 |
+| `test-claude` | Verify Claude API key with a tiny round-trip |
+| `detect-ats <domain> \| --all \| --missing` | Detect which ATS a company uses (Greenhouse/Lever/Ashby/Workable/SmartRecruiters/Recruitee) |
+| `profile-company <domain> \| --all-missing` | Generate a Claude Haiku company profile from homepage + /about |
+| `refresh-jobs [--company X]` | Fetch jobs from ATS APIs and upsert; auto-classify on insert |
