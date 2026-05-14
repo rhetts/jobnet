@@ -1,0 +1,24 @@
+# .NET build output
+bin/
+obj/
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.userprefs
+*.cache
+
+# Rider / VS Code
+.idea/
+.vscode/
+
+# Test artifacts / local screenshots
+screenshot*.png
+
+# Logs
+*.log
+
+# OS junk
+Thumbs.db
+.DS_Store
