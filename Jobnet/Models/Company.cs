@@ -11,6 +11,7 @@ public sealed class Company
     public string? CareersUrl { get; init; }
     public string? City { get; init; }
     public string? AtsType { get; init; }
+    public string? AtsSlug { get; init; }
     public string? Notes { get; init; }
     public InterestLevel InterestLevel { get; set; }
     public DateTime DateDiscovered { get; init; }

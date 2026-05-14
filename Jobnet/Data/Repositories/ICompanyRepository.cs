@@ -13,4 +13,5 @@ public interface ICompanyRepository
     void Update(Company company);
     void SetInterestLevel(int id, InterestLevel level);
     void SetLastScan(int id, DateTime when);
+    void SetAtsInfo(int id, string? atsType, string? atsSlug, string? careersUrl);
 }

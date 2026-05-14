@@ -45,6 +45,12 @@ internal static class ServiceRegistration
         services.AddSingleton<Discovery.ISearchClient, Discovery.RoutingSearchClient>();
         services.AddSingleton<Discovery.IDiscoveryService, Discovery.DiscoveryService>();
 
+        services.AddHttpClient<AtsDetection.IAtsDetector, AtsDetection.AtsDetector>(client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(12);
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (compatible; Jobnet/0.5; +https://github.com/jobnet)");
+        });
+
         services.AddSingleton<IJobDataService, SqliteJobDataService>();
         services.AddSingleton<FakeJobDataService>(); // for seed-fake command only
         return services;

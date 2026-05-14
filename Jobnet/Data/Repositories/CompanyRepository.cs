@@ -106,6 +106,16 @@ public sealed class CompanyRepository : ICompanyRepository
             new { id, when = when.ToUniversalTime().ToString("o") });
     }
 
+    public void SetAtsInfo(int id, string? atsType, string? atsSlug, string? careersUrl)
+    {
+        using var conn = _connections.Open();
+        conn.Execute(@"
+            UPDATE companies SET ats_type = @atsType, ats_slug = @atsSlug,
+                                 careers_url = COALESCE(@careersUrl, careers_url)
+            WHERE id = @id",
+            new { id, atsType, atsSlug, careersUrl });
+    }
+
     private static Company MapToCompany(CompanyRow r) => new()
     {
         Id = r.Id,
@@ -114,6 +124,7 @@ public sealed class CompanyRepository : ICompanyRepository
         WebsiteUrl = r.WebsiteUrl,
         CareersUrl = r.CareersUrl,
         AtsType = r.AtsType,
+        AtsSlug = r.AtsSlug,
         City = r.City,
         InterestLevel = ParseInterest(r.InterestLevel),
         DateDiscovered = DateTime.Parse(r.DateDiscovered).ToUniversalTime(),
