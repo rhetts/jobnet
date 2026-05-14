@@ -51,6 +51,12 @@ internal static class ServiceRegistration
             client.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (compatible; Jobnet/0.5; +https://github.com/jobnet)");
         });
 
+        services.AddHttpClient<Claude.IClaudeClient, Claude.ClaudeClient>(client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(60);
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("Jobnet/0.5");
+        });
+
         services.AddSingleton<IJobDataService, SqliteJobDataService>();
         services.AddSingleton<FakeJobDataService>(); // for seed-fake command only
         return services;
