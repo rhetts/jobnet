@@ -54,15 +54,109 @@ public sealed class AtsDetector : IAtsDetector
         (new Regex(@"(?:src|href)=[""']https?://(?<slug>[a-z0-9-]+)\.recruitee\.com",                                                       RegexOptions.IgnoreCase), "recruitee"),
     };
 
+    // Markerless fingerprints — page hints at an ATS but no URL+slug is in the static HTML.
+    // We then try guessing the slug from the company domain and verifying against the ATS public API.
+    private static readonly (Regex Pattern, string AtsType)[] HintOnlyPatterns =
+    {
+        (new Regex(@"data-api=[""']ashby[""']",                                  RegexOptions.IgnoreCase), "ashby"),
+        (new Regex(@"jsx-jobs-list|gh-board|greenhouse[_-]board|grnhse",          RegexOptions.IgnoreCase), "greenhouse"),
+        (new Regex(@"lever-jobs-list|lever-job-list|leverapp",                    RegexOptions.IgnoreCase), "lever"),
+    };
+
     public async Task<AtsDetectionResult> DetectAsync(Company company, CancellationToken ct = default)
     {
+        // First pass: probe candidate URLs, accept confirmed (URL or HTML pattern with slug).
+        // Track hint-only matches to fall back to slug-guess verification.
+        string? hintOnlyAts = null;
+        string? hintUrl = null;
         foreach (var candidate in CandidateUrls(company))
         {
             ct.ThrowIfCancellationRequested();
             var result = await ProbeUrlAsync(candidate, ct);
-            if (result.AtsType is not null) return result;
+            if (result.AtsType is not null && result.AtsSlug is not null) return result;
+            if (result.AtsType is not null && hintOnlyAts is null)
+            {
+                hintOnlyAts = result.AtsType;
+                hintUrl = result.ResolvedCareersUrl ?? candidate;
+            }
+        }
+
+        // Fallback: hint-only detection. Guess the slug from the domain stem and verify against the ATS API.
+        if (hintOnlyAts is not null)
+        {
+            foreach (var guess in SlugGuesses(company))
+            {
+                var ok = await VerifySlugAsync(hintOnlyAts, guess, ct);
+                if (ok)
+                {
+                    return new AtsDetectionResult
+                    {
+                        AtsType = hintOnlyAts,
+                        AtsSlug = guess,
+                        ResolvedCareersUrl = hintUrl,
+                        Source = "slug_guess_verified",
+                        Notes = $"hint found on page; verified slug '{guess}' against ATS API"
+                    };
+                }
+            }
+            return new AtsDetectionResult
+            {
+                AtsType = hintOnlyAts,
+                AtsSlug = null,
+                ResolvedCareersUrl = hintUrl,
+                Source = "hint_only",
+                Notes = "ATS hint found but slug could not be guessed; manual entry needed"
+            };
         }
         return new AtsDetectionResult { Source = "none", Notes = "no ATS fingerprint found at any candidate URL" };
+    }
+
+    private async Task<bool> VerifySlugAsync(string ats, string slug, CancellationToken ct)
+    {
+        var verifyUrl = ats switch
+        {
+            "greenhouse"      => $"https://boards-api.greenhouse.io/v1/boards/{slug}/jobs",
+            "lever"           => $"https://api.lever.co/v0/postings/{slug}?mode=json&limit=1",
+            "ashby"           => $"https://api.ashbyhq.com/posting-api/job-board/{slug}",
+            "workable"        => $"https://{slug}.workable.com/api/v3/jobs",
+            "smartrecruiters" => $"https://api.smartrecruiters.com/v1/companies/{slug}/postings?limit=1",
+            _                 => null,
+        };
+        if (verifyUrl is null) return false;
+
+        await _rateLimiter.WaitAsync(Provider, ct);
+        _usage.RecordCall(Provider);
+        try
+        {
+            using var resp = await _http.GetAsync(verifyUrl, ct);
+            if (!resp.IsSuccessStatusCode) return false;
+            var body = await resp.Content.ReadAsStringAsync(ct);
+            // Lenient: any 200 with non-empty body is a strong signal. (Empty arrays for inactive boards are still valid.)
+            return body.Length > 10;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>Plausible slug candidates from the company domain — most common ATS slug patterns.</summary>
+    private static IEnumerable<string> SlugGuesses(Company company)
+    {
+        var seen = new HashSet<string>();
+        var stem = company.Domain.Split('.')[0].ToLowerInvariant();   // klue.com → klue, my-company.io → my-company
+        if (seen.Add(stem)) yield return stem;
+
+        // No-dash variant: blackbird-interactive → blackbirdinteractive
+        var nodash = stem.Replace("-", "");
+        if (nodash != stem && seen.Add(nodash)) yield return nodash;
+
+        // Name-based: lowercased, spaces → dashes
+        var nameSlug = (company.Name ?? "").ToLowerInvariant().Replace(" ", "-");
+        if (!string.IsNullOrEmpty(nameSlug) && seen.Add(nameSlug)) yield return nameSlug;
+
+        var nameNoSpace = (company.Name ?? "").ToLowerInvariant().Replace(" ", "");
+        if (!string.IsNullOrEmpty(nameNoSpace) && seen.Add(nameNoSpace)) yield return nameNoSpace;
     }
 
     private async Task<AtsDetectionResult> ProbeUrlAsync(string url, CancellationToken ct)
@@ -124,6 +218,22 @@ public sealed class AtsDetector : IAtsDetector
                     AtsSlug = m.Groups["slug"].Value.ToLowerInvariant(),
                     ResolvedCareersUrl = finalUrl,
                     Source = "html_fingerprint",
+                };
+            }
+        }
+
+        // Markerless hint: page mentions an ATS but has no URL+slug pattern. Return hint so caller can slug-guess.
+        foreach (var (pattern, ats) in HintOnlyPatterns)
+        {
+            if (pattern.IsMatch(body))
+            {
+                return new AtsDetectionResult
+                {
+                    AtsType = ats,
+                    AtsSlug = null,
+                    ResolvedCareersUrl = finalUrl,
+                    Source = "html_hint",
+                    Notes = $"ATS '{ats}' mentioned on page but no slug visible in static HTML"
                 };
             }
         }
