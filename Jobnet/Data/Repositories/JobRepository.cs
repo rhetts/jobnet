@@ -87,6 +87,72 @@ public sealed class JobRepository : IJobRepository
         return jobId;
     }
 
+    public (int Id, bool WasNew) Upsert(Job job, string hashKey, int hashTier)
+    {
+        using var conn = _connections.Open();
+        var existingId = conn.QuerySingleOrDefault<int?>(
+            "SELECT id FROM jobs WHERE hash = @hashKey", new { hashKey });
+
+        if (existingId is null)
+        {
+            var newId = (int)conn.ExecuteScalar<long>(@"
+                INSERT INTO jobs (company_id, hash, hash_tier, title, url, location,
+                                  remote_type, employment_type, level_id,
+                                  description_snippet, salary_range, source, interest_level,
+                                  date_first_seen, date_last_seen, is_active)
+                VALUES (@CompanyId, @HashKey, @HashTier, @Title, @Url, @Location,
+                        @RemoteType, @EmploymentType, @LevelId,
+                        @DescriptionSnippet, @SalaryRange, @Source, @InterestLevelText,
+                        @DateFirstSeenText, @DateLastSeenText, 1);
+                SELECT last_insert_rowid();",
+                new
+                {
+                    job.CompanyId, HashKey = hashKey, HashTier = hashTier,
+                    job.Title, job.Url, job.Location, job.RemoteType, job.EmploymentType,
+                    job.LevelId, job.DescriptionSnippet, job.SalaryRange,
+                    Source = "ats-refresh",
+                    InterestLevelText = ToDbText(job.InterestLevel),
+                    DateFirstSeenText = job.DateFirstSeen.ToUniversalTime().ToString("o"),
+                    DateLastSeenText = job.DateLastSeen.ToUniversalTime().ToString("o"),
+                });
+
+            if (job.AreaIds.Count > 0) _areas.SetAreasForJob(newId, job.AreaIds);
+            return (newId, true);
+        }
+
+        // Existing: bump last_seen, reactivate if removed
+        conn.Execute(@"
+            UPDATE jobs SET
+                date_last_seen = @LastSeen,
+                title = @Title,
+                location = @Location,
+                remote_type = COALESCE(@RemoteType, remote_type),
+                employment_type = COALESCE(@EmploymentType, employment_type),
+                level_id = COALESCE(@LevelId, level_id),
+                description_snippet = COALESCE(@Description, description_snippet),
+                url = COALESCE(@Url, url),
+                is_active = 1,
+                date_removed = NULL
+            WHERE id = @Id",
+            new
+            {
+                Id = existingId.Value,
+                LastSeen = job.DateLastSeen.ToUniversalTime().ToString("o"),
+                job.Title, job.Location, job.RemoteType, job.EmploymentType,
+                job.LevelId, Description = job.DescriptionSnippet, job.Url,
+            });
+        if (job.AreaIds.Count > 0) _areas.SetAreasForJob(existingId.Value, job.AreaIds);
+        return (existingId.Value, false);
+    }
+
+    public IReadOnlyList<int> GetActiveIdsForCompany(int companyId)
+    {
+        using var conn = _connections.Open();
+        return conn.Query<int>(
+            "SELECT id FROM jobs WHERE company_id = @companyId AND is_active = 1",
+            new { companyId }).ToList();
+    }
+
     public void TouchLastSeen(int id, DateTime when)
     {
         using var conn = _connections.Open();

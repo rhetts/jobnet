@@ -10,6 +10,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Jobnet.Models;
 using Jobnet.Services;
+using Jobnet.Services.AtsAdapters;
 using Jobnet.Services.Discovery;
 using Jobnet.Views;
 
@@ -19,6 +20,7 @@ public partial class MainWindowViewModel : ObservableObject
 {
     private readonly IJobDataService _data;
     private readonly IDiscoveryService? _discovery;
+    private readonly IJobRefresher? _refresher;
     private readonly Func<SettingsWindow>? _settingsWindowFactory;
     private readonly Func<CompanyProfileWindow>? _profileWindowFactory;
     private List<JobViewModel> _allJobs = new();
@@ -51,11 +53,13 @@ public partial class MainWindowViewModel : ObservableObject
 
     public MainWindowViewModel(IJobDataService data,
                                 IDiscoveryService? discovery = null,
+                                IJobRefresher? refresher = null,
                                 Func<SettingsWindow>? settingsWindowFactory = null,
                                 Func<CompanyProfileWindow>? profileWindowFactory = null)
     {
         _data = data;
         _discovery = discovery;
+        _refresher = refresher;
         _settingsWindowFactory = settingsWindowFactory;
         _profileWindowFactory = profileWindowFactory;
 
@@ -195,9 +199,28 @@ public partial class MainWindowViewModel : ObservableObject
     }
 
     [RelayCommand(CanExecute = nameof(CanRunBackground))]
-    private void RefreshJobs()
+    private async Task RefreshJobsAsync()
     {
-        StatusBarText = "Refresh Jobs — not yet wired up (Phase 8).";
+        if (_refresher is null) { StatusBarText = "Refresher service not available."; return; }
+        IsBusy = true;
+        StatusBarText = "Refreshing jobs from detected ATS providers...";
+        try
+        {
+            var r = await Task.Run(() => _refresher.RefreshAllAsync()).ConfigureAwait(true);
+            LoadFromDataService();
+            if (r.Errors.Count > 0)
+                StatusBarText = $"Refresh done with errors. {r.CompaniesProcessed} processed, {r.JobsAdded} added, {r.JobsUpdated} updated, {r.JobsRemoved} removed. First error: {r.Errors[0]}";
+            else
+                StatusBarText = $"Refresh complete. {r.CompaniesProcessed} processed, {r.CompaniesSkippedNoAts} skipped (no ATS), {r.JobsAdded} added, {r.JobsUpdated} updated, {r.JobsRemoved} removed.";
+        }
+        catch (Exception ex)
+        {
+            StatusBarText = $"Refresh failed: {ex.GetType().Name}: {ex.Message}";
+        }
+        finally
+        {
+            IsBusy = false;
+        }
     }
 
     [RelayCommand]

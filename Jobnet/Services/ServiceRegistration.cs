@@ -63,6 +63,26 @@ internal static class ServiceRegistration
             client.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (compatible; Jobnet/0.5; +https://github.com/jobnet)");
         });
 
+        services.AddHttpClient<AtsAdapters.GreenhouseJobSource>(client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(15);
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("Jobnet/0.5");
+        });
+        services.AddHttpClient<AtsAdapters.LeverJobSource>(client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(15);
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("Jobnet/0.5");
+        });
+        services.AddHttpClient<AtsAdapters.AshbyJobSource>(client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(15);
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("Jobnet/0.5");
+        });
+        services.AddSingleton<AtsAdapters.IAtsJobSource>(sp => sp.GetRequiredService<AtsAdapters.GreenhouseJobSource>());
+        services.AddSingleton<AtsAdapters.IAtsJobSource>(sp => sp.GetRequiredService<AtsAdapters.LeverJobSource>());
+        services.AddSingleton<AtsAdapters.IAtsJobSource>(sp => sp.GetRequiredService<AtsAdapters.AshbyJobSource>());
+        services.AddSingleton<AtsAdapters.IJobRefresher, AtsAdapters.JobRefresher>();
+
         services.AddSingleton<IJobDataService, SqliteJobDataService>();
         services.AddSingleton<FakeJobDataService>(); // for seed-fake command only
         return services;
