@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Jobnet.Data.Repositories;
 using Jobnet.Services.ApiUsage;
+using Jobnet.Services.RateLimit;
 
 namespace Jobnet.Services.Discovery;
 
@@ -20,12 +21,14 @@ public sealed class GoogleCseClient : ISearchClient
     private readonly HttpClient _http;
     private readonly IConfigRepository _config;
     private readonly IApiUsageTracker _usage;
+    private readonly IRateLimiter _rateLimiter;
 
-    public GoogleCseClient(HttpClient http, IConfigRepository config, IApiUsageTracker usage)
+    public GoogleCseClient(HttpClient http, IConfigRepository config, IApiUsageTracker usage, IRateLimiter rateLimiter)
     {
         _http = http;
         _config = config;
         _usage = usage;
+        _rateLimiter = rateLimiter;
     }
 
     public async Task<IReadOnlyList<SearchResult>> SearchAsync(
@@ -45,6 +48,7 @@ public sealed class GoogleCseClient : ISearchClient
                   $"&q={Uri.EscapeDataString(query)}" +
                   $"&num={pageSize}&start={start}";
 
+        await _rateLimiter.WaitAsync(Provider, ct);
         _usage.RecordCall(Provider);
         var response = await _http.GetAsync(url, ct);
         if (!response.IsSuccessStatusCode)

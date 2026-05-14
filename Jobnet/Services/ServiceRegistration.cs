@@ -30,6 +30,7 @@ internal static class ServiceRegistration
         services.AddSingleton<Classification.IJobClassifier, Classification.CompositeClassifier>();
 
         services.AddSingleton<ApiUsage.IApiUsageTracker, ApiUsage.ApiUsageTracker>();
+        services.AddSingleton<RateLimit.IRateLimiter, RateLimit.RateLimiter>();
 
         services.AddHttpClient<Discovery.GoogleCseClient>(client =>
         {

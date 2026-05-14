@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Jobnet.Data.Repositories;
 using Jobnet.Services.ApiUsage;
+using Jobnet.Services.RateLimit;
 
 namespace Jobnet.Services.Discovery;
 
@@ -20,12 +21,14 @@ public sealed class BraveSearchClient : ISearchClient
     private readonly HttpClient _http;
     private readonly IConfigRepository _config;
     private readonly IApiUsageTracker _usage;
+    private readonly IRateLimiter _rateLimiter;
 
-    public BraveSearchClient(HttpClient http, IConfigRepository config, IApiUsageTracker usage)
+    public BraveSearchClient(HttpClient http, IConfigRepository config, IApiUsageTracker usage, IRateLimiter rateLimiter)
     {
         _http = http;
         _config = config;
         _usage = usage;
+        _rateLimiter = rateLimiter;
     }
 
     public async Task<IReadOnlyList<SearchResult>> SearchAsync(
@@ -44,6 +47,7 @@ public sealed class BraveSearchClient : ISearchClient
         req.Headers.Add("X-Subscription-Token", apiKey);
         req.Headers.Add("Accept", "application/json");
 
+        await _rateLimiter.WaitAsync(Provider, ct);
         _usage.RecordCall(Provider);
         using var response = await _http.SendAsync(req, ct);
         if (!response.IsSuccessStatusCode)
