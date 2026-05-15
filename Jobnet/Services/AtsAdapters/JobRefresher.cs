@@ -15,18 +15,23 @@ namespace Jobnet.Services.AtsAdapters;
 public sealed class JobRefresher : IJobRefresher
 {
     private readonly Dictionary<string, IAtsJobSource> _sources;
+    private readonly AiExtractedJobSource _aiSource;
     private readonly ICompanyRepository _companies;
+    private readonly ICompanyUrlsRepository _urls;
     private readonly IJobRepository _jobs;
     private readonly IAreaRepository _areas;
     private readonly IJobClassifier _classifier;
     private readonly IDbConnectionFactory _connections;
 
-    public JobRefresher(IEnumerable<IAtsJobSource> sources, ICompanyRepository companies,
+    public JobRefresher(IEnumerable<IAtsJobSource> sources, AiExtractedJobSource aiSource,
+                         ICompanyRepository companies, ICompanyUrlsRepository urls,
                          IJobRepository jobs, IAreaRepository areas,
                          IJobClassifier classifier, IDbConnectionFactory connections)
     {
         _sources = sources.ToDictionary(s => s.AtsType, StringComparer.OrdinalIgnoreCase);
+        _aiSource = aiSource;
         _companies = companies;
+        _urls = urls;
         _jobs = jobs;
         _areas = areas;
         _classifier = classifier;
@@ -74,6 +79,9 @@ public sealed class JobRefresher : IJobRefresher
         var added = 0; var updated = 0; var removed = 0;
         var skipped = 0; var failed = 0; var processed = 0;
 
+        // Prune URLs that haven't yielded jobs in 30 days. Keeps the cache clean over time.
+        var prunedUrls = _urls.DeleteStale(notYieldedDays: 30);
+
         var all = _companies.GetAll();
         foreach (var c in all)
         {
@@ -108,37 +116,88 @@ public sealed class JobRefresher : IJobRefresher
 
     private async Task<(int Added, int Updated, int Removed)> RefreshOneAsync(Company company, List<string> errors, CancellationToken ct)
     {
-        IAtsJobSource source;
-        string sourceArg;
+        var allRaw = new List<RawJobPosting>();
+        string sourceType;
 
+        // ── Decision tree ────────────────────────────────────────────────────
+        // 1) Native ATS adapter when we have ats_type + ats_slug
         if (!string.IsNullOrEmpty(company.AtsType) && !string.IsNullOrEmpty(company.AtsSlug)
             && _sources.TryGetValue(company.AtsType, out var native))
         {
-            source = native;
-            sourceArg = company.AtsSlug;
-        }
-        else if (_sources.TryGetValue("ai_extract", out var ai))
-        {
-            // Fallback: Playwright + AI extraction on the careers page (or homepage if nothing else known)
-            source = ai;
-            sourceArg = company.CareersUrl
-                     ?? company.WebsiteUrl
-                     ?? $"https://{company.Domain}/careers";
+            allRaw.AddRange(await native.FetchAsync(company.AtsSlug, ct));
+            sourceType = native.AtsType;
         }
         else
         {
-            throw new NoAdapterException();
+            sourceType = _aiSource.AtsType;
+            var cachedUrls = _urls.GetByCompany(company.Id);
+
+            // 2) Cached job_list URLs — usually the actual jobs page
+            var jobListUrls = cachedUrls.Where(u => u.Kind == UrlKind.JobList).Take(3).ToList();
+            // 3) Cached department URLs — one-level-deep recursive crawl
+            var departmentUrls = cachedUrls.Where(u => u.Kind == UrlKind.Department).Take(10).ToList();
+            // 4) Cached careers_root URLs (fallback within cache)
+            var rootUrls = cachedUrls.Where(u => u.Kind == UrlKind.CareersRoot).Take(2).ToList();
+
+            var urlsToTry = jobListUrls.Concat(departmentUrls).Concat(rootUrls).ToList();
+            if (urlsToTry.Count == 0)
+            {
+                // 5) Full rediscovery — no cache yet, hit the default careers URL
+                var startUrl = company.CareersUrl ?? company.WebsiteUrl ?? $"https://{company.Domain}/careers";
+                try
+                {
+                    var jobs = await _aiSource.FetchForCompanyAsync(company.Id, startUrl, ct);
+                    allRaw.AddRange(jobs);
+                }
+                catch (Exception ex)
+                {
+                    errors.Add($"[{company.Domain}] {ex.Message}");
+                }
+            }
+            else
+            {
+                foreach (var u in urlsToTry)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    try
+                    {
+                        var jobs = await _aiSource.FetchForCompanyAsync(company.Id, u.Url, ct);
+                        if (jobs.Count > 0)
+                        {
+                            allRaw.AddRange(jobs);
+                            // marked yielded inside FetchForCompanyAsync
+                        }
+                        else
+                        {
+                            _urls.RecordFailure(company.Id, u.Url);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _urls.RecordFailure(company.Id, u.Url);
+                        errors.Add($"[{company.Domain} via cached {u.Kind}] {ex.Message}");
+                    }
+                }
+            }
+
+            // Free upgrade: if the network listener saw an ATS API call we recognize, persist it on
+            // the company so subsequent refreshes use the native adapter (faster, no rate limit).
+            UpgradeCompanyAtsIfDetected(company);
         }
 
-        var raw = await source.FetchAsync(sourceArg, ct);
+        // Dedupe by native ID across runs (a department crawl can hit the same job from multiple URLs).
+        var deduped = allRaw
+            .GroupBy(j => j.NativeId, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.First())
+            .ToList();
+
         var added = 0; var updated = 0;
         var seenJobIds = new HashSet<int>();
 
-        foreach (var r in raw)
+        foreach (var r in deduped)
         {
             ct.ThrowIfCancellationRequested();
-            // For native ATS, the type is stable on company.AtsType. For AI fallback, use the source's type.
-            var hashKey = $"{source.AtsType}:{company.Id}:{r.NativeId}";
+            var hashKey = $"{sourceType}:{company.Id}:{r.NativeId}";
             var classified = _classifier.Classify(r.Title, r.Department);
 
             var job = new Job
@@ -179,6 +238,32 @@ public sealed class JobRefresher : IJobRefresher
 
         _companies.SetLastScan(company.Id, DateTime.UtcNow);
         return (added, updated, removedCount);
+    }
+
+    private static readonly System.Text.RegularExpressions.Regex AtsApiUrlRe = new(
+        @"^https?://(?:boards-api\.greenhouse\.io/v1/boards|api\.lever\.co/v0/postings|api\.ashbyhq\.com/posting-api/job-board)/(?<slug>[a-zA-Z0-9-]+)",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>If the company has cached ats_api URLs from a previous network-listener probe but no
+    /// ats_type/ats_slug set, infer them and update the company. Future refreshes skip Playwright.</summary>
+    private void UpgradeCompanyAtsIfDetected(Company company)
+    {
+        if (!string.IsNullOrEmpty(company.AtsType) && !string.IsNullOrEmpty(company.AtsSlug)) return;
+
+        var atsApiUrls = _urls.GetByCompanyAndKind(company.Id, UrlKind.AtsApi);
+        foreach (var u in atsApiUrls)
+        {
+            var m = AtsApiUrlRe.Match(u.Url);
+            if (!m.Success) continue;
+            var atsType = u.Url.Contains("greenhouse.io") ? "greenhouse"
+                        : u.Url.Contains("lever.co")       ? "lever"
+                        : u.Url.Contains("ashbyhq.com")    ? "ashby"
+                        : null;
+            if (atsType is null) continue;
+            var slug = m.Groups["slug"].Value.ToLowerInvariant();
+            _companies.SetAtsInfo(company.Id, atsType, slug, u.Url);
+            return;
+        }
     }
 
     private long StartScanLog(string scope)

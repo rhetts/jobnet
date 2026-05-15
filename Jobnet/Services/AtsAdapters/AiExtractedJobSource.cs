@@ -5,6 +5,8 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
+using Jobnet.Data.Repositories;
+using Jobnet.Models;
 using Jobnet.Services.Ai;
 using Jobnet.Services.Playwright;
 using Jobnet.Services.Profiling;
@@ -14,37 +16,87 @@ namespace Jobnet.Services.AtsAdapters;
 /// <summary>
 /// Fallback job source for companies that don't use a known ATS. Renders the careers page with
 /// Playwright, sends the text + visible anchor links to the AI client, and parses a strict-JSON
-/// job list out of the response.
+/// job list out of the response. Also persists discovered URLs to the company_urls cache.
 /// </summary>
 public sealed class AiExtractedJobSource : IAtsJobSource
 {
-    public string AtsType => "ai_extract";   // companies dispatched here by JobRefresher fallback
+    public string AtsType => "ai_extract";
 
     private readonly IPlaywrightFetcher _fetcher;
     private readonly IAiClient _ai;
+    private readonly ICompanyUrlsRepository _urls;
 
-    public AiExtractedJobSource(IPlaywrightFetcher fetcher, IAiClient ai)
+    public AiExtractedJobSource(IPlaywrightFetcher fetcher, IAiClient ai, ICompanyUrlsRepository urls)
     {
         _fetcher = fetcher;
         _ai = ai;
+        _urls = urls;
     }
 
-    /// <summary>Slug here is the URL to fetch (careers_url or homepage).</summary>
-    public async Task<IReadOnlyList<RawJobPosting>> FetchAsync(string slug, CancellationToken ct = default)
+    /// <summary>Fetch with company context. Persists discovered URLs (anchors + ATS API endpoints
+    /// observed in the network log) to company_urls so future refreshes can skip rediscovery.</summary>
+    public async Task<IReadOnlyList<RawJobPosting>> FetchForCompanyAsync(int companyId, string url, CancellationToken ct = default)
     {
-        var fetch = await _fetcher.FetchAsync(slug, ct);
+        var fetch = await _fetcher.FetchAsync(url, ct);
+        PersistDiscoveredUrls(companyId, fetch);
+
         if (!fetch.Success || string.IsNullOrEmpty(fetch.Html))
             throw new InvalidOperationException(fetch.Error ?? "Playwright fetch failed");
 
-        // Free path: structured JSON-LD JobPosting blocks. Many careers pages (Workable, custom
-        // SEO-aware builds) embed full schema.org JobPosting data. Use it when present — no AI call.
         var jsonLd = JsonLdJobExtractor.Extract(fetch.Html, fetch.FinalUrl);
-        if (jsonLd.Count > 0) return jsonLd;
+        if (jsonLd.Count > 0)
+        {
+            if (companyId > 0) _urls.MarkYielded(companyId, fetch.FinalUrl);
+            return jsonLd;
+        }
 
-        // Fallback: AI extraction over cleaned page text + anchor list.
         if (!_ai.IsConfigured)
-            throw new InvalidOperationException("Page has no JSON-LD job data and AI client not configured — can't extract");
+            throw new InvalidOperationException("Page has no JSON-LD job data and AI client not configured");
 
+        var jobs = await ExtractViaAiAsync(fetch, ct);
+        if (jobs.Count > 0 && companyId > 0) _urls.MarkYielded(companyId, fetch.FinalUrl);
+        return jobs;
+    }
+
+    private void PersistDiscoveredUrls(int companyId, PlaywrightFetchResult fetch)
+    {
+        if (companyId <= 0) return;
+
+        // The landing URL itself
+        if (!string.IsNullOrEmpty(fetch.FinalUrl))
+            _urls.Upsert(companyId, fetch.FinalUrl, UrlKind.CareersRoot, label: null, discoveredVia: "anchor_scan");
+
+        // ATS API endpoints observed in network requests
+        foreach (var req in fetch.NetworkRequests)
+        {
+            if (req.Url.Contains("boards-api.greenhouse.io/v1/boards") ||
+                req.Url.Contains("api.lever.co/v0/postings") ||
+                req.Url.Contains("api.ashbyhq.com/posting-api/job-board") ||
+                req.Url.Contains("workable.com/api/") ||
+                req.Url.Contains("smartrecruiters.com/v1/companies"))
+            {
+                _urls.Upsert(companyId, req.Url, UrlKind.AtsApi, label: null, discoveredVia: "network_listener");
+            }
+        }
+
+        // Anchors classified by URL pattern
+        if (!string.IsNullOrEmpty(fetch.Html))
+        {
+            foreach (var (text, href) in ExtractAnchors(fetch.Html, fetch.FinalUrl, max: 200))
+            {
+                var kind = UrlClassifier.Classify(href);
+                if (kind is null) continue;
+                _urls.Upsert(companyId, href, kind, label: text, discoveredVia: "anchor_scan");
+            }
+        }
+    }
+
+    /// <summary>Slug here is the URL to fetch. Used by parse-page CLI (no company persistence).</summary>
+    public async Task<IReadOnlyList<RawJobPosting>> FetchAsync(string slug, CancellationToken ct = default)
+        => await FetchForCompanyAsync(0, slug, ct);
+
+    private async Task<IReadOnlyList<RawJobPosting>> ExtractViaAiAsync(PlaywrightFetchResult fetch, CancellationToken ct)
+    {
         var text = HtmlTextExtractor.Extract(fetch.Html, maxChars: 10_000);
         var anchors = ExtractAnchors(fetch.Html, fetch.FinalUrl, max: 80);
 
