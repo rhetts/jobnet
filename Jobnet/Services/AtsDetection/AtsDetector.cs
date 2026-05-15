@@ -145,7 +145,49 @@ public sealed class AtsDetector : IAtsDetector
         try
         {
             var rendered = await _playwright.FetchAsync(url, ct);
-            if (!rendered.Success || string.IsNullOrEmpty(rendered.Html)) return null;
+            if (!rendered.Success && rendered.NetworkRequests.Count == 0) return null;
+
+            // **The big win**: scan captured XHR/fetch URLs for ATS API patterns.
+            // Many JS-rendered careers pages load jobs from an ATS API in the background;
+            // the API URL is in the network log even when it's invisible in the DOM.
+            foreach (var req in rendered.NetworkRequests)
+            {
+                foreach (var (pattern, ats) in UrlPatterns)
+                {
+                    var m = pattern.Match(req.Url);
+                    if (m.Success)
+                    {
+                        return new AtsDetectionResult
+                        {
+                            AtsType = ats,
+                            AtsSlug = m.Groups["slug"].Value.ToLowerInvariant(),
+                            ResolvedCareersUrl = rendered.FinalUrl,
+                            Source = "playwright_network",
+                            Notes = $"caught via observed XHR to {req.Url}"
+                        };
+                    }
+                }
+                // Also catch the boards-api endpoint directly (the most reliable signal)
+                var apiMatch = System.Text.RegularExpressions.Regex.Match(req.Url,
+                    @"^https?://(?:boards-api\.greenhouse\.io/v1/boards|api\.lever\.co/v0/postings|api\.ashbyhq\.com/posting-api/job-board)/(?<slug>[a-zA-Z0-9-]+)",
+                    System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                if (apiMatch.Success)
+                {
+                    var atsType = req.Url.Contains("greenhouse.io") ? "greenhouse"
+                                : req.Url.Contains("lever.co")       ? "lever"
+                                : "ashby";
+                    return new AtsDetectionResult
+                    {
+                        AtsType = atsType,
+                        AtsSlug = apiMatch.Groups["slug"].Value.ToLowerInvariant(),
+                        ResolvedCareersUrl = rendered.FinalUrl,
+                        Source = "playwright_network_api",
+                        Notes = $"ATS API endpoint observed: {req.Url}"
+                    };
+                }
+            }
+
+            if (string.IsNullOrEmpty(rendered.Html)) return null;
 
             // Re-run URL patterns on final URL
             foreach (var (pattern, ats) in UrlPatterns)

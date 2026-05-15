@@ -32,12 +32,18 @@ public sealed class AiExtractedJobSource : IAtsJobSource
     /// <summary>Slug here is the URL to fetch (careers_url or homepage).</summary>
     public async Task<IReadOnlyList<RawJobPosting>> FetchAsync(string slug, CancellationToken ct = default)
     {
-        if (!_ai.IsConfigured)
-            throw new InvalidOperationException("AI client not configured — needed for free-form careers page extraction");
-
         var fetch = await _fetcher.FetchAsync(slug, ct);
         if (!fetch.Success || string.IsNullOrEmpty(fetch.Html))
             throw new InvalidOperationException(fetch.Error ?? "Playwright fetch failed");
+
+        // Free path: structured JSON-LD JobPosting blocks. Many careers pages (Workable, custom
+        // SEO-aware builds) embed full schema.org JobPosting data. Use it when present — no AI call.
+        var jsonLd = JsonLdJobExtractor.Extract(fetch.Html, fetch.FinalUrl);
+        if (jsonLd.Count > 0) return jsonLd;
+
+        // Fallback: AI extraction over cleaned page text + anchor list.
+        if (!_ai.IsConfigured)
+            throw new InvalidOperationException("Page has no JSON-LD job data and AI client not configured — can't extract");
 
         var text = HtmlTextExtractor.Extract(fetch.Html, maxChars: 10_000);
         var anchors = ExtractAnchors(fetch.Html, fetch.FinalUrl, max: 80);

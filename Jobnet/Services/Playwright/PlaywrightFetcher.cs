@@ -43,6 +43,22 @@ public sealed class PlaywrightFetcher : IPlaywrightFetcher, IAsyncDisposable
         try
         {
             var page = await context.NewPageAsync();
+            var requests = new System.Collections.Generic.List<CapturedRequest>();
+            var requestsLock = new object();
+
+            // Capture XHR + fetch URLs the page makes — useful for catching ATS API endpoints (Greenhouse, Lever, etc.)
+            // even when nothing about them appears in the static or rendered HTML.
+            page.Request += (_, req) =>
+            {
+                var rt = req.ResourceType;
+                if (rt is not ("xhr" or "fetch" or "document")) return;
+                lock (requestsLock)
+                {
+                    if (requests.Count < 500)
+                        requests.Add(new CapturedRequest { Url = req.Url, Method = req.Method, ResourceType = rt });
+                }
+            };
+
             try
             {
                 var response = await page.GotoAsync(url, new PageGotoOptions
@@ -60,6 +76,7 @@ public sealed class PlaywrightFetcher : IPlaywrightFetcher, IAsyncDisposable
                     HttpStatus = status,
                     Html = html,
                     Success = status > 0 && status < 400,
+                    NetworkRequests = SnapshotRequests(requests, requestsLock),
                 };
             }
             catch (TimeoutException)
@@ -74,23 +91,29 @@ public sealed class PlaywrightFetcher : IPlaywrightFetcher, IAsyncDisposable
                         HttpStatus = 0,
                         Html = html,
                         Success = !string.IsNullOrEmpty(html),
-                        Error = "Page did not reach network-idle within 30s; returned partial render"
+                        Error = "Page did not reach network-idle within 30s; returned partial render",
+                        NetworkRequests = SnapshotRequests(requests, requestsLock),
                     };
                 }
                 catch
                 {
-                    return new PlaywrightFetchResult { FinalUrl = url, HttpStatus = 0, Html = "", Success = false, Error = "Timeout, no content" };
+                    return new PlaywrightFetchResult { FinalUrl = url, HttpStatus = 0, Html = "", Success = false, Error = "Timeout, no content", NetworkRequests = SnapshotRequests(requests, requestsLock) };
                 }
             }
             catch (Exception ex)
             {
-                return new PlaywrightFetchResult { FinalUrl = url, HttpStatus = 0, Html = "", Success = false, Error = ex.Message };
+                return new PlaywrightFetchResult { FinalUrl = url, HttpStatus = 0, Html = "", Success = false, Error = ex.Message, NetworkRequests = SnapshotRequests(requests, requestsLock) };
             }
         }
         finally
         {
             await context.CloseAsync();
         }
+    }
+
+    private static IReadOnlyList<CapturedRequest> SnapshotRequests(System.Collections.Generic.List<CapturedRequest> list, object gate)
+    {
+        lock (gate) return list.ToArray();
     }
 
     private async Task<IBrowser> EnsureBrowserAsync(CancellationToken ct)
