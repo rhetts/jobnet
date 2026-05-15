@@ -21,6 +21,7 @@ internal static class ServiceRegistration
         services.AddSingleton<IConfigRepository, ConfigRepository>();
         services.AddSingleton<IAggregatorRepository, AggregatorRepository>();
         services.AddSingleton<ICompanyRepository, CompanyRepository>();
+        services.AddSingleton<ICompanyUrlsRepository, CompanyUrlsRepository>();
         services.AddSingleton<IJobRepository, JobRepository>();
         services.AddSingleton<ILevelRepository, LevelRepository>();
         services.AddSingleton<IAreaRepository, AreaRepository>();
