@@ -216,6 +216,40 @@
                 </ScrollViewer>
             </TabItem>
 
+            <!-- AI tab -->
+            <TabItem Header="AI">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="14,10,14,10">
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource HintText}" TextWrapping="Wrap" Margin="0,4,0,10"
+                                   Text="Used as a classifier fallback when the keyword heuristic doesn't match, and for company profile summarization. Provider is selected by ai_provider config; keys for unselected providers are still preserved for easy switching."/>
+
+                        <TextBlock Style="{StaticResource FieldLabel}" Text="AI provider"/>
+                        <ComboBox SelectedValue="{Binding AiProvider}" SelectedValuePath="Content">
+                            <ComboBoxItem Content="gemini"/>
+                            <ComboBoxItem Content="claude"/>
+                        </ComboBox>
+
+                        <TextBlock Style="{StaticResource FieldLabel}" Text="Gemini API key"/>
+                        <TextBox Text="{Binding GeminiApiKey, UpdateSourceTrigger=PropertyChanged}"/>
+                        <TextBlock Style="{StaticResource HintText}"
+                                   Text="Free key at https://aistudio.google.com/apikey — typical free tier: 15 RPM, ~1000 RPD."/>
+
+                        <TextBlock Style="{StaticResource FieldLabel}" Text="Gemini model"/>
+                        <TextBox Text="{Binding GeminiModel, UpdateSourceTrigger=PropertyChanged}"/>
+                        <TextBlock Style="{StaticResource HintText}"
+                                   Text="Default: gemini-2.5-flash-lite. Also try gemini-2.5-flash or gemini-2.0-flash."/>
+
+                        <TextBlock Style="{StaticResource FieldLabel}" Text="Claude API key"/>
+                        <TextBox Text="{Binding ClaudeApiKey, UpdateSourceTrigger=PropertyChanged}"/>
+                        <TextBlock Style="{StaticResource HintText}"
+                                   Text="Get a key at https://console.anthropic.com/settings/keys — paid only (no free tier)."/>
+
+                        <TextBlock Style="{StaticResource FieldLabel}" Text="Claude model"/>
+                        <TextBox Text="{Binding ClaudeModel, UpdateSourceTrigger=PropertyChanged}"/>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
             <!-- Scraping tab -->
             <TabItem Header="Scraping">
                 <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="14,10,14,10">
@@ -223,12 +257,7 @@
                         <TextBlock Style="{StaticResource FieldLabel}" Text="Scrape delay (ms between requests)"/>
                         <TextBox Text="{Binding ScrapeDelayMs, UpdateSourceTrigger=PropertyChanged}"/>
 
-                        <TextBlock Style="{StaticResource FieldLabel}" Text="Claude CLI path"/>
-                        <TextBox Text="{Binding ClaudeCliPath, UpdateSourceTrigger=PropertyChanged}"/>
-                        <TextBlock Style="{StaticResource HintText}"
-                                   Text="Leave blank to auto-detect from PATH."/>
-
-                        <TextBlock Style="{StaticResource FieldLabel}" Text="Claude extraction prompt"/>
+                        <TextBlock Style="{StaticResource FieldLabel}" Text="Extraction prompt (used by Phase 7 careers-page parser)"/>
                         <TextBox Text="{Binding ClaudeExtractionPrompt, UpdateSourceTrigger=PropertyChanged}"
                                  AcceptsReturn="True"
                                  TextWrapping="Wrap"

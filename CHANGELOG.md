@@ -1,5 +1,33 @@
 # Jobnet Changelog
 
+## 2026-05-14 (afternoon) — AI provider abstraction, Gemini default
+
+- New `IAiClient` interface — single seam used by classifier + profiler
+- Two implementations: `GeminiClient` (Google AI Studio REST API) and `ClaudeClient` (Anthropic)
+- `RoutingAiClient` selects between them based on `ai_provider` config value (default: `gemini`)
+- `AiFallbackClassifier` replaces `ClaudeHaikuClassifier` — same behavior, provider-agnostic
+- `CompanyProfiler` now provider-agnostic
+- Migration 009 adds gemini_api_key, gemini_model, ai_provider, gemini rate limit/cap keys; flips default to Gemini
+- Settings UI gets a new **AI** tab — provider dropdown, separate key + model field per provider
+- CLI: `test-claude` removed → `test-ai` (works for whichever provider is selected)
+- Self-tests still pass (37/37)
+- **Verified live with Gemini**: `test-ai` round-trip ✓, `profile-company steamclock.com` produced an accurate Vancouver mobile-app-studio summary
+
+### Why Gemini default
+
+Google AI Studio gives a free API key (no credit card) with a generous free tier — typically 15 RPM and ~1000 requests/day on flash-lite. Anthropic's Claude API requires paid credit. For a personal tool, that matters.
+
+Both keys can be configured simultaneously — flip `ai_provider` to switch which one Jobnet actually calls.
+
+### How to get a Gemini key (~30 seconds)
+
+1. Open **https://aistudio.google.com/apikey**
+2. Sign in with any Google account
+3. Click **Create API key** → optionally pick "Create in new project"
+4. Copy the key (starts with `AIzaSy…`, 39 chars)
+5. `Jobnet.exe config-set gemini_api_key <key>`  *or paste into Settings → AI*
+6. `Jobnet.exe test-ai`  *should print "Jobnet test OK"*
+
 ## Overnight autonomous session — 2026-05-13 → 2026-05-14
 
 Reviewer: when you wake up, run these three commands to see the new functionality:

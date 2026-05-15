@@ -30,9 +30,15 @@ public partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private double _scoreWeightArea = 0.5;
     [ObservableProperty] private double _scoreWeightLevel = 0.5;
 
+    // AI provider tab
+    [ObservableProperty] private string _aiProvider = "gemini";
+    [ObservableProperty] private string _geminiApiKey = string.Empty;
+    [ObservableProperty] private string _geminiModel = "gemini-2.5-flash-lite";
+    [ObservableProperty] private string _claudeApiKey = string.Empty;
+    [ObservableProperty] private string _claudeModel = "claude-haiku-4-5";
+
     // Scraping tab
     [ObservableProperty] private int _scrapeDelayMs = 2000;
-    [ObservableProperty] private string _claudeCliPath = string.Empty;
     [ObservableProperty] private string _claudeExtractionPrompt = string.Empty;
 
     // Data tab
@@ -73,7 +79,11 @@ public partial class SettingsViewModel : ObservableObject
         ScoreWeightArea         = ParseDouble(_config.GetOrDefault("score_weight_area", "0.5"));
         ScoreWeightLevel        = ParseDouble(_config.GetOrDefault("score_weight_level", "0.5"));
         ScrapeDelayMs           = ParseInt(_config.GetOrDefault("scrape_delay_ms", "2000"));
-        ClaudeCliPath           = _config.GetOrDefault("claude_cli_path", "");
+        AiProvider              = _config.GetOrDefault("ai_provider", "gemini");
+        GeminiApiKey            = _config.GetOrDefault("gemini_api_key", "");
+        GeminiModel             = _config.GetOrDefault("gemini_model", "gemini-2.5-flash-lite");
+        ClaudeApiKey            = _config.GetOrDefault("claude_api_key", "");
+        ClaudeModel             = _config.GetOrDefault("claude_model", "claude-haiku-4-5");
         ClaudeExtractionPrompt  = _config.GetOrDefault("claude_extraction_prompt", "");
 
         Aggregators.Clear();
@@ -100,7 +110,11 @@ public partial class SettingsViewModel : ObservableObject
         _config.Set("score_weight_area",         ScoreWeightArea.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture));
         _config.Set("score_weight_level",        ScoreWeightLevel.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture));
         _config.Set("scrape_delay_ms",           ScrapeDelayMs.ToString(System.Globalization.CultureInfo.InvariantCulture));
-        _config.Set("claude_cli_path",           ClaudeCliPath ?? "");
+        _config.Set("ai_provider",               AiProvider ?? "gemini");
+        _config.Set("gemini_api_key",            GeminiApiKey ?? "");
+        _config.Set("gemini_model",              GeminiModel ?? "gemini-2.5-flash-lite");
+        _config.Set("claude_api_key",            ClaudeApiKey ?? "");
+        _config.Set("claude_model",              ClaudeModel ?? "claude-haiku-4-5");
         _config.Set("claude_extraction_prompt",  ClaudeExtractionPrompt ?? "");
 
         foreach (var a in Aggregators)

@@ -10,11 +10,12 @@ using Jobnet.Data.Repositories;
 using Jobnet.Services.ApiUsage;
 using Jobnet.Services.RateLimit;
 
-namespace Jobnet.Services.Claude;
+namespace Jobnet.Services.Ai;
 
-public sealed class ClaudeClient : IClaudeClient
+public sealed class ClaudeClient : IAiClient
 {
     public const string Provider = "claude_haiku";
+    public string ProviderId => Provider;
 
     private const string Endpoint = "https://api.anthropic.com/v1/messages";
     private const string ApiVersion = "2023-06-01";
@@ -34,11 +35,11 @@ public sealed class ClaudeClient : IClaudeClient
 
     public bool IsConfigured => !string.IsNullOrWhiteSpace(_config.GetOrDefault("claude_api_key", ""));
 
-    public async Task<ClaudeResponse> CompleteAsync(string userMessage, string? system = null, int? maxTokens = null, CancellationToken ct = default)
+    public async Task<AiResponse> CompleteAsync(string userMessage, string? system = null, int? maxTokens = null, CancellationToken ct = default)
     {
         var apiKey = _config.GetOrDefault("claude_api_key", "");
         if (string.IsNullOrWhiteSpace(apiKey))
-            throw new ClaudeUnavailableException("Claude API key is not configured. Set claude_api_key in Settings.");
+            throw new AiUnavailableException("Claude API key is not configured. Set claude_api_key in Settings.");
 
         var model = _config.GetOrDefault("claude_model", "claude-haiku-4-5");
         var cap = maxTokens ?? int.Parse(_config.GetOrDefault("claude_max_tokens_classify", "256"));
@@ -66,19 +67,20 @@ public sealed class ClaudeClient : IClaudeClient
         {
             var body = await response.Content.ReadAsStringAsync(ct);
             var msg = ExtractErrorMessage(body) ?? Truncate(body, 300);
-            throw new ClaudeUnavailableException($"Claude API HTTP {(int)response.StatusCode} — {msg}");
+            throw new AiUnavailableException($"Claude API HTTP {(int)response.StatusCode} — {msg}");
         }
 
         var parsed = await response.Content.ReadFromJsonAsync<ApiResponse>(cancellationToken: ct)
-                     ?? throw new ClaudeUnavailableException("Claude API returned empty response body.");
+                     ?? throw new AiUnavailableException("Claude API returned empty response body.");
         var text = parsed.Content?.Count > 0 ? string.Concat(parsed.Content.ConvertAll(c => c.Text ?? "")) : "";
 
-        return new ClaudeResponse
+        return new AiResponse
         {
             Text = text,
             InputTokens = parsed.Usage?.InputTokens ?? 0,
             OutputTokens = parsed.Usage?.OutputTokens ?? 0,
             Model = parsed.Model ?? model,
+            ProviderId = Provider,
         };
     }
 

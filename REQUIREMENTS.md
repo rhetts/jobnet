@@ -1,6 +1,6 @@
 # Jobnet — Requirements Document
 
-**Version:** 0.6 (Phase 5/6 — ATS detection + adapters, Claude Haiku, company profiler)
+**Version:** 0.7 (AI provider abstraction — Gemini default, Claude optional)
 **Last Updated:** 2026-05-14
 **Purpose:** Living requirements document. Update as decisions are made and scope evolves.
 
@@ -536,6 +536,9 @@ CREATE INDEX idx_page_fetches_sha    ON page_fetches(content_sha256);
 | 45 | ATS adapters cardinality | One adapter per ATS implements `IAtsJobSource`. `JobRefresher` orchestrates: enumerate companies with detected ATS, dispatch to adapter, classify each title (heuristic→Claude), upsert with hash tier 1 (`<ats>:<native_id>`), mark previously-active-now-missing jobs as removed. |
 | 46 | Field normalization at refresh boundary | ATS APIs return varied employment_type / remote_type strings ("FullTime", "Full-time", "On-Site"). `JobRefresher` normalizes to the schema's CHECK enum values before insert. |
 | 47 | Self-test suite | `test` CLI runs 37 assertions across classifier, DomainExtractor, RateLimiter, migrations, pragmas. Exits 0 on pass, 1 on any failure. Reuse for CI when set up. |
+| 48 | AI provider abstraction | `IAiClient` is the single interface used by classifier + profiler. Two implementations: `GeminiClient` (default) and `ClaudeClient`. `RoutingAiClient` picks at call time based on `ai_provider` config. Free tier reality drove the swap — Gemini AI Studio gives free keys with ~1000 RPD; Anthropic requires paid credit from the start. |
+| 49 | Default AI provider | **Gemini** (`gemini-2.5-flash-lite` model). Switchable to Claude via Settings → AI tab. Both keys can be set simultaneously; only the active provider is called. Per-provider rate limits + soft caps tracked separately. |
+| 50 | Gemini rate-limit defaults | `api_min_delay_ms.gemini = 4500ms` (≈13 RPM, just under typical 15 RPM free-tier limit). `api_soft_cap.gemini = 900` (under typical 1000 RPD free-tier ceiling). User can raise both if on a paid plan. |
 
 ## 9. Remaining Open Questions
 
@@ -558,7 +561,7 @@ Build sequence (each phase produces something runnable):
 | 4.5 | API usage tracker (`api_usage` table) with per-provider soft caps; `usage` CLI; warning event when caps cross | ✅ done |
 | 4.6 | Rate limiter (per-provider min-delay); self-test CLI (`test`) with 37 assertions; `companies-delete` cleanup CLI | ✅ done |
 | 5 | ATS detection: HTTP fetch + redirect follow + HTML fingerprint + slug-guess-and-verify against ATS API. Supports Greenhouse / Lever / Ashby / Workable / SmartRecruiters / Recruitee. `detect-ats <domain> \| --all \| --missing` | ✅ done |
-| 6 | Claude Haiku API client (replaces stub); real `ClaudeHaikuClassifier` with closed-taxonomy prompts; `test-claude` CLI | ✅ done |
+| 6 | AI client (Gemini default, Claude optional) via `IAiClient` + `RoutingAiClient`; `AiFallbackClassifier` with closed-taxonomy prompts; `test-ai` CLI | ✅ done |
 | 6.5 | Company profiler: HtmlTextExtractor + Haiku summarizes homepage/about; CompanyProfile model + 8 new DB columns; `profile-company <domain> \| --all-missing` CLI; CompanyProfileWindow opened via double-click | ✅ done |
 | 6.6 | ATS API adapters: Greenhouse, Lever, Ashby. `IJobRefresher` orchestrates fetch + classify + upsert + mark-removed; `refresh-jobs [--company X]` CLI; GUI Refresh Jobs button wired | ✅ done |
 | 7 | Playwright headless browser for non-API ATS detection; HTML strip + Claude extraction for free-form careers pages | next |
@@ -586,7 +589,7 @@ Build sequence (each phase produces something runnable):
 | `usage` | Show today's API call counts vs. soft caps |
 | `seed-fake` | Populate DB with fake test data (idempotent) |
 | `test` | Run the self-test suite (classifier + DomainExtractor + RateLimiter + migrations) — exit 0/1 |
-| `test-claude` | Verify Claude API key with a tiny round-trip |
+| `test-ai` | Verify the configured AI provider (Gemini or Claude) with a tiny round-trip |
 | `detect-ats <domain> \| --all \| --missing` | Detect which ATS a company uses (Greenhouse/Lever/Ashby/Workable/SmartRecruiters/Recruitee) |
 | `profile-company <domain> \| --all-missing` | Generate a Claude Haiku company profile from homepage + /about |
 | `refresh-jobs [--company X]` | Fetch jobs from ATS APIs and upsert; auto-classify on insert |

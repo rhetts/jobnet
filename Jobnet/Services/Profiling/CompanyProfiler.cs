@@ -9,7 +9,7 @@ using Dapper;
 using Jobnet.Data;
 using Jobnet.Models;
 using Jobnet.Services.ApiUsage;
-using Jobnet.Services.Claude;
+using Jobnet.Services.Ai;
 using Jobnet.Services.RateLimit;
 
 namespace Jobnet.Services.Profiling;
@@ -19,16 +19,16 @@ public sealed class CompanyProfiler : ICompanyProfiler
     public const string HttpProvider = "http_fetch";
 
     private readonly HttpClient _http;
-    private readonly IClaudeClient _claude;
+    private readonly IAiClient _ai;
     private readonly IApiUsageTracker _usage;
     private readonly IRateLimiter _rateLimiter;
     private readonly IDbConnectionFactory _connections;
 
-    public CompanyProfiler(HttpClient http, IClaudeClient claude, IApiUsageTracker usage,
+    public CompanyProfiler(HttpClient http, IAiClient ai, IApiUsageTracker usage,
                             IRateLimiter rateLimiter, IDbConnectionFactory connections)
     {
         _http = http;
-        _claude = claude;
+        _ai = ai;
         _usage = usage;
         _rateLimiter = rateLimiter;
         _connections = connections;
@@ -36,8 +36,8 @@ public sealed class CompanyProfiler : ICompanyProfiler
 
     public async Task<ProfileResult> GenerateAndPersistAsync(Company company, CancellationToken ct = default)
     {
-        if (!_claude.IsConfigured)
-            return new ProfileResult { Success = false, Error = "Claude API key not configured" };
+        if (!_ai.IsConfigured)
+            return new ProfileResult { Success = false, Error = $"AI provider '{_ai.ProviderId}' is not configured" };
 
         // Fetch homepage and /about page, concatenate text.
         var pages = new List<(string Url, string Text)>();
@@ -71,14 +71,14 @@ public sealed class CompanyProfiler : ICompanyProfiler
             "Company: " + (company.Name ?? company.Domain) + " (" + company.Domain + ")\n\n" +
             "Page content:\n" + combinedText;
 
-        ClaudeResponse response;
+        AiResponse response;
         try
         {
-            response = await _claude.CompleteAsync(user, system, maxTokens: 1024, ct);
+            response = await _ai.CompleteAsync(user, system, maxTokens: 1024, ct);
         }
         catch (Exception ex)
         {
-            return new ProfileResult { Success = false, Error = $"Claude call failed: {ex.Message}" };
+            return new ProfileResult { Success = false, Error = $"AI call failed ({_ai.ProviderId}): {ex.Message}" };
         }
 
         var profile = ParseProfile(response.Text, response.Model);

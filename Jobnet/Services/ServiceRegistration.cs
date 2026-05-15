@@ -26,7 +26,7 @@ internal static class ServiceRegistration
         services.AddSingleton<IAreaRepository, AreaRepository>();
 
         services.AddSingleton<Classification.HeuristicClassifier>();
-        services.AddSingleton<Classification.ClaudeHaikuClassifier>();
+        services.AddSingleton<Classification.AiFallbackClassifier>();
         services.AddSingleton<Classification.IJobClassifier, Classification.CompositeClassifier>();
 
         services.AddSingleton<ApiUsage.IApiUsageTracker, ApiUsage.ApiUsageTracker>();
@@ -51,11 +51,17 @@ internal static class ServiceRegistration
             client.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (compatible; Jobnet/0.5; +https://github.com/jobnet)");
         });
 
-        services.AddHttpClient<Claude.IClaudeClient, Claude.ClaudeClient>(client =>
+        services.AddHttpClient<Ai.ClaudeClient>(client =>
         {
             client.Timeout = TimeSpan.FromSeconds(60);
-            client.DefaultRequestHeaders.UserAgent.ParseAdd("Jobnet/0.5");
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("Jobnet/0.6");
         });
+        services.AddHttpClient<Ai.GeminiClient>(client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(60);
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("Jobnet/0.6");
+        });
+        services.AddSingleton<Ai.IAiClient, Ai.RoutingAiClient>();
 
         services.AddHttpClient<Profiling.ICompanyProfiler, Profiling.CompanyProfiler>(client =>
         {
