@@ -13,11 +13,19 @@ $exe = "C:\Work\Jobnet\Jobnet\bin\Debug\net8.0-windows\Jobnet.exe"
 
 ### Headline result
 
-**Hootsuite now yields 16 jobs via the native Greenhouse adapter** — the network
-listener observed the boards-api.greenhouse.io XHR call during Playwright render,
-extracted the slug, persisted it on the company. No Gemini call needed.
+**Active jobs: 30 → 76 (2.5× increase). Companies with jobs: 3 → 5.**
 
-This is the breakthrough that unblocks JS-rendered careers pages.
+Newly working via the network listener / Playwright fingerprinting:
+- **Hootsuite** → Greenhouse (40 jobs) — caught via observed boards-api.greenhouse.io XHR
+- **Visier** → Greenhouse (5 jobs) — caught via Playwright-rendered HTML pattern
+- **SkyBox Labs** → Lever (1 job) — caught via observed api.lever.co XHR
+
+All three previously yielded **zero** jobs because their careers pages are JS-rendered SPAs.
+
+### Self-tests
+
+50/50 passing (was 37) — 13 new UrlClassifier assertions cover job_detail, department,
+job_list classification and the non-job skip rules.
 
 ### What changed
 

@@ -30,6 +30,7 @@ public sealed class TestCommand : ICliCommand
 
         RunClassifierTests(services);
         RunDomainExtractorTests();
+        RunUrlClassifierTests();
         RunRateLimiterTests(services).GetAwaiter().GetResult();
         RunMigrationTests(services);
 
@@ -115,6 +116,46 @@ public sealed class TestCommand : ICliCommand
             Pass($"{url} → {r.CanonicalDomain}");
         else
             Fail($"{url} → canonical {r.CanonicalDomain}, expected {expected}");
+    }
+
+    private void RunUrlClassifierTests()
+    {
+        Console.WriteLine("UrlClassifier tests:");
+        // Job detail pages (numeric or slug ID in path)
+        AssertKind("https://boards.greenhouse.io/acme/jobs/12345",                  Models.UrlKind.JobDetail);
+        AssertKind("https://careers.example.com/jobs/senior-backend-engineer-456",  Models.UrlKind.JobDetail);
+        AssertKind("https://acme.com/careers/openings/12345",                       Models.UrlKind.JobDetail);
+
+        // Department/category filters
+        AssertKind("https://careers.hootsuite.com/jobs?department=Engineering",     Models.UrlKind.Department);
+        AssertKind("https://acme.com/careers/team/engineering",                     Models.UrlKind.Department);
+        AssertKind("https://acme.com/jobs?category=design",                         Models.UrlKind.Department);
+
+        // Flat job listing pages
+        AssertKind("https://acme.com/careers",                                      Models.UrlKind.JobList);
+        AssertKind("https://acme.com/jobs",                                         Models.UrlKind.JobList);
+
+        // Non-job links should be rejected (null)
+        AssertKindNull("https://acme.com/login");
+        AssertKindNull("https://acme.com/privacy");
+        AssertKindNull("https://acme.com/blog/some-post");
+        AssertKindNull("https://twitter.com/acme");
+        AssertKindNull("https://linkedin.com/company/acme");
+        Console.WriteLine();
+    }
+
+    private void AssertKind(string url, string expectedKind)
+    {
+        var k = Jobnet.Services.AtsAdapters.UrlClassifier.Classify(url);
+        if (k == expectedKind) Pass($"{url} → {k}");
+        else                   Fail($"{url} → {k ?? "(null)"} (expected {expectedKind})");
+    }
+
+    private void AssertKindNull(string url)
+    {
+        var k = Jobnet.Services.AtsAdapters.UrlClassifier.Classify(url);
+        if (k is null) Pass($"{url} → (skipped)");
+        else           Fail($"{url} → {k} (expected null)");
     }
 
     private async Task RunRateLimiterTests(IServiceProvider services)
