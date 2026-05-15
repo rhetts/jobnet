@@ -1,7 +1,7 @@
 # Jobnet — Requirements Document
 
-**Version:** 0.8 (Phase 7 — Playwright + AI extraction fallback)
-**Last Updated:** 2026-05-14
+**Version:** 0.9 (Phase 7.5 — URL cache + network listener + JSON-LD)
+**Last Updated:** 2026-05-15
 **Purpose:** Living requirements document. Update as decisions are made and scope evolves.
 
 ---
@@ -541,6 +541,12 @@ CREATE INDEX idx_page_fetches_sha    ON page_fetches(content_sha256);
 | 50 | Gemini rate-limit defaults | `api_min_delay_ms.gemini = 6500ms` (≈9 RPM, well under typical 20 RPM per-minute free-tier cap). `api_soft_cap.gemini = 900` (under typical 1000 RPD ceiling). Tuned up from 4500ms after observed 429s when chaining multiple processes that share the per-minute server-side counter. |
 | 51 | Playwright fallback | Both `AtsDetector` and `AiExtractedJobSource` use Playwright (`Microsoft.Playwright` 1.59) for JS-rendered pages. Chromium auto-installs via `Microsoft.Playwright.Program.Main(["install", "chromium"])` on first run. Headless mode, 30s network-idle timeout with partial-render fallback. Shared `IBrowser` instance, fresh context per fetch. |
 | 52 | AI job extraction strict prompt | Tightened prompt rejects department-only entries: requires concrete role titles (level + discipline). URLs taken from page anchor list only, never invented. Empty array when nothing real on page. |
+| 53 | URL cache (company_urls) | Per-company persistence of discovered URLs by kind: careers_root, department, job_list, ats_api, job_detail. Tracks last_seen, last_yielded, fail_count. Lets future refreshes skip Playwright rediscovery and target known endpoints directly. |
+| 54 | Playwright network listener | PlaywrightFetcher subscribes to `page.Request` and captures every XHR/fetch URL. AtsDetector inspects the log first — catches Greenhouse/Lever/Ashby API endpoints called via JS even when invisible in static HTML. Validated live with Hootsuite (greenhouse:hootsuite caught via observed XHR). |
+| 55 | JSON-LD JobPosting extractor | Parses `<script type="application/ld+json">` blocks for schema.org JobPosting data. Tried first in AiExtractedJobSource as a free path — no AI call needed when present. Walks @graph and itemListElement wrappers. |
+| 56 | Cache-first JobRefresher dispatch | Decision tree: (1) native ATS if known, (2) cached job_list URLs, (3) cached department URLs (recursive 1-level crawl), (4) cached careers_root, (5) full rediscovery. Each cached URL that yields ≥1 job is marked; 2 consecutive failures auto-delete. |
+| 57 | Free ATS upgrade | When the network listener observes an ATS API URL for a company without ats_type set, JobRefresher infers type+slug and updates the company. Next refresh uses the native adapter — fast and free. |
+| 58 | Stale URL pruning | Auto-deletes URLs not yielding jobs in 30 days (configurable). Runs at start of RefreshAllAsync. `prune-urls [--days N]` CLI for manual cleanup. |
 
 ## 9. Remaining Open Questions
 
@@ -567,8 +573,9 @@ Build sequence (each phase produces something runnable):
 | 6.5 | Company profiler: HtmlTextExtractor + Haiku summarizes homepage/about; CompanyProfile model + 8 new DB columns; `profile-company <domain> \| --all-missing` CLI; CompanyProfileWindow opened via double-click | ✅ done |
 | 6.6 | ATS API adapters: Greenhouse, Lever, Ashby. `IJobRefresher` orchestrates fetch + classify + upsert + mark-removed; `refresh-jobs [--company X]` CLI; GUI Refresh Jobs button wired | ✅ done |
 | 7 | Playwright headless browser for non-API ATS detection (DOM-rendered fingerprint matching); `AiExtractedJobSource` parses arbitrary careers pages via Playwright + AI; `parse-page` CLI; `JobRefresher` fallback dispatch | ✅ done |
+| 7.5 | URL cache (company_urls); Playwright network listener captures XHR/fetch; JSON-LD JobPosting extractor; cache-first JobRefresher dispatch with recursive 1-level crawl; auto-prune; free ATS upgrade when network listener catches API endpoint | ✅ done |
 | 8 | Refresh pipeline polish: scheduled background runs, scan_log UI, page_fetches cache for Claude calls |  |
-| 9 | Right-click context menus (Mark Interesting / Open / Copy), click-to-open-in-browser on jobs, filter UI |  |
+| 9 | Right-click context menus (Mark Interesting / Open / Copy) ✓; click-to-open-in-browser on jobs ✓; filter UI |  |
 | 10 | Filter UI for area/level multiselect, interest level dropdown, search across descriptions; status bar polish |  |
 
 ### CLI command reference (current)
@@ -593,6 +600,8 @@ Build sequence (each phase produces something runnable):
 | `test` | Run the self-test suite (classifier + DomainExtractor + RateLimiter + migrations) — exit 0/1 |
 | `test-ai` | Verify the configured AI provider (Gemini or Claude) with a tiny round-trip |
 | `parse-page <url>` | Render a careers page with Playwright + AI-extract jobs (Phase 7) |
+| `company-urls <domain> [--kind X]` | Inspect the per-company URL cache (careers_root, department, job_list, ats_api, job_detail) |
+| `prune-urls [--days N]` | Delete cached URLs that haven't yielded jobs in N days (default 30) |
 | `detect-ats <domain> \| --all \| --missing` | Detect which ATS a company uses (Greenhouse/Lever/Ashby/Workable/SmartRecruiters/Recruitee) |
 | `profile-company <domain> \| --all-missing` | Generate a Claude Haiku company profile from homepage + /about |
 | `refresh-jobs [--company X]` | Fetch jobs from ATS APIs and upsert; auto-classify on insert |

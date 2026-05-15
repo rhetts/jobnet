@@ -1,5 +1,57 @@
 # Jobnet Changelog
 
+## 2026-05-14 → 2026-05-15 (overnight) — Phase 7.5: URL cache, network listener, JSON-LD, recursive crawl
+
+Quick verification when you wake up:
+```powershell
+$exe = "C:\Work\Jobnet\Jobnet\bin\Debug\net8.0-windows\Jobnet.exe"
+& $exe test               # 37/37 should pass
+& $exe jobs-list --limit 50
+& $exe company-urls hootsuite.com   # see the discovered URL cache
+& $exe usage              # API counts vs caps
+```
+
+### Headline result
+
+**Hootsuite now yields 16 jobs via the native Greenhouse adapter** — the network
+listener observed the boards-api.greenhouse.io XHR call during Playwright render,
+extracted the slug, persisted it on the company. No Gemini call needed.
+
+This is the breakthrough that unblocks JS-rendered careers pages.
+
+### What changed
+
+- **company_urls cache** (migration 012): table tracking URLs discovered for each
+  company by kind (careers_root, department, job_list, ats_api, job_detail).
+  Records fail_count, last_seen, last_yielded for pruning.
+- **PlaywrightFetcher network listener**: every XHR/fetch URL the page hits is
+  captured in PlaywrightFetchResult.NetworkRequests. AtsDetector checks the log
+  first — catches Greenhouse/Lever/Ashby API endpoints invisible in static HTML.
+- **JSON-LD JobPosting extractor**: parses `<script type="application/ld+json">`
+  blocks for schema.org JobPosting data. Tried first in AiExtractedJobSource as
+  a FREE path — no AI call needed when present.
+- **URL classifier**: regex rules distinguish job_detail vs department vs
+  job_list vs unknown by URL path/query. Skips obvious non-job links.
+- **AiExtractedJobSource.FetchForCompanyAsync** persists careers_root, classified
+  anchors, and observed ATS API endpoints to company_urls.
+- **Cache-first dispatch in JobRefresher**: tries native ATS → cached job_list
+  → cached department (recursive crawl) → cached careers_root → full
+  rediscovery, in that order. Each cached URL that yields ≥1 job updates
+  last_yielded; failures get fail_count++, deleted after 2 strikes.
+- **Free-upgrade path**: when the network listener catches an ats_api URL on a
+  company with no ats_type yet, JobRefresher infers type+slug and updates the
+  company. Subsequent refreshes use the native adapter (fast + free).
+- **Auto-prune**: RefreshAllAsync deletes URLs not yielding in 30 days.
+  `prune-urls [--days N]` CLI for manual cleanup.
+- **`company-urls <domain> [--kind X]`** CLI for cache inspection.
+
+### Known limitations remaining
+
+- Recursive crawl only goes one level deep. Hootsuite-style "show me all
+  Engineering jobs" is covered, but deeper navigation isn't (rare in practice).
+- Workday, iCIMS, Jobvite still not in ATS pattern list — adding any of these
+  unlocks a lot of enterprise companies.
+
 ## 2026-05-14 (evening) — Phase 7: Playwright + AI extraction fallback
 
 - New `Microsoft.Playwright` dependency. Chromium auto-installs via
