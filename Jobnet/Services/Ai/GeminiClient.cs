@@ -64,13 +64,36 @@ public sealed class GeminiClient : IAiClient
         await _rateLimiter.WaitAsync(Provider, ct);
         _usage.RecordCall(Provider);
 
-        using var response = await _http.SendAsync(req, ct);
+        var response = await _http.SendAsync(req, ct);
+
+        // 429 retry: Google's error body says "Please retry in Xs". Honor it (capped at 90s).
+        if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
+        {
+            var body = await response.Content.ReadAsStringAsync(ct);
+            var waitSec = ExtractRetryAfter(body);
+            response.Dispose();
+            if (waitSec > 0 && waitSec <= 90)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(waitSec + 1), ct);
+                _usage.RecordCall(Provider);
+                using var retryReq = BuildRequest(url, payload);
+                response = await _http.SendAsync(retryReq, ct);
+            }
+            else
+            {
+                throw new AiUnavailableException(
+                    $"Gemini API HTTP 429 — quota exceeded and retry-after ({waitSec}s) is too large. {Truncate(body, 200)}");
+            }
+        }
+
         if (!response.IsSuccessStatusCode)
         {
+            using var _ = response;
             var body = await response.Content.ReadAsStringAsync(ct);
             var msg = ExtractErrorMessage(body) ?? Truncate(body, 300);
             throw new AiUnavailableException($"Gemini API HTTP {(int)response.StatusCode} — {msg}");
         }
+        using var _ok = response;
 
         var parsed = await response.Content.ReadFromJsonAsync<ApiResponse>(cancellationToken: ct)
                      ?? throw new AiUnavailableException("Gemini API returned empty response body.");
@@ -90,6 +113,20 @@ public sealed class GeminiClient : IAiClient
             Model = parsed.ModelVersion ?? model,
             ProviderId = Provider,
         };
+    }
+
+    private static HttpRequestMessage BuildRequest(string url, System.Collections.Generic.Dictionary<string, object?> payload)
+    {
+        return new HttpRequestMessage(HttpMethod.Post, url) { Content = JsonContent.Create(payload) };
+    }
+
+    /// <summary>Parse Google's 429 body for "Please retry in X.Ys". Returns seconds (rounded up) or 0 if not found.</summary>
+    private static int ExtractRetryAfter(string body)
+    {
+        var m = System.Text.RegularExpressions.Regex.Match(body, @"retry in (\d+\.?\d*)s", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (!m.Success) return 0;
+        if (!double.TryParse(m.Groups[1].Value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var sec)) return 0;
+        return (int)Math.Ceiling(sec);
     }
 
     private static string? ExtractErrorMessage(string body)

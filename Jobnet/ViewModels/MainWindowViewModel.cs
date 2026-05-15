@@ -9,6 +9,7 @@ using System.Windows.Data;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Jobnet.Models;
+using Jobnet.Data.Repositories;
 using Jobnet.Services;
 using Jobnet.Services.AtsAdapters;
 using Jobnet.Services.Discovery;
@@ -19,6 +20,7 @@ namespace Jobnet.ViewModels;
 public partial class MainWindowViewModel : ObservableObject
 {
     private readonly IJobDataService _data;
+    private readonly IJobRepository? _jobsRepo;
     private readonly IDiscoveryService? _discovery;
     private readonly IJobRefresher? _refresher;
     private readonly Func<SettingsWindow>? _settingsWindowFactory;
@@ -52,12 +54,14 @@ public partial class MainWindowViewModel : ObservableObject
     private bool _isBusy;
 
     public MainWindowViewModel(IJobDataService data,
+                                IJobRepository? jobsRepo = null,
                                 IDiscoveryService? discovery = null,
                                 IJobRefresher? refresher = null,
                                 Func<SettingsWindow>? settingsWindowFactory = null,
                                 Func<CompanyProfileWindow>? profileWindowFactory = null)
     {
         _data = data;
+        _jobsRepo = jobsRepo;
         _discovery = discovery;
         _refresher = refresher;
         _settingsWindowFactory = settingsWindowFactory;
@@ -240,5 +244,57 @@ public partial class MainWindowViewModel : ObservableObject
             vm.Load(companyId);
         window.Owner = Application.Current.MainWindow;
         window.Show();
+    }
+
+    // ---- Job context-menu commands ----
+
+    [RelayCommand]
+    private void MarkJobInteresting(JobViewModel? job) => SetJobInterest(job, Models.InterestLevel.Interesting);
+
+    [RelayCommand]
+    private void MarkJobNotInteresting(JobViewModel? job) => SetJobInterest(job, Models.InterestLevel.NotInteresting);
+
+    [RelayCommand]
+    private void ClearJobInterest(JobViewModel? job) => SetJobInterest(job, Models.InterestLevel.Neutral);
+
+    [RelayCommand]
+    private void CopyJobUrl(JobViewModel? job)
+    {
+        if (job?.Job.Url is null) return;
+        try { Clipboard.SetText(job.Job.Url); StatusBarText = $"Copied: {job.Job.Url}"; }
+        catch (Exception ex) { StatusBarText = $"Copy failed: {ex.Message}"; }
+    }
+
+    [RelayCommand]
+    private void OpenJobInBrowser(JobViewModel? job)
+    {
+        if (string.IsNullOrWhiteSpace(job?.Job.Url)) return;
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = job.Job.Url, UseShellExecute = true
+            });
+        }
+        catch (Exception ex) { StatusBarText = $"Could not open: {ex.Message}"; }
+    }
+
+    private void SetJobInterest(JobViewModel? job, Models.InterestLevel level)
+    {
+        if (job is null || _jobsRepo is null) return;
+        _jobsRepo.SetInterestLevel(job.Job.Id, level);
+        job.Job.InterestLevel = level;
+        // Recreate the row so the glyph/binding updates (JobViewModel doesn't observe Job.InterestLevel).
+        var idx = Jobs.IndexOf(job);
+        if (idx >= 0)
+        {
+            Jobs.RemoveAt(idx);
+            var refreshed = new JobViewModel(job.Job, job.CompanyName, job.CompositeScore);
+            Jobs.Insert(idx, refreshed);
+        }
+        // Keep _allJobs in sync too
+        var allIdx = _allJobs.IndexOf(job);
+        if (allIdx >= 0) _allJobs[allIdx] = new JobViewModel(job.Job, job.CompanyName, job.CompositeScore);
+        StatusBarText = $"Marked '{job.Job.Title}' as {level.ToString().ToLowerInvariant()}";
     }
 }

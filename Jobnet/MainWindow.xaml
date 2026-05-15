@@ -190,6 +190,26 @@
                                     BorderThickness="1"
                                     Padding="14,12"
                                     CornerRadius="3">
+                                <Border.ContextMenu>
+                                    <ContextMenu>
+                                        <MenuItem Header="Open in browser"
+                                                  Command="{Binding DataContext.OpenJobInBrowserCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                  CommandParameter="{Binding}"/>
+                                        <MenuItem Header="Copy URL"
+                                                  Command="{Binding DataContext.CopyJobUrlCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                  CommandParameter="{Binding}"/>
+                                        <Separator/>
+                                        <MenuItem Header="Mark Interesting (★)"
+                                                  Command="{Binding DataContext.MarkJobInterestingCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                  CommandParameter="{Binding}"/>
+                                        <MenuItem Header="Mark Not Interesting (✗)"
+                                                  Command="{Binding DataContext.MarkJobNotInterestingCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                  CommandParameter="{Binding}"/>
+                                        <MenuItem Header="Clear interest"
+                                                  Command="{Binding DataContext.ClearJobInterestCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                  CommandParameter="{Binding}"/>
+                                    </ContextMenu>
+                                </Border.ContextMenu>
                                 <Border.Style>
                                     <Style TargetType="Border">
                                         <Style.Triggers>
