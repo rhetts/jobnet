@@ -63,6 +63,8 @@ internal static class ServiceRegistration
         });
         services.AddSingleton<Ai.IAiClient, Ai.RoutingAiClient>();
 
+        services.AddSingleton<Playwright.IPlaywrightFetcher, Playwright.PlaywrightFetcher>();
+
         services.AddHttpClient<Profiling.ICompanyProfiler, Profiling.CompanyProfiler>(client =>
         {
             client.Timeout = TimeSpan.FromSeconds(15);
@@ -84,9 +86,11 @@ internal static class ServiceRegistration
             client.Timeout = TimeSpan.FromSeconds(15);
             client.DefaultRequestHeaders.UserAgent.ParseAdd("Jobnet/0.5");
         });
+        services.AddSingleton<AtsAdapters.AiExtractedJobSource>();
         services.AddSingleton<AtsAdapters.IAtsJobSource>(sp => sp.GetRequiredService<AtsAdapters.GreenhouseJobSource>());
         services.AddSingleton<AtsAdapters.IAtsJobSource>(sp => sp.GetRequiredService<AtsAdapters.LeverJobSource>());
         services.AddSingleton<AtsAdapters.IAtsJobSource>(sp => sp.GetRequiredService<AtsAdapters.AshbyJobSource>());
+        services.AddSingleton<AtsAdapters.IAtsJobSource>(sp => sp.GetRequiredService<AtsAdapters.AiExtractedJobSource>());
         services.AddSingleton<AtsAdapters.IJobRefresher, AtsAdapters.JobRefresher>();
 
         services.AddSingleton<IJobDataService, SqliteJobDataService>();

@@ -1,6 +1,6 @@
 # Jobnet — Requirements Document
 
-**Version:** 0.7 (AI provider abstraction — Gemini default, Claude optional)
+**Version:** 0.8 (Phase 7 — Playwright + AI extraction fallback)
 **Last Updated:** 2026-05-14
 **Purpose:** Living requirements document. Update as decisions are made and scope evolves.
 
@@ -538,7 +538,9 @@ CREATE INDEX idx_page_fetches_sha    ON page_fetches(content_sha256);
 | 47 | Self-test suite | `test` CLI runs 37 assertions across classifier, DomainExtractor, RateLimiter, migrations, pragmas. Exits 0 on pass, 1 on any failure. Reuse for CI when set up. |
 | 48 | AI provider abstraction | `IAiClient` is the single interface used by classifier + profiler. Two implementations: `GeminiClient` (default) and `ClaudeClient`. `RoutingAiClient` picks at call time based on `ai_provider` config. Free tier reality drove the swap — Gemini AI Studio gives free keys with ~1000 RPD; Anthropic requires paid credit from the start. |
 | 49 | Default AI provider | **Gemini** (`gemini-2.5-flash-lite` model). Switchable to Claude via Settings → AI tab. Both keys can be set simultaneously; only the active provider is called. Per-provider rate limits + soft caps tracked separately. |
-| 50 | Gemini rate-limit defaults | `api_min_delay_ms.gemini = 4500ms` (≈13 RPM, just under typical 15 RPM free-tier limit). `api_soft_cap.gemini = 900` (under typical 1000 RPD free-tier ceiling). User can raise both if on a paid plan. |
+| 50 | Gemini rate-limit defaults | `api_min_delay_ms.gemini = 6500ms` (≈9 RPM, well under typical 20 RPM per-minute free-tier cap). `api_soft_cap.gemini = 900` (under typical 1000 RPD ceiling). Tuned up from 4500ms after observed 429s when chaining multiple processes that share the per-minute server-side counter. |
+| 51 | Playwright fallback | Both `AtsDetector` and `AiExtractedJobSource` use Playwright (`Microsoft.Playwright` 1.59) for JS-rendered pages. Chromium auto-installs via `Microsoft.Playwright.Program.Main(["install", "chromium"])` on first run. Headless mode, 30s network-idle timeout with partial-render fallback. Shared `IBrowser` instance, fresh context per fetch. |
+| 52 | AI job extraction strict prompt | Tightened prompt rejects department-only entries: requires concrete role titles (level + discipline). URLs taken from page anchor list only, never invented. Empty array when nothing real on page. |
 
 ## 9. Remaining Open Questions
 
@@ -564,7 +566,7 @@ Build sequence (each phase produces something runnable):
 | 6 | AI client (Gemini default, Claude optional) via `IAiClient` + `RoutingAiClient`; `AiFallbackClassifier` with closed-taxonomy prompts; `test-ai` CLI | ✅ done |
 | 6.5 | Company profiler: HtmlTextExtractor + Haiku summarizes homepage/about; CompanyProfile model + 8 new DB columns; `profile-company <domain> \| --all-missing` CLI; CompanyProfileWindow opened via double-click | ✅ done |
 | 6.6 | ATS API adapters: Greenhouse, Lever, Ashby. `IJobRefresher` orchestrates fetch + classify + upsert + mark-removed; `refresh-jobs [--company X]` CLI; GUI Refresh Jobs button wired | ✅ done |
-| 7 | Playwright headless browser for non-API ATS detection; HTML strip + Claude extraction for free-form careers pages | next |
+| 7 | Playwright headless browser for non-API ATS detection (DOM-rendered fingerprint matching); `AiExtractedJobSource` parses arbitrary careers pages via Playwright + AI; `parse-page` CLI; `JobRefresher` fallback dispatch | ✅ done |
 | 8 | Refresh pipeline polish: scheduled background runs, scan_log UI, page_fetches cache for Claude calls |  |
 | 9 | Right-click context menus (Mark Interesting / Open / Copy), click-to-open-in-browser on jobs, filter UI |  |
 | 10 | Filter UI for area/level multiselect, interest level dropdown, search across descriptions; status bar polish |  |
@@ -590,6 +592,7 @@ Build sequence (each phase produces something runnable):
 | `seed-fake` | Populate DB with fake test data (idempotent) |
 | `test` | Run the self-test suite (classifier + DomainExtractor + RateLimiter + migrations) — exit 0/1 |
 | `test-ai` | Verify the configured AI provider (Gemini or Claude) with a tiny round-trip |
+| `parse-page <url>` | Render a careers page with Playwright + AI-extract jobs (Phase 7) |
 | `detect-ats <domain> \| --all \| --missing` | Detect which ATS a company uses (Greenhouse/Lever/Ashby/Workable/SmartRecruiters/Recruitee) |
 | `profile-company <domain> \| --all-missing` | Generate a Claude Haiku company profile from homepage + /about |
 | `refresh-jobs [--company X]` | Fetch jobs from ATS APIs and upsert; auto-classify on insert |

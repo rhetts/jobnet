@@ -1,5 +1,36 @@
 # Jobnet Changelog
 
+## 2026-05-14 (evening) — Phase 7: Playwright + AI extraction fallback
+
+- New `Microsoft.Playwright` dependency. Chromium auto-installs via
+  `PlaywrightFetcher.EnsureBrowserInstalled()` (delegates to `Microsoft.Playwright.Program.Main`).
+- `IPlaywrightFetcher` / `PlaywrightFetcher` — shared headless Chromium, lazy init,
+  network-idle wait, partial-render fallback on timeout
+- `AiExtractedJobSource` (ats_type=ai_extract) — implements `IAtsJobSource`:
+  Playwright fetches the careers page, regex extracts visible anchors with hrefs,
+  sends cleaned text + anchor list to Gemini/Claude with strict-JSON job schema
+- `JobRefresher` now dispatches to `AiExtractedJobSource` as fallback when no native
+  ATS adapter matches a company (uses careers URL, website URL, or `<domain>/careers`)
+- `AtsDetector` has a Playwright fallback — when static probes find nothing, renders
+  top candidates with Chromium and re-runs URL/HTML pattern matching on the rendered
+  DOM (including slug-guess for hint-only patterns)
+- Candidate URLs now include `careers.<domain>` and `jobs.<domain>` subdomains
+- CLI: `parse-page <url>` — directly test Playwright + AI extractor on any URL
+- Rate limiter gets a new `playwright_fetch` provider (2000ms default, kind to target servers)
+
+Verified end-to-end: `parse-page https://careers.hootsuite.com` rendered the page via
+Chromium, extracted listings (initially picked up departments — now rejected by
+tightened prompt). Pipeline functioned; quality limited by the page content itself
+(Hootsuite's careers page shows department categories, not individual jobs).
+
+### Known limitations of Phase 7
+
+- Sites showing only department categories (Hootsuite-style) won't yield jobs without
+  recursive crawling of department links (future work).
+- Gemini free tier per-minute cap (~20 RPM) is strict — burst usage hits 429s.
+  Retry semantics are sliding-window; daily counter still has plenty of room (~30 of 900 used today).
+- Workday / iCIMS / Jobvite / Taleo aren't in the ATS pattern list (easy to add later).
+
 ## 2026-05-14 (afternoon) — AI provider abstraction, Gemini default
 
 - New `IAiClient` interface — single seam used by classifier + profiler

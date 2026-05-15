@@ -22,12 +22,14 @@ public sealed class AtsDetector : IAtsDetector
     private readonly HttpClient _http;
     private readonly IApiUsageTracker _usage;
     private readonly IRateLimiter _rateLimiter;
+    private readonly Playwright.IPlaywrightFetcher _playwright;
 
-    public AtsDetector(HttpClient http, IApiUsageTracker usage, IRateLimiter rateLimiter)
+    public AtsDetector(HttpClient http, IApiUsageTracker usage, IRateLimiter rateLimiter, Playwright.IPlaywrightFetcher playwright)
     {
         _http = http;
         _usage = usage;
         _rateLimiter = rateLimiter;
+        _playwright = playwright;
     }
 
     // Final-URL patterns. Order: most specific first.
@@ -108,7 +110,100 @@ public sealed class AtsDetector : IAtsDetector
                 Notes = "ATS hint found but slug could not be guessed; manual entry needed"
             };
         }
-        return new AtsDetectionResult { Source = "none", Notes = "no ATS fingerprint found at any candidate URL" };
+
+        // Last resort: render the most likely candidate with Playwright (JS-aware) and re-run pattern matching.
+        // Catches JS-rendered ATS embeds (Klue-style) where static HTML didn't show the fingerprint.
+        var jsResult = await ProbeWithPlaywrightAsync(company, ct);
+        if (jsResult is not null) return jsResult;
+
+        return new AtsDetectionResult { Source = "none", Notes = "no ATS fingerprint found via static fetch or Playwright render" };
+    }
+
+    private async Task<AtsDetectionResult?> ProbeWithPlaywrightAsync(Company company, CancellationToken ct)
+    {
+        // Try a small set of promising candidates with Playwright (each fetch is slow, keep this short).
+        var jsCandidates = new List<string>();
+        if (!string.IsNullOrWhiteSpace(company.CareersUrl)) jsCandidates.Add(company.CareersUrl);
+        jsCandidates.Add($"https://careers.{company.Domain}");
+        jsCandidates.Add($"https://jobs.{company.Domain}");
+        var basePrimary = string.IsNullOrEmpty(company.WebsiteUrl) ? $"https://{company.Domain}" : company.WebsiteUrl.TrimEnd('/');
+        jsCandidates.Add($"{basePrimary}/careers");
+        jsCandidates.Add($"{basePrimary}/jobs");
+
+        var tried = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var url in jsCandidates)
+        {
+            if (!tried.Add(url)) continue;
+            var result = await ProbeOneWithPlaywrightAsync(company, url, ct);
+            if (result is not null) return result;
+        }
+        return null;
+    }
+
+    private async Task<AtsDetectionResult?> ProbeOneWithPlaywrightAsync(Company company, string url, CancellationToken ct)
+    {
+        try
+        {
+            var rendered = await _playwright.FetchAsync(url, ct);
+            if (!rendered.Success || string.IsNullOrEmpty(rendered.Html)) return null;
+
+            // Re-run URL patterns on final URL
+            foreach (var (pattern, ats) in UrlPatterns)
+            {
+                var m = pattern.Match(rendered.FinalUrl);
+                if (m.Success)
+                {
+                    return new AtsDetectionResult
+                    {
+                        AtsType = ats,
+                        AtsSlug = m.Groups["slug"].Value.ToLowerInvariant(),
+                        ResolvedCareersUrl = rendered.FinalUrl,
+                        Source = "playwright_redirect",
+                    };
+                }
+            }
+
+            // Re-run HTML patterns on rendered DOM
+            foreach (var (pattern, ats) in HtmlPatterns)
+            {
+                var m = pattern.Match(rendered.Html);
+                if (m.Success)
+                {
+                    return new AtsDetectionResult
+                    {
+                        AtsType = ats,
+                        AtsSlug = m.Groups["slug"].Value.ToLowerInvariant(),
+                        ResolvedCareersUrl = rendered.FinalUrl,
+                        Source = "playwright_html",
+                    };
+                }
+            }
+
+            // Hint-only on rendered DOM → slug-guess + verify
+            foreach (var (pattern, ats) in HintOnlyPatterns)
+            {
+                if (!pattern.IsMatch(rendered.Html)) continue;
+                foreach (var guess in SlugGuesses(company))
+                {
+                    if (await VerifySlugAsync(ats, guess, ct))
+                    {
+                        return new AtsDetectionResult
+                        {
+                            AtsType = ats,
+                            AtsSlug = guess,
+                            ResolvedCareersUrl = rendered.FinalUrl,
+                            Source = "playwright_hint_verified",
+                            Notes = $"hint found on rendered page; verified slug '{guess}'"
+                        };
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // Playwright not available or fetch failed; fall through.
+        }
+        return null;
     }
 
     private async Task<bool> VerifySlugAsync(string ats, string slug, CancellationToken ct)
@@ -246,6 +341,13 @@ public sealed class AtsDetector : IAtsDetector
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         if (!string.IsNullOrWhiteSpace(company.CareersUrl) && seen.Add(company.CareersUrl))
             yield return company.CareersUrl;
+
+        // Some companies host careers on a subdomain (e.g. careers.hootsuite.com, jobs.acme.com).
+        foreach (var sub in new[] { "careers", "jobs", "join", "work" })
+        {
+            var u = $"https://{sub}.{company.Domain}";
+            if (seen.Add(u)) yield return u;
+        }
 
         var bases = new List<string>();
         if (!string.IsNullOrWhiteSpace(company.WebsiteUrl)) bases.Add(company.WebsiteUrl.TrimEnd('/'));

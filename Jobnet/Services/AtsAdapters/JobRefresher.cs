@@ -113,19 +113,37 @@ public sealed class JobRefresher : IJobRefresher
 
     private async Task<(int Added, int Updated, int Removed)> RefreshOneAsync(Company company, List<string> errors, CancellationToken ct)
     {
-        if (string.IsNullOrEmpty(company.AtsType) || string.IsNullOrEmpty(company.AtsSlug))
-            throw new NoAdapterException();
-        if (!_sources.TryGetValue(company.AtsType, out var source))
-            throw new NoAdapterException();
+        IAtsJobSource source;
+        string sourceArg;
 
-        var raw = await source.FetchAsync(company.AtsSlug, ct);
+        if (!string.IsNullOrEmpty(company.AtsType) && !string.IsNullOrEmpty(company.AtsSlug)
+            && _sources.TryGetValue(company.AtsType, out var native))
+        {
+            source = native;
+            sourceArg = company.AtsSlug;
+        }
+        else if (_sources.TryGetValue("ai_extract", out var ai))
+        {
+            // Fallback: Playwright + AI extraction on the careers page (or homepage if nothing else known)
+            source = ai;
+            sourceArg = company.CareersUrl
+                     ?? company.WebsiteUrl
+                     ?? $"https://{company.Domain}/careers";
+        }
+        else
+        {
+            throw new NoAdapterException();
+        }
+
+        var raw = await source.FetchAsync(sourceArg, ct);
         var added = 0; var updated = 0;
         var seenJobIds = new HashSet<int>();
 
         foreach (var r in raw)
         {
             ct.ThrowIfCancellationRequested();
-            var hashKey = $"{company.AtsType}:{r.NativeId}";
+            // For native ATS, the type is stable on company.AtsType. For AI fallback, use the source's type.
+            var hashKey = $"{source.AtsType}:{company.Id}:{r.NativeId}";
             var classified = _classifier.Classify(r.Title, r.Department);
 
             var job = new Job
