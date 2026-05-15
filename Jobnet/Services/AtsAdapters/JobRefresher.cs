@@ -78,11 +78,6 @@ public sealed class JobRefresher : IJobRefresher
         foreach (var c in all)
         {
             ct.ThrowIfCancellationRequested();
-            if (string.IsNullOrEmpty(c.AtsType) || string.IsNullOrEmpty(c.AtsSlug))
-            {
-                skipped++;
-                continue;
-            }
             try
             {
                 var (a, u, r) = await RefreshOneAsync(c, errors, ct);
