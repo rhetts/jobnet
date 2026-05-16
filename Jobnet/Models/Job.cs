@@ -16,6 +16,10 @@ public sealed class Job
     public IReadOnlyList<int> AreaIds { get; set; } = Array.Empty<int>();
     public string? DescriptionSnippet { get; init; }
     public string? SalaryRange { get; init; }
+    public int? SalaryMin { get; init; }
+    public int? SalaryMax { get; init; }
+    public string? SalaryCurrency { get; init; }
+    public string? SalaryPeriod { get; init; }
     public InterestLevel InterestLevel { get; set; }
     public required DateTime DateFirstSeen { get; init; }
     public required DateTime DateLastSeen { get; init; }

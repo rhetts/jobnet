@@ -36,8 +36,33 @@ public partial class JobViewModel : ObservableObject
             var emp    = Capitalize(Job.EmploymentType ?? "unknown");
             var age    = FormatAge(Job.DateFirstSeen);
             var status = Job.IsActive ? "" : $" · Removed {FormatAge(Job.DateRemoved ?? DateTime.UtcNow)} ago";
-            return $"{remote} · {emp} · Score {CompositeScore} · {age} old{status}";
+            var salary = FormatSalary();
+            var salaryPart = string.IsNullOrEmpty(salary) ? "" : $" · {salary}";
+            return $"{remote} · {emp} · Score {CompositeScore} · {age} old{salaryPart}{status}";
         }
+    }
+
+    public string SalaryDisplay => FormatSalary();
+
+    private string FormatSalary()
+    {
+        if (Job.SalaryMin is null && Job.SalaryMax is null) return "";
+        var cur = Job.SalaryCurrency ?? "";
+        var min = Job.SalaryMin;
+        var max = Job.SalaryMax;
+        string range;
+        if (min.HasValue && max.HasValue && min == max) range = Money(min.Value);
+        else if (min.HasValue && max.HasValue)          range = $"{Money(min.Value)}–{Money(max.Value)}";
+        else if (min.HasValue)                          range = $"{Money(min.Value)}+";
+        else                                            range = $"≤{Money(max!.Value)}";
+        var period = Job.SalaryPeriod switch { "hour" => "/hr", "month" => "/mo", "year" => "/yr", _ => "" };
+        return string.IsNullOrEmpty(cur) ? $"{range}{period}" : $"{cur} {range}{period}";
+    }
+
+    private static string Money(int v)
+    {
+        if (v >= 1000) return $"${v / 1000}K";
+        return $"${v}";
     }
 
     private static string Capitalize(string s) =>

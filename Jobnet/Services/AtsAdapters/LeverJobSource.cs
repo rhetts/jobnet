@@ -50,6 +50,10 @@ public sealed class LeverJobSource : IAtsJobSource
                 EmploymentType = j.Categories?.Commitment?.ToLowerInvariant(),
                 Department = j.Categories?.Department ?? j.Categories?.Team,
                 DescriptionSnippet = Trunc(j.DescriptionPlain, 500),
+                SalaryMin = j.SalaryRange?.Min,
+                SalaryMax = j.SalaryRange?.Max,
+                SalaryCurrency = j.SalaryRange?.Currency,
+                SalaryPeriod = NormalizeInterval(j.SalaryRange?.Interval),
             });
         }
         return results;
@@ -75,6 +79,16 @@ public sealed class LeverJobSource : IAtsJobSource
 
     private static string? Trunc(string? s, int n) => string.IsNullOrEmpty(s) ? null : (s.Length <= n ? s : s.Substring(0, n));
 
+    private static string? NormalizeInterval(string? v)
+    {
+        if (string.IsNullOrEmpty(v)) return null;
+        var l = v.ToLowerInvariant();
+        if (l.Contains("year") || l == "annual") return "year";
+        if (l.Contains("month")) return "month";
+        if (l.Contains("hour")) return "hour";
+        return null;
+    }
+
     private sealed class Posting
     {
         [JsonPropertyName("id")]              public string? Id { get; set; }
@@ -84,6 +98,7 @@ public sealed class LeverJobSource : IAtsJobSource
         [JsonPropertyName("workplaceType")]   public string? WorkplaceType { get; set; }
         [JsonPropertyName("descriptionPlain")] public string? DescriptionPlain { get; set; }
         [JsonPropertyName("categories")]      public Categories? Categories { get; set; }
+        [JsonPropertyName("salaryRange")]     public SalaryRangeObj? SalaryRange { get; set; }
     }
 
     private sealed class Categories
@@ -92,5 +107,13 @@ public sealed class LeverJobSource : IAtsJobSource
         [JsonPropertyName("location")]   public string? Location { get; set; }
         [JsonPropertyName("team")]       public string? Team { get; set; }
         [JsonPropertyName("department")] public string? Department { get; set; }
+    }
+
+    private sealed class SalaryRangeObj
+    {
+        [JsonPropertyName("min")]      public int? Min { get; set; }
+        [JsonPropertyName("max")]      public int? Max { get; set; }
+        [JsonPropertyName("currency")] public string? Currency { get; set; }
+        [JsonPropertyName("interval")] public string? Interval { get; set; }
     }
 }

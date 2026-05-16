@@ -108,6 +108,8 @@ internal static class JsonLdJobExtractor
                   ?? url
                   ?? title;
 
+        var (smin, smax, scurrency, speriod) = ExtractSalary(obj);
+
         return new RawJobPosting
         {
             NativeId = ShortHash(native),
@@ -117,8 +119,54 @@ internal static class JsonLdJobExtractor
             RemoteType = remoteType,
             EmploymentType = employmentType,
             Department = department,
+            SalaryMin = smin,
+            SalaryMax = smax,
+            SalaryCurrency = scurrency,
+            SalaryPeriod = speriod,
             DescriptionSnippet = string.IsNullOrEmpty(description) ? null : (description.Length <= 500 ? description : description.Substring(0, 500)),
         };
+    }
+
+    /// <summary>Parse schema.org baseSalary. Shape commonly:
+    /// { "@type": "MonetaryAmount", "currency": "USD",
+    ///   "value": { "@type": "QuantitativeValue", "minValue": 80000, "maxValue": 120000, "unitText": "YEAR" } }
+    /// </summary>
+    private static (int? Min, int? Max, string? Currency, string? Period) ExtractSalary(JsonElement obj)
+    {
+        if (!obj.TryGetProperty("baseSalary", out var bs)) return (null, null, null, null);
+
+        if (bs.ValueKind == JsonValueKind.Number && bs.TryGetInt32(out var single))
+            return (single, single, null, null);
+
+        if (bs.ValueKind != JsonValueKind.Object) return (null, null, null, null);
+
+        string? currency = StrOrNull(bs, "currency");
+        if (!bs.TryGetProperty("value", out var v)) return (null, null, currency, null);
+
+        if (v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var asSingle))
+            return (asSingle, asSingle, currency, null);
+
+        if (v.ValueKind != JsonValueKind.Object) return (null, null, currency, null);
+
+        int? min = TryReadInt(v, "minValue") ?? TryReadInt(v, "value");
+        int? max = TryReadInt(v, "maxValue") ?? min;
+        string? period = (StrOrNull(v, "unitText") ?? "").ToUpperInvariant() switch
+        {
+            "YEAR"  => "year",
+            "MONTH" => "month",
+            "HOUR"  => "hour",
+            _ => null,
+        };
+        return (min, max, currency, period);
+    }
+
+    private static int? TryReadInt(JsonElement obj, string name)
+    {
+        if (!obj.TryGetProperty(name, out var p)) return null;
+        if (p.ValueKind == JsonValueKind.Number && p.TryGetInt32(out var i)) return i;
+        if (p.ValueKind == JsonValueKind.Number && p.TryGetDouble(out var d)) return (int)Math.Round(d);
+        if (p.ValueKind == JsonValueKind.String && int.TryParse(p.GetString(), out var s)) return s;
+        return null;
     }
 
     private static string? StrOrNull(JsonElement obj, params string[] path)

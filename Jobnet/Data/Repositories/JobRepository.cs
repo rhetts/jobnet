@@ -11,7 +11,10 @@ public sealed class JobRepository : IJobRepository
     private const string SelectAll = @"
         SELECT id, company_id, hash, hash_tier, title, url, location,
                remote_type, employment_type, level_id,
-               description_snippet, salary_range, source, interest_level, notes,
+               description_snippet, salary_range,
+               salary_min AS SalaryMin, salary_max AS SalaryMax,
+               salary_currency AS SalaryCurrency, salary_period AS SalaryPeriod,
+               source, interest_level, notes,
                extraction_version, date_first_seen, date_last_seen, date_removed, is_active
         FROM jobs";
 
@@ -55,11 +58,15 @@ public sealed class JobRepository : IJobRepository
         var jobId = (int)conn.ExecuteScalar<long>(@"
             INSERT INTO jobs (company_id, hash, hash_tier, title, url, location,
                               remote_type, employment_type, level_id,
-                              description_snippet, salary_range, source, interest_level,
+                              description_snippet, salary_range,
+                              salary_min, salary_max, salary_currency, salary_period,
+                              source, interest_level,
                               date_first_seen, date_last_seen, is_active)
             VALUES (@CompanyId, @HashKey, @HashTier, @Title, @Url, @Location,
                     @RemoteType, @EmploymentType, @LevelId,
-                    @DescriptionSnippet, @SalaryRange, @Source, @InterestLevelText,
+                    @DescriptionSnippet, @SalaryRange,
+                    @SalaryMin, @SalaryMax, @SalaryCurrency, @SalaryPeriod,
+                    @Source, @InterestLevelText,
                     @DateFirstSeenText, @DateLastSeenText, 1);
             SELECT last_insert_rowid();",
             new
@@ -75,6 +82,10 @@ public sealed class JobRepository : IJobRepository
                 job.LevelId,
                 job.DescriptionSnippet,
                 job.SalaryRange,
+                job.SalaryMin,
+                job.SalaryMax,
+                job.SalaryCurrency,
+                job.SalaryPeriod,
                 Source = "fake-seed",
                 InterestLevelText = ToDbText(job.InterestLevel),
                 DateFirstSeenText = job.DateFirstSeen.ToUniversalTime().ToString("o"),
@@ -98,11 +109,15 @@ public sealed class JobRepository : IJobRepository
             var newId = (int)conn.ExecuteScalar<long>(@"
                 INSERT INTO jobs (company_id, hash, hash_tier, title, url, location,
                                   remote_type, employment_type, level_id,
-                                  description_snippet, salary_range, source, interest_level,
+                                  description_snippet, salary_range,
+                                  salary_min, salary_max, salary_currency, salary_period,
+                                  source, interest_level,
                                   date_first_seen, date_last_seen, is_active)
                 VALUES (@CompanyId, @HashKey, @HashTier, @Title, @Url, @Location,
                         @RemoteType, @EmploymentType, @LevelId,
-                        @DescriptionSnippet, @SalaryRange, @Source, @InterestLevelText,
+                        @DescriptionSnippet, @SalaryRange,
+                        @SalaryMin, @SalaryMax, @SalaryCurrency, @SalaryPeriod,
+                        @Source, @InterestLevelText,
                         @DateFirstSeenText, @DateLastSeenText, 1);
                 SELECT last_insert_rowid();",
                 new
@@ -110,6 +125,7 @@ public sealed class JobRepository : IJobRepository
                     job.CompanyId, HashKey = hashKey, HashTier = hashTier,
                     job.Title, job.Url, job.Location, job.RemoteType, job.EmploymentType,
                     job.LevelId, job.DescriptionSnippet, job.SalaryRange,
+                    job.SalaryMin, job.SalaryMax, job.SalaryCurrency, job.SalaryPeriod,
                     Source = "ats-refresh",
                     InterestLevelText = ToDbText(job.InterestLevel),
                     DateFirstSeenText = job.DateFirstSeen.ToUniversalTime().ToString("o"),
@@ -120,7 +136,7 @@ public sealed class JobRepository : IJobRepository
             return (newId, true);
         }
 
-        // Existing: bump last_seen, reactivate if removed
+        // Existing: bump last_seen, reactivate if removed, refresh salary if newly available
         conn.Execute(@"
             UPDATE jobs SET
                 date_last_seen = @LastSeen,
@@ -130,6 +146,10 @@ public sealed class JobRepository : IJobRepository
                 employment_type = COALESCE(@EmploymentType, employment_type),
                 level_id = COALESCE(@LevelId, level_id),
                 description_snippet = COALESCE(@Description, description_snippet),
+                salary_min      = COALESCE(@SalaryMin, salary_min),
+                salary_max      = COALESCE(@SalaryMax, salary_max),
+                salary_currency = COALESCE(@SalaryCurrency, salary_currency),
+                salary_period   = COALESCE(@SalaryPeriod, salary_period),
                 url = COALESCE(@Url, url),
                 is_active = 1,
                 date_removed = NULL
@@ -140,6 +160,7 @@ public sealed class JobRepository : IJobRepository
                 LastSeen = job.DateLastSeen.ToUniversalTime().ToString("o"),
                 job.Title, job.Location, job.RemoteType, job.EmploymentType,
                 job.LevelId, Description = job.DescriptionSnippet, job.Url,
+                job.SalaryMin, job.SalaryMax, job.SalaryCurrency, job.SalaryPeriod,
             });
         if (job.AreaIds.Count > 0) _areas.SetAreasForJob(existingId.Value, job.AreaIds);
         return (existingId.Value, false);
@@ -228,6 +249,10 @@ public sealed class JobRepository : IJobRepository
         LevelId = r.LevelId,
         DescriptionSnippet = r.DescriptionSnippet,
         SalaryRange = r.SalaryRange,
+        SalaryMin = r.SalaryMin,
+        SalaryMax = r.SalaryMax,
+        SalaryCurrency = r.SalaryCurrency,
+        SalaryPeriod = r.SalaryPeriod,
         InterestLevel = ParseInterest(r.InterestLevel),
         DateFirstSeen = DateTime.Parse(r.DateFirstSeen).ToUniversalTime(),
         DateLastSeen = DateTime.Parse(r.DateLastSeen).ToUniversalTime(),
@@ -263,6 +288,10 @@ public sealed class JobRepository : IJobRepository
         public int? LevelId { get; set; }
         public string? DescriptionSnippet { get; set; }
         public string? SalaryRange { get; set; }
+        public int? SalaryMin { get; set; }
+        public int? SalaryMax { get; set; }
+        public string? SalaryCurrency { get; set; }
+        public string? SalaryPeriod { get; set; }
         public string? Source { get; set; }
         public string? InterestLevel { get; set; }
         public string? Notes { get; set; }

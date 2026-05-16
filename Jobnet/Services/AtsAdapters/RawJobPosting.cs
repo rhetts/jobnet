@@ -13,4 +13,8 @@ public sealed class RawJobPosting
     public string? Department { get; init; }
     public string? DescriptionSnippet { get; init; }
     public string? SalaryRange { get; init; }
+    public int? SalaryMin { get; init; }
+    public int? SalaryMax { get; init; }
+    public string? SalaryCurrency { get; init; }
+    public string? SalaryPeriod { get; init; }   // 'year' | 'month' | 'hour' | null
 }
