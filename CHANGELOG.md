@@ -1,5 +1,44 @@
 # Jobnet Changelog
 
+## 2026-05-15 (afternoon) — Filters, salary, seed-companies
+
+Four product improvements.
+
+### "Show all companies" toggle (left pane)
+
+Default view now **hides companies with 0 active jobs**. With ~50 companies in
+the DB but only a handful yielding jobs, the empty rows were noise. New
+checkbox under the search box reveals them when you want to triage.
+
+### Job filter row (right pane)
+
+Above the jobs list: keyword text box + level dropdown + area dropdown +
+Clear-filters button. All filter in-memory via the JobsView ICollectionView,
+so updates are instant. The keyword matches title, company name, location,
+or description snippet.
+
+### Salary min/max parsing (migration 013)
+
+Schema gets `salary_min`, `salary_max`, `salary_currency`, `salary_period`.
+Wired through:
+- **Lever** structured `salaryRange { min, max, currency, interval }` field
+- **JSON-LD** schema.org `baseSalary` (handles QuantitativeValue with min/max/unitText)
+- **JobViewModel** meta line: `Remote · Full-time · Score 95 · 3d old · CAD $125K–$155K/yr`
+- **Upsert** preserves existing salary when a refresh returns null
+
+Verified live: **21 of 22 Blackbird jobs now show salary** ($110K–$240K CAD/year).
+
+### Better company discovery — `seed-companies` CLI
+
+New `seed-companies <csv>` bulk-imports companies. Bundled
+`vancouver-companies-seed.csv` with 49 hand-picked Vancouver/BC tech employers.
+Initial import: 44 new (5 already present).
+
+This is the most direct fix for "we don't have enough companies" — Brave-based
+discovery finds too many directory and lead-gen sites; manually-seeded known
+employers are higher signal. After detect-ats runs across the 44 new ones,
+many should resolve to a native ATS adapter and yield real jobs on next refresh.
+
 ## 2026-05-14 → 2026-05-15 (overnight) — Phase 7.5: URL cache, network listener, JSON-LD, recursive crawl
 
 Quick verification when you wake up:

@@ -1,6 +1,6 @@
 # Jobnet — Requirements Document
 
-**Version:** 0.9 (Phase 7.5 — URL cache + network listener + JSON-LD)
+**Version:** 0.10 (Filters, salary, seed-companies bulk import)
 **Last Updated:** 2026-05-15
 **Purpose:** Living requirements document. Update as decisions are made and scope evolves.
 
@@ -547,6 +547,10 @@ CREATE INDEX idx_page_fetches_sha    ON page_fetches(content_sha256);
 | 56 | Cache-first JobRefresher dispatch | Decision tree: (1) native ATS if known, (2) cached job_list URLs, (3) cached department URLs (recursive 1-level crawl), (4) cached careers_root, (5) full rediscovery. Each cached URL that yields ≥1 job is marked; 2 consecutive failures auto-delete. |
 | 57 | Free ATS upgrade | When the network listener observes an ATS API URL for a company without ats_type set, JobRefresher infers type+slug and updates the company. Next refresh uses the native adapter — fast and free. |
 | 58 | Stale URL pruning | Auto-deletes URLs not yielding jobs in 30 days (configurable). Runs at start of RefreshAllAsync. `prune-urls [--days N]` CLI for manual cleanup. |
+| 59 | Company list default view | Hides companies with 0 active jobs by default. "Show all (including 0 jobs)" checkbox in the left pane reveals them. The "All Jobs" sentinel always shows. |
+| 60 | Job filter UI | Right pane has keyword text box + level dropdown + area dropdown + Clear-filters button. Filters in-memory via JobsView.Filter — updates instant. Keyword matches title/company/location/description. |
+| 61 | Salary fields | `jobs.salary_min/salary_max/salary_currency/salary_period` (migration 013). Populated from Lever's `salaryRange` and schema.org JSON-LD `baseSalary`. Upsert preserves existing values when refresh returns null. JobViewModel renders as "CAD $125K–$155K/yr". |
+| 62 | Bulk company seeding | `seed-companies <csv>` lets the user paste a curated list of known employers. CSV format: name,domain[,careers_url][,city][,ats_type][,ats_slug]. Skips existing domains. Most direct path to more jobs when discovery returns noisy results. |
 
 ## 9. Remaining Open Questions
 
@@ -602,6 +606,7 @@ Build sequence (each phase produces something runnable):
 | `parse-page <url>` | Render a careers page with Playwright + AI-extract jobs (Phase 7) |
 | `company-urls <domain> [--kind X]` | Inspect the per-company URL cache (careers_root, department, job_list, ats_api, job_detail) |
 | `prune-urls [--days N]` | Delete cached URLs that haven't yielded jobs in N days (default 30) |
+| `seed-companies <csv>` | Bulk-import companies from a CSV (name,domain[,careers_url][,city][,ats_type][,ats_slug]) |
 | `detect-ats <domain> \| --all \| --missing` | Detect which ATS a company uses (Greenhouse/Lever/Ashby/Workable/SmartRecruiters/Recruitee) |
 | `profile-company <domain> \| --all-missing` | Generate a Claude Haiku company profile from homepage + /about |
 | `refresh-jobs [--company X]` | Fetch jobs from ATS APIs and upsert; auto-classify on insert |
