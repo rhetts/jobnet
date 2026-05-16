@@ -40,6 +40,9 @@ public partial class MainWindowViewModel : ObservableObject
     private string _companySearchText = string.Empty;
 
     [ObservableProperty]
+    private bool _showAllCompanies;          // default: only companies with active jobs
+
+    [ObservableProperty]
     private bool _showRemovedJobs;
 
     [ObservableProperty]
@@ -48,13 +51,31 @@ public partial class MainWindowViewModel : ObservableObject
     [ObservableProperty]
     private string _jobsPaneHeader = "All Jobs";
 
+    // Job filters (right pane)
+    [ObservableProperty]
+    private string _jobKeywordFilter = string.Empty;
+
+    [ObservableProperty]
+    private Level? _levelFilter;     // null = any
+
+    [ObservableProperty]
+    private Area? _areaFilter;       // null = any
+
+    public ObservableCollection<Level> AvailableLevels { get; } = new();
+    public ObservableCollection<Area>  AvailableAreas  { get; } = new();
+
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(DiscoverCompaniesCommand))]
     [NotifyCanExecuteChangedFor(nameof(RefreshJobsCommand))]
     private bool _isBusy;
 
+    private readonly ILevelRepository? _levelsRepo;
+    private readonly IAreaRepository? _areasRepo;
+
     public MainWindowViewModel(IJobDataService data,
                                 IJobRepository? jobsRepo = null,
+                                ILevelRepository? levelsRepo = null,
+                                IAreaRepository? areasRepo = null,
                                 IDiscoveryService? discovery = null,
                                 IJobRefresher? refresher = null,
                                 Func<SettingsWindow>? settingsWindowFactory = null,
@@ -62,6 +83,8 @@ public partial class MainWindowViewModel : ObservableObject
     {
         _data = data;
         _jobsRepo = jobsRepo;
+        _levelsRepo = levelsRepo;
+        _areasRepo = areasRepo;
         _discovery = discovery;
         _refresher = refresher;
         _settingsWindowFactory = settingsWindowFactory;
@@ -72,6 +95,12 @@ public partial class MainWindowViewModel : ObservableObject
 
         JobsView = CollectionViewSource.GetDefaultView(Jobs);
         JobsView.SortDescriptions.Add(new SortDescription(nameof(JobViewModel.CompositeScore), ListSortDirection.Descending));
+        JobsView.Filter = FilterJobInView;
+
+        if (_levelsRepo is not null)
+            foreach (var l in _levelsRepo.GetAll()) AvailableLevels.Add(l);
+        if (_areasRepo is not null)
+            foreach (var a in _areasRepo.GetAll()) AvailableAreas.Add(a);
 
         LoadFromDataService();
     }
@@ -116,15 +145,13 @@ public partial class MainWindowViewModel : ObservableObject
         ReloadJobs();
     }
 
-    partial void OnCompanySearchTextChanged(string value)
-    {
-        CompaniesView.Refresh();
-    }
+    partial void OnCompanySearchTextChanged(string value) => CompaniesView.Refresh();
+    partial void OnShowAllCompaniesChanged(bool value) => CompaniesView.Refresh();
 
-    partial void OnShowRemovedJobsChanged(bool value)
-    {
-        ReloadJobs();
-    }
+    partial void OnShowRemovedJobsChanged(bool value) => ReloadJobs();
+    partial void OnJobKeywordFilterChanged(string value) => JobsView.Refresh();
+    partial void OnLevelFilterChanged(Level? value) => JobsView.Refresh();
+    partial void OnAreaFilterChanged(Area? value) => JobsView.Refresh();
 
     private void ReloadJobs()
     {
@@ -148,8 +175,31 @@ public partial class MainWindowViewModel : ObservableObject
     {
         if (obj is not CompanyViewModel vm) return false;
         if (vm.IsAllJobsSentinel) return true;
+
+        // Default view: hide companies with 0 active jobs. Toggle via ShowAllCompanies.
+        if (!ShowAllCompanies && vm.ActiveJobCount == 0) return false;
+
         if (string.IsNullOrWhiteSpace(CompanySearchText)) return true;
         return vm.Name.Contains(CompanySearchText, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private bool FilterJobInView(object obj)
+    {
+        if (obj is not JobViewModel jvm) return false;
+
+        if (LevelFilter is not null && jvm.Job.LevelId != LevelFilter.Id) return false;
+        if (AreaFilter is not null && !jvm.Job.AreaIds.Contains(AreaFilter.Id)) return false;
+
+        if (!string.IsNullOrWhiteSpace(JobKeywordFilter))
+        {
+            var needle = JobKeywordFilter.Trim();
+            var inTitle   = jvm.Job.Title?.Contains(needle, StringComparison.OrdinalIgnoreCase) == true;
+            var inCompany = jvm.CompanyName?.Contains(needle, StringComparison.OrdinalIgnoreCase) == true;
+            var inDesc    = jvm.Job.DescriptionSnippet?.Contains(needle, StringComparison.OrdinalIgnoreCase) == true;
+            var inLoc     = jvm.Job.Location?.Contains(needle, StringComparison.OrdinalIgnoreCase) == true;
+            if (!(inTitle || inCompany || inDesc || inLoc)) return false;
+        }
+        return true;
     }
 
     private void RefreshStatusBar()
@@ -234,6 +284,14 @@ public partial class MainWindowViewModel : ObservableObject
         var window = _settingsWindowFactory();
         window.Owner = Application.Current.MainWindow;
         window.ShowDialog();
+    }
+
+    [RelayCommand]
+    private void ClearJobFilters()
+    {
+        JobKeywordFilter = string.Empty;
+        LevelFilter = null;
+        AreaFilter = null;
     }
 
     public void OpenCompanyProfile(int companyId)
