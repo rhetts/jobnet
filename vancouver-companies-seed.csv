@@ -1,0 +1,54 @@
+# Curated Vancouver / BC tech company seed list.
+# Many of these are on a known ATS — `detect-ats --missing` after import will fill in the slugs.
+# Format: name,domain[,careers_url][,city][,ats_type][,ats_slug]
+
+name,domain,careers_url,city
+Shopify,shopify.com,https://www.shopify.com/careers,Toronto/Remote
+1Password,1password.com,https://1password.com/careers,Toronto
+Faire,faire.com,https://www.faire.com/careers,San Francisco/Remote
+Article,article.com,https://www.article.com/careers,Vancouver
+Procurify,procurify.com,https://procurify.com/careers,Vancouver
+Clio,clio.com,https://www.clio.com/about/careers,Vancouver
+Thinkific,thinkific.com,https://www.thinkific.com/careers,Vancouver
+Vidyard,vidyard.com,https://www.vidyard.com/careers,Kitchener
+Trulioo,trulioo.com,https://www.trulioo.com/company/careers,Vancouver
+GeoComply,geocomply.com,https://www.geocomply.com/careers,Vancouver
+Aritzia,aritzia.com,https://www.aritzia.com/careers,Vancouver
+TELUS,telus.com,https://careers.telus.com,Vancouver
+Mozilla,mozilla.org,https://careers.mozilla.org,Vancouver/Remote
+Amazon Vancouver,amazon.jobs,https://www.amazon.jobs/en/locations/vancouver-british-columbia,Vancouver
+EA Vancouver,ea.com,https://careers.ea.com,Burnaby
+D2L,d2l.com,https://www.d2l.com/careers,Kitchener
+7shifts,7shifts.com,https://www.7shifts.com/careers,Toronto
+Top Hat,tophat.com,https://tophat.com/careers,Toronto
+Wealthsimple,wealthsimple.com,https://www.wealthsimple.com/en-ca/careers,Toronto
+League,league.com,https://league.com/ca/careers,Toronto
+Ada,ada.cx,https://www.ada.cx/careers,Toronto
+Knock,knock.com,https://www.knock.com/careers,Toronto
+Tasktop,tasktop.com,https://www.tasktop.com/about/careers,Vancouver
+Lendesk,lendesk.com,https://www.lendesk.com/careers,Vancouver
+Galvanize,wegalvanize.com,https://www.wegalvanize.com/careers,Vancouver
+Plenty of Fish,pof.com,https://pof.com/careers,Vancouver
+Boldr,hellosvr.com,,Vancouver
+Mobify,mobify.com,,Vancouver
+Recollective,recollective.com,https://www.recollective.com/about/careers,Vancouver
+Shoplazza,shoplazza.com,,Vancouver
+Hyperwallet,hyperwallet.com,,Vancouver
+SAP Vancouver,sap.com,https://jobs.sap.com,Vancouver
+Microsoft Vancouver,microsoft.com,https://careers.microsoft.com,Vancouver
+Unity Vancouver,unity.com,https://careers.unity.com,Vancouver
+Slack Vancouver,slack.com,https://slack.com/careers,Vancouver
+Klue,klue.com,,Vancouver
+Hootsuite,hootsuite.com,https://careers.hootsuite.com,Vancouver
+Visier,visier.com,https://www.visier.com/careers,Vancouver
+SkyBox Labs,skyboxlabs.com,https://skyboxlabs.com/jobs/,Vancouver
+Blackbird Interactive,blackbirdinteractive.com,https://blackbirdinteractive.com/careers-2/,Vancouver
+Phantom AI,phantom.ai,https://www.phantom.ai/careers,Vancouver/Mountain View
+Riipen,riipen.com,https://www.riipen.com/about/careers,Vancouver
+Copperleaf,copperleaftech.com,https://www.copperleaftech.com/careers,Vancouver
+Avigilon,avigilon.com,https://www.avigilon.com/careers,Vancouver
+PainWorth,painworth.com,,Vancouver
+ZeMoSo,zemosolabs.com,,Vancouver
+Mosaic Forecast,mosaic.com,https://www.mosaic.com/careers,Vancouver
+Convictional,convictional.com,https://www.convictional.com/careers,Toronto
+Bench,bench.co,https://bench.co/careers,Vancouver
