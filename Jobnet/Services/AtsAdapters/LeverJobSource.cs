@@ -49,7 +49,7 @@ public sealed class LeverJobSource : IAtsJobSource
                 RemoteType = GuessRemoteType(j.Categories?.Location, j.WorkplaceType),
                 EmploymentType = j.Categories?.Commitment?.ToLowerInvariant(),
                 Department = j.Categories?.Department ?? j.Categories?.Team,
-                DescriptionSnippet = Trunc(j.DescriptionPlain, 500),
+                DescriptionSnippet = SnippetCleaner.Clean(j.DescriptionPlain, maxChars: 500),
                 SalaryMin = j.SalaryRange?.Min,
                 SalaryMax = j.SalaryRange?.Max,
                 SalaryCurrency = j.SalaryRange?.Currency,

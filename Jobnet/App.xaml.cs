@@ -60,6 +60,33 @@ public partial class App : Application
                 services.AddTransient<CompanyProfileViewModel>();
                 services.AddTransient<Views.CompanyProfileWindow>();
                 services.AddSingleton<Func<Views.CompanyProfileWindow>>(sp => () => sp.GetRequiredService<Views.CompanyProfileWindow>());
+
+                // RefreshViewModel is a singleton so the in-flight refresh (StatusText, IsBusy,
+                // last-run labels) survives closing/reopening the window. The Window itself stays
+                // transient — a fresh WPF Window is created each time and rebinds to the same VM.
+                services.AddSingleton<RefreshViewModel>();
+                services.AddTransient<Views.RefreshWindow>();
+                services.AddSingleton<Func<Views.RefreshWindow>>(sp => () => sp.GetRequiredService<Views.RefreshWindow>());
+
+                services.AddTransient<SavedFiltersViewModel>();
+                services.AddTransient<Views.SavedFiltersWindow>();
+                services.AddSingleton<Func<Views.SavedFiltersWindow>>(sp => () => sp.GetRequiredService<Views.SavedFiltersWindow>());
+
+                services.AddTransient<ResumeViewModel>();
+                services.AddTransient<Views.ResumeWindow>();
+                services.AddSingleton<Func<Views.ResumeWindow>>(sp => () => sp.GetRequiredService<Views.ResumeWindow>());
+
+                services.AddTransient<ServiceLimitsViewModel>();
+                services.AddTransient<Views.ServiceLimitsWindow>();
+                services.AddSingleton<Func<Views.ServiceLimitsWindow>>(sp => () => sp.GetRequiredService<Views.ServiceLimitsWindow>());
+
+                services.AddTransient<RunsViewModel>();
+                services.AddTransient<Views.RunsWindow>();
+                services.AddSingleton<Func<Views.RunsWindow>>(sp => () => sp.GetRequiredService<Views.RunsWindow>());
+
+                services.AddTransient<CoverLetterViewModel>();
+                services.AddTransient<Views.CoverLetterWindow>();
+                services.AddSingleton<Func<Views.CoverLetterWindow>>(sp => () => sp.GetRequiredService<Views.CoverLetterWindow>());
             })
             .Build();
     }
@@ -71,6 +98,21 @@ public partial class App : Application
         {
             Host.Start();
             Host.Services.GetRequiredService<MigrationRunner>().Run();
+
+            // Clean up any run_log rows left as 'running' from a previous crash or kill, and
+            // backfill their aggregate counts from completed step rows so the history page
+            // shows what actually happened.
+            try
+            {
+                var cleaned = Host.Services.GetRequiredService<Services.Logging.IRunLogger>().CleanupDanglingRuns();
+                if (cleaned > 0)
+                    File.AppendAllText(_logPath, $"Run-log cleanup: marked {cleaned} dangling row(s) as 'interrupted'.\n");
+            }
+            catch (Exception cleanupEx)
+            {
+                LogException("RunLogCleanup", cleanupEx);
+            }
+
             var window = Host.Services.GetRequiredService<MainWindow>();
             window.Show();
             File.AppendAllText(_logPath, "Main window shown OK\n");
@@ -89,6 +131,23 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        // Explicitly dispose resources that own native handles / child processes — Host.Dispose
+        // alone doesn't reach them deterministically, so without this Jobnet.exe stays alive
+        // after the main window closes (Playwright keeps its Chromium worker; LLamaSharp keeps
+        // GPU memory mapped).
+        try
+        {
+            if (Host.Services.GetService<Services.Playwright.IPlaywrightFetcher>() is IAsyncDisposable pw)
+                pw.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(3));
+        }
+        catch (Exception ex) { LogException("OnExit.PlaywrightDispose", ex); }
+
+        try
+        {
+            (Host.Services.GetService<Services.Ai.LLamaClient>() as IDisposable)?.Dispose();
+        }
+        catch (Exception ex) { LogException("OnExit.LLamaDispose", ex); }
+
         Host.StopAsync(TimeSpan.FromSeconds(2)).GetAwaiter().GetResult();
         Host.Dispose();
         base.OnExit(e);

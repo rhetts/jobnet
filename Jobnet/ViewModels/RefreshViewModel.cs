@@ -1,0 +1,747 @@
+using System;
+using System.Threading.Tasks;
+using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
+using Jobnet.Data.Repositories;
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
+using System.Linq;
+using Jobnet.Services.AtsAdapters;
+using Jobnet.Services.Classification;
+using Jobnet.Services.Discovery;
+using Jobnet.Services.Discovery.Strategies;
+using Jobnet.Services.Location;
+using Jobnet.Services.Logging;
+using Jobnet.Services.Resume;
+using Jobnet.Services.Summarization;
+
+namespace Jobnet.ViewModels;
+
+public partial class RefreshViewModel : ObservableObject
+{
+    private readonly IDiscoveryService _discovery;
+    private readonly ICompanyDirectoryHarvester _harvester;
+    private readonly IDiscoveryStrategyProvider _strategyProvider;
+
+    [ObservableProperty]
+    private bool _useBraveSearch;
+
+    [ObservableProperty]
+    private bool _useDirectories = true;   // primary high-yield source — on by default
+
+    [ObservableProperty]
+    private bool _useBoards;
+
+    [ObservableProperty]
+    private string _lastBraveRunText = "";
+
+    [ObservableProperty]
+    private string _lastDirectoriesRunText = "";
+
+    [ObservableProperty]
+    private string _lastBoardsRunText = "";
+
+    [ObservableProperty]
+    private string _lastDiscoverJobsRunText = "";
+
+    [ObservableProperty]
+    private string _lastRefreshExistingRunText = "";
+
+    [ObservableProperty]
+    private string _lastGenerateSummariesRunText = "";
+
+    [ObservableProperty]
+    private string _lastRegenerateSummariesRunText = "";
+
+    [ObservableProperty]
+    private string _lastCompanyProfilesRunText = "";
+
+    [ObservableProperty]
+    private string _lastReclassifyRunText = "";
+
+    [ObservableProperty]
+    private string _lastPruneRunText = "";
+
+    public sealed record SkipDaysOption(string Label, int Days);
+    public System.Collections.Generic.IReadOnlyList<SkipDaysOption> SkipDaysOptions { get; } = new SkipDaysOption[]
+    {
+        new("Crawl all pages",           0),
+        new("Skip if crawled today",     1),
+        new("Skip if crawled in 3 days", 3),
+        new("Skip if crawled in 7 days", 7),
+    };
+
+    [ObservableProperty]
+    private SkipDaysOption? _selectedSkipDays;
+
+    public sealed record SkipScanOption(string Label, int Days);
+    public System.Collections.Generic.IReadOnlyList<SkipScanOption> SkipScanOptions { get; } = new SkipScanOption[]
+    {
+        new("Refresh all companies",       0),
+        new("Skip if scanned today",       1),
+        new("Skip if scanned in 3 days",   3),
+        new("Skip if scanned in 7 days",   7),
+        new("Skip if scanned in 14 days", 14),
+    };
+
+    [ObservableProperty]
+    private SkipScanOption? _selectedSkipScan;
+
+    // Maintenance checkboxes — each step in the consolidated batch. Persisted per-step so the
+    // user's last selection survives reopens.
+    [ObservableProperty] private bool _doDiscoverJobs = true;
+    [ObservableProperty] private bool _doRefreshExisting;
+    [ObservableProperty] private bool _doRegenerateSummaries;
+    [ObservableProperty] private bool _doReclassifyJobs = true;
+    [ObservableProperty] private bool _doPruneOutOfArea = true;
+
+    private readonly IConfigRepository _configRepo;
+    private readonly ICompanyRepository _companiesRepo;
+    private readonly Jobnet.Services.Profiling.ICompanyProfiler _profiler;
+    private readonly IJobRefresher _refresher;
+    private readonly IJobDetailRefresher _detailRefresher;
+    private readonly IJobSummarizer _summarizer;
+    private readonly IJobReclassifier _reclassifier;
+    private readonly IJobRepository _jobs;
+    private readonly IResumeMatcher _resume;
+    private readonly IRunLogger _runs;
+    private readonly Jobnet.Services.ApiUsage.IApiQuotaController _quota;
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(DiscoverCompaniesCommand))]
+    [NotifyCanExecuteChangedFor(nameof(DiscoverJobsCommand))]
+    [NotifyCanExecuteChangedFor(nameof(RefreshExistingCommand))]
+    [NotifyCanExecuteChangedFor(nameof(PruneOutOfAreaCommand))]
+    [NotifyCanExecuteChangedFor(nameof(GenerateSummariesCommand))]
+    [NotifyCanExecuteChangedFor(nameof(RegenerateSummariesCommand))]
+    [NotifyCanExecuteChangedFor(nameof(GenerateCompanyProfilesCommand))]
+    [NotifyCanExecuteChangedFor(nameof(ReclassifyJobsCommand))]
+    [NotifyCanExecuteChangedFor(nameof(MatchResumeCommand))]
+    [NotifyCanExecuteChangedFor(nameof(StopRunCommand))]
+    [NotifyCanExecuteChangedFor(nameof(RunMaintenanceCommand))]
+    private bool _isBusy;
+
+    [ObservableProperty]
+    private string _statusText = "Pick an action.";
+
+    /// <summary>Raised after any operation completes so the main window can reload its data.</summary>
+    public event Action? Completed;
+
+    public RefreshViewModel(IDiscoveryService discovery, ICompanyDirectoryHarvester harvester,
+                             IDiscoveryStrategyProvider strategyProvider,
+                             IJobRefresher refresher,
+                             IJobDetailRefresher detailRefresher, IJobSummarizer summarizer,
+                             IJobReclassifier reclassifier, IJobRepository jobs,
+                             IResumeMatcher resume,
+                             IRunLogger runs,
+                             IConfigRepository config,
+                             ICompanyRepository companies,
+                             Jobnet.Services.Profiling.ICompanyProfiler profiler,
+                             Jobnet.Services.ApiUsage.IApiQuotaController quota)
+    {
+        _discovery = discovery;
+        _harvester = harvester;
+        _strategyProvider = strategyProvider;
+        _refresher = refresher;
+        _detailRefresher = detailRefresher;
+        _summarizer = summarizer;
+        _reclassifier = reclassifier;
+        _jobs = jobs;
+        _resume = resume;
+        _runs = runs;
+        _configRepo = config;
+        _companiesRepo = companies;
+        _profiler = profiler;
+        _quota = quota;
+
+        // Restore previously-selected skip-days; default to "Crawl all pages" (0d).
+        var saved = int.TryParse(_configRepo.GetOrDefault("discovery_skip_days_threshold", "0"), out var sd) ? sd : 0;
+        _selectedSkipDays = SkipDaysOptions.FirstOrDefault(o => o.Days == saved) ?? SkipDaysOptions[0];
+
+        var savedScan = int.TryParse(_configRepo.GetOrDefault("discover_jobs_skip_days_threshold", "0"), out var ss) ? ss : 0;
+        _selectedSkipScan = SkipScanOptions.FirstOrDefault(o => o.Days == savedScan) ?? SkipScanOptions[0];
+
+        _doDiscoverJobs        = _configRepo.GetOrDefault("ui_maint_discover_jobs",        "true")  == "true";
+        _doRefreshExisting     = _configRepo.GetOrDefault("ui_maint_refresh_existing",     "false") == "true";
+        _doRegenerateSummaries = _configRepo.GetOrDefault("ui_maint_regen_summaries",      "false") == "true";
+        _doReclassifyJobs      = _configRepo.GetOrDefault("ui_maint_reclassify",           "true")  == "true";
+        _doPruneOutOfArea      = _configRepo.GetOrDefault("ui_maint_prune",                "true")  == "true";
+
+        RefreshLastRunTimes();
+    }
+
+
+    private void RefreshLastRunTimes()
+    {
+        LastBraveRunText       = FormatLastRun(_runs.GetLastRunStartedAt("discover_companies", "brave"));
+        LastDirectoriesRunText = FormatLastRun(_runs.GetLastRunStartedAt("discover_companies", "directories"));
+        LastBoardsRunText      = FormatLastRun(_runs.GetLastRunStartedAt("discover_companies", "boards"));
+
+        LastDiscoverJobsRunText         = FormatLastRun(_runs.GetLastRunStartedAt("refresh_jobs"));
+        LastRefreshExistingRunText      = FormatLastRun(_runs.GetLastRunStartedAt("refresh_existing"));
+        LastGenerateSummariesRunText    = FormatLastRun(_runs.GetLastRunStartedAt("summary_backfill"));
+        LastRegenerateSummariesRunText  = FormatLastRun(_runs.GetLastRunStartedAt("summary_regenerate_all"));
+        LastCompanyProfilesRunText      = FormatLastRun(_runs.GetLastRunStartedAt("company_profile_backfill"));
+        LastReclassifyRunText           = FormatLastRun(_runs.GetLastRunStartedAt("reclassify_jobs"));
+        LastPruneRunText                = FormatLastRun(_runs.GetLastRunStartedAt("prune_out_of_area"));
+    }
+
+    private static string FormatLastRun(DateTime? whenUtc)
+    {
+        if (whenUtc is null) return "never run";
+        var ago = DateTime.UtcNow - whenUtc.Value;
+        string rel;
+        if (ago.TotalSeconds < 60)     rel = "just now";
+        else if (ago.TotalMinutes < 60) rel = $"{(int)ago.TotalMinutes}m ago";
+        else if (ago.TotalHours < 24)   rel = $"{(int)ago.TotalHours}h ago";
+        else if (ago.TotalDays < 30)    rel = $"{(int)ago.TotalDays}d ago";
+        else                            rel = whenUtc.Value.ToLocalTime().ToString("yyyy-MM-dd");
+        return $"last run {rel}";
+    }
+
+    partial void OnIsBusyChanged(bool value)
+    {
+        // Whenever a command finishes, repopulate the per-action "last run" labels.
+        if (!value) RefreshLastRunTimes();
+    }
+
+    partial void OnSelectedSkipDaysChanged(SkipDaysOption? value)
+    {
+        _configRepo?.Set("discovery_skip_days_threshold", (value?.Days ?? 0).ToString());
+    }
+
+    partial void OnSelectedSkipScanChanged(SkipScanOption? value)
+    {
+        _configRepo?.Set("discover_jobs_skip_days_threshold", (value?.Days ?? 0).ToString());
+    }
+
+    private bool CanRun() => !IsBusy;
+
+    private bool CanRunDiscover() => !IsBusy && (UseBraveSearch || UseDirectories || UseBoards);
+
+    private bool CanStop() => IsBusy;
+
+    /// <summary>Stop any in-flight batch by firing the session cancellation token. The currently
+    /// executing AI call (especially local llama) does NOT abort mid-token — it finishes, the
+    /// next ct check in the outer loop sees the cancellation, and the run unwinds with status
+    /// 'cancelled'. Expect ~1 in-flight company to still write its results before stopping.</summary>
+    [RelayCommand(CanExecute = nameof(CanStop))]
+    private void StopRun()
+    {
+        StatusText = "Stop requested — waiting for current step to finish...";
+        _quota.CancelSession();
+    }
+
+    /// <summary>Build a Progress&lt;T&gt; that mirrors batch-service ticks into run_step_log rows. The
+    /// "starting" stage opens a step; "done" closes it with the per-item counts. Captured on the
+    /// UI thread so the SQLite writes run on the dispatcher (single-writer; SQLite WAL is fine).</summary>
+    private IProgress<Jobnet.Services.Logging.BatchStepProgress> StepProgressFor(long runId)
+    {
+        long currentStepId = 0;
+        return new Progress<Jobnet.Services.Logging.BatchStepProgress>(p =>
+        {
+            if (p.Stage == "starting")
+            {
+                currentStepId = _runs.StartStep(runId, p.Name);
+            }
+            else if (currentStepId > 0)
+            {
+                _runs.FinishStep(currentStepId,
+                    status: p.Status ?? "completed",
+                    added: p.Added, updated: p.Updated, skipped: p.Skipped, failed: p.Failed,
+                    errorMessage: p.ErrorMessage);
+                currentStepId = 0;
+            }
+        });
+    }
+
+    /// <summary>Begin a new batch session: clears any prior per-day cancel decisions and
+    /// returns a fresh CancellationToken that fires if the user clicks "No" on a quota popup.
+    /// During consolidated maintenance, the session has already been established by the runner
+    /// — return the existing token instead of resetting it mid-chain (which would clobber any
+    /// pending cancel signal).</summary>
+    private System.Threading.CancellationToken BeginSession()
+    {
+        if (!_runningMaintenance) _quota.ResetSession();
+        return _quota.SessionCancellationToken;
+    }
+
+    /// <summary>True when at least one maintenance checkbox is selected.</summary>
+    private bool CanRunMaintenance() => !IsBusy && (DoDiscoverJobs || DoRefreshExisting || DoRegenerateSummaries || DoReclassifyJobs || DoPruneOutOfArea);
+
+    partial void OnDoDiscoverJobsChanged(bool value)
+    {
+        _configRepo?.Set("ui_maint_discover_jobs", value ? "true" : "false");
+        RunMaintenanceCommand?.NotifyCanExecuteChanged();
+    }
+    partial void OnDoRefreshExistingChanged(bool value)
+    {
+        _configRepo?.Set("ui_maint_refresh_existing", value ? "true" : "false");
+        RunMaintenanceCommand?.NotifyCanExecuteChanged();
+    }
+    partial void OnDoRegenerateSummariesChanged(bool value)
+    {
+        _configRepo?.Set("ui_maint_regen_summaries", value ? "true" : "false");
+        RunMaintenanceCommand?.NotifyCanExecuteChanged();
+    }
+    partial void OnDoReclassifyJobsChanged(bool value)
+    {
+        _configRepo?.Set("ui_maint_reclassify", value ? "true" : "false");
+        RunMaintenanceCommand?.NotifyCanExecuteChanged();
+    }
+    partial void OnDoPruneOutOfAreaChanged(bool value)
+    {
+        _configRepo?.Set("ui_maint_prune", value ? "true" : "false");
+        RunMaintenanceCommand?.NotifyCanExecuteChanged();
+    }
+
+    /// <summary>Run every checked maintenance step in order. Each step manages its own run_log row;
+    /// the consolidated runner just chains the calls and stops on cancellation. IsBusy is held for
+    /// the whole chain so individual steps can't double-trigger via their own CanRun guard.</summary>
+    [RelayCommand(CanExecute = nameof(CanRunMaintenance))]
+    private async Task RunMaintenanceAsync()
+    {
+        _runningMaintenance = true;
+        IsBusy = true;
+        var ct = BeginSession();
+        try
+        {
+            if (DoDiscoverJobs        && !ct.IsCancellationRequested) await DiscoverJobsAsync();
+            if (DoRefreshExisting     && !ct.IsCancellationRequested) await RefreshExistingAsync();
+            if (DoRegenerateSummaries && !ct.IsCancellationRequested) await RegenerateSummariesAsync();
+            // ReclassifyJobs and PruneOutOfArea are sync and they (a) mutate ObservableCollections
+            // via Completed?.Invoke → LoadFromDataService and (b) run in ~tens of milliseconds
+            // even on hundreds of jobs. Wrapping them in Task.Run pushes the collection mutations
+            // to a worker thread and trips WPF's CollectionView dispatcher check. Just call them
+            // synchronously on the UI thread — the brief block is harmless at this size.
+            if (DoReclassifyJobs      && !ct.IsCancellationRequested) ReclassifyJobs();
+            if (DoPruneOutOfArea      && !ct.IsCancellationRequested) PruneOutOfArea();
+        }
+        catch (OperationCanceledException)
+        {
+            StatusText = "Maintenance cancelled.";
+        }
+        finally
+        {
+            _runningMaintenance = false;
+            IsBusy = false;
+        }
+    }
+
+    /// <summary>When true, the per-step IsBusy=false in finally blocks is suppressed so the spinner
+    /// stays on across chained steps. Set inside RunMaintenanceAsync only.</summary>
+    private bool _runningMaintenance;
+
+    [RelayCommand(CanExecute = nameof(CanRunDiscover))]
+    private async Task DiscoverCompaniesAsync()
+    {
+        var sources = new List<IDiscoveryStrategy>();
+        if (UseBraveSearch) sources.Add(_strategyProvider.GetWebSearch());
+        if (UseDirectories) sources.AddRange(_strategyProvider.GetDirectoryStrategies());
+        if (UseBoards)      sources.AddRange(_strategyProvider.GetBoardStrategies());
+
+        if (sources.Count == 0) { StatusText = "Pick at least one source."; return; }
+
+        IsBusy = true;
+        var ct = BeginSession();
+        var summary = new StrategyReport();
+        var scope = string.Join("+", new[]
+        {
+            UseBraveSearch ? "brave" : null,
+            UseDirectories ? "directories" : null,
+            UseBoards      ? "boards"      : null,
+        }.Where(x => x != null));
+        var runId = _runs.StartRun("discover_companies", scope);
+        var runStatus = "completed";
+        try
+        {
+            foreach (var (s, i) in sources.Select((s, i) => (s, i)))
+            {
+                if (ct.IsCancellationRequested) { runStatus = "cancelled"; break; }
+                StatusText = $"[{i + 1}/{sources.Count}] {s.Name}...";
+                var stepId = _runs.StartStep(runId, s.Name);
+                try
+                {
+                    var r = await Task.Run(() => s.RunAsync(), ct).ConfigureAwait(true);
+                    summary.CandidatesExamined       += r.CandidatesExamined;
+                    summary.CompaniesAdded           += r.CompaniesAdded;
+                    summary.CompaniesSkippedExisting += r.CompaniesSkippedExisting;
+                    summary.CompaniesSkippedFiltered += r.CompaniesSkippedFiltered;
+                    foreach (var e in r.Errors) summary.Errors.Add($"[{s.Name}] {e}");
+
+                    _runs.FinishStep(stepId,
+                        status: r.Errors.Count == 0 ? "completed" : "partial",
+                        examined: r.CandidatesExamined,
+                        added:    r.CompaniesAdded,
+                        skipped:  r.CompaniesSkippedExisting,
+                        failed:   r.CompaniesSkippedFiltered,
+                        errorMessage: r.Errors.Count == 0 ? null : string.Join(" | ", r.Errors.Take(3)));
+                    if (r.Errors.Count > 0) runStatus = "partial";
+                }
+                catch (OperationCanceledException)
+                {
+                    _runs.FinishStep(stepId, status: "cancelled");
+                    runStatus = "cancelled";
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    summary.Errors.Add($"[{s.Name}] {ex.GetType().Name}: {ex.Message}");
+                    _runs.FinishStep(stepId, status: "failed", errorMessage: $"{ex.GetType().Name}: {ex.Message}");
+                    runStatus = "partial";
+                }
+            }
+
+            var prefix = runStatus == "cancelled" ? "Cancelled — " : "Done: ";
+            StatusText = $"{prefix}{sources.Count} source(s), " +
+                         $"{summary.CandidatesExamined} examined, " +
+                         $"{summary.CompaniesAdded} added, " +
+                         $"{summary.CompaniesSkippedExisting} already known, " +
+                         $"{summary.CompaniesSkippedFiltered} filtered."
+                         + (summary.Errors.Count > 0 ? $"  First error: {summary.Errors[0]}" : "");
+            Completed?.Invoke();
+
+            // Auto-profile newly-added companies (capped). Skipped if the user cancelled the run.
+            if (runStatus != "cancelled" && summary.CompaniesAdded > 0)
+            {
+                var autoProfile = _configRepo.GetOrDefault("auto_profile_on_discovery", "true") == "true";
+                if (autoProfile)
+                {
+                    var profiled = await Task.Run(() => ProfileMissing(max: 30, ct), ct).ConfigureAwait(true);
+                    if (profiled.profiled > 0 || profiled.failed > 0)
+                        StatusText += $"  Profiles: {profiled.profiled} generated, {profiled.failed} failed.";
+                    Completed?.Invoke();
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            runStatus = "cancelled";
+            StatusText = "Cancelled — daily quota reached.";
+        }
+        catch (Exception ex)
+        {
+            runStatus = "failed";
+            StatusText = $"Failed: {ex.GetType().Name}: {ex.Message}";
+        }
+        finally
+        {
+            _runs.FinishRun(runId, status: runStatus,
+                examined: summary.CandidatesExamined,
+                added: summary.CompaniesAdded,
+                skipped: summary.CompaniesSkippedExisting,
+                failed: summary.CompaniesSkippedFiltered,
+                errorCount: summary.Errors.Count,
+                notes: summary.Errors.Count == 0 ? null : string.Join(" | ", summary.Errors.Take(5)));
+            IsBusy = false;
+        }
+    }
+
+    /// <summary>Generate AI profiles for companies that don't have one. Synchronous (caller should
+    /// wrap in Task.Run if used from the UI thread). Returns counts.</summary>
+    private (int profiled, int failed) ProfileMissing(int max, System.Threading.CancellationToken ct)
+    {
+        var pending = _companiesRepo.GetAll()
+            .Where(c => _companiesRepo.GetProfile(c.Id) is null)
+            .Take(max)
+            .ToList();
+        var ok = 0; var fail = 0;
+        foreach (var co in pending)
+        {
+            if (ct.IsCancellationRequested) break;
+            try
+            {
+                var r = _profiler.GenerateAndPersistAsync(co, ct).GetAwaiter().GetResult();
+                if (r.Success) ok++; else fail++;
+            }
+            catch { fail++; }
+        }
+        return (ok, fail);
+    }
+
+    [RelayCommand(CanExecute = nameof(CanRun))]
+    private async Task GenerateCompanyProfilesAsync()
+    {
+        IsBusy = true;
+        var ct = BeginSession();
+        StatusText = "Generating AI profiles for companies that don't have one...";
+        var runId = _runs.StartRun("company_profile_backfill", "max=50");
+        try
+        {
+            var r = await Task.Run(() => ProfileMissing(max: 50, ct), ct).ConfigureAwait(true);
+            var status = ct.IsCancellationRequested ? "cancelled" : (r.failed == 0 ? "completed" : "partial");
+            StatusText = $"{(status == "cancelled" ? "Cancelled — " : "")}Profiles: {r.profiled} generated, {r.failed} failed.";
+            _runs.FinishRun(runId, status, added: r.profiled, failed: r.failed);
+            Completed?.Invoke();
+        }
+        catch (OperationCanceledException)
+        {
+            StatusText = "Cancelled — daily quota reached.";
+            _runs.FinishRun(runId, "cancelled");
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"Failed: {ex.GetType().Name}: {ex.Message}";
+            _runs.FinishRun(runId, "failed", notes: $"{ex.GetType().Name}: {ex.Message}");
+        }
+        finally { if (!_runningMaintenance) IsBusy = false; }
+    }
+
+    partial void OnUseBraveSearchChanged(bool value) => DiscoverCompaniesCommand.NotifyCanExecuteChanged();
+    partial void OnUseDirectoriesChanged(bool value) => DiscoverCompaniesCommand.NotifyCanExecuteChanged();
+    partial void OnUseBoardsChanged(bool value)      => DiscoverCompaniesCommand.NotifyCanExecuteChanged();
+
+    [RelayCommand(CanExecute = nameof(CanRun))]
+    private async Task DiscoverJobsAsync()
+    {
+        IsBusy = true;
+        var ct = BeginSession();
+        var skipDays = SelectedSkipScan?.Days ?? 0;
+        var scope = skipDays > 0 ? $"skip<{skipDays}d" : "all";
+        StatusText = skipDays > 0
+            ? $"Pulling jobs from companies not scanned in the last {skipDays} day(s)..."
+            : "Pulling jobs from known companies (ATS endpoints + careers pages)...";
+        var runId = _runs.StartRun("refresh_jobs", scope);
+        try
+        {
+            // Progress<T> captures the current SynchronizationContext (the UI dispatcher), so the
+            // callback runs on the UI thread automatically — safe to mutate StatusText directly.
+            // Also emit one run_step_log row per company so the Runs window's Steps pane is useful
+            // (per-company breakdown of what added/updated/errored). Deltas come from the SoFar
+            // cumulative counters: prev values are captured in this closure.
+            long currentStepId = 0;
+            var prevAdded = 0;
+            var prevUpdated = 0;
+            var prevErrors = 0;
+            var progress = new Progress<Jobnet.Services.AtsAdapters.JobRefreshProgress>(p =>
+            {
+                var verb = p.Stage == "starting" ? "scanning" : "done";
+                StatusText = $"[{p.Current}/{p.Total}] {verb} {p.CompanyName} ({p.CompanyDomain}) — "
+                           + $"{p.JobsAddedSoFar} added, {p.JobsUpdatedSoFar} updated"
+                           + (p.ErrorsSoFar > 0 ? $", {p.ErrorsSoFar} errors" : "");
+
+                if (p.Stage == "starting")
+                {
+                    currentStepId = _runs.StartStep(runId, $"{p.CompanyName} ({p.CompanyDomain})");
+                }
+                else if (currentStepId > 0)
+                {
+                    var addedDelta   = p.JobsAddedSoFar   - prevAdded;
+                    var updatedDelta = p.JobsUpdatedSoFar - prevUpdated;
+                    var errorsDelta  = p.ErrorsSoFar      - prevErrors;
+                    prevAdded   = p.JobsAddedSoFar;
+                    prevUpdated = p.JobsUpdatedSoFar;
+                    prevErrors  = p.ErrorsSoFar;
+
+                    var status = errorsDelta > 0 ? "partial" : "completed";
+                    _runs.FinishStep(currentStepId,
+                        status: status,
+                        added: addedDelta, updated: updatedDelta, failed: errorsDelta);
+                    currentStepId = 0;
+                }
+            });
+            var r = await Task.Run(() => _refresher.RefreshAllAsync(minDaysSinceLastScan: skipDays, progress: progress, ct: ct), ct).ConfigureAwait(true);
+            StatusText = $"Refresh: {r.CompaniesProcessed} companies, " +
+                         (r.CompaniesSkippedRecent > 0 ? $"{r.CompaniesSkippedRecent} skipped (recent), " : "") +
+                         $"{r.JobsAdded} added, {r.JobsUpdated} updated, {r.JobsRemoved} marked removed."
+                         + (r.Errors.Count > 0 ? $"  First error: {r.Errors[0]}" : "");
+            _runs.FinishRun(runId, r.Errors.Count == 0 ? "completed" : "partial",
+                examined: r.CompaniesProcessed, added: r.JobsAdded, updated: r.JobsUpdated,
+                skipped: r.CompaniesSkippedRecent,
+                failed: r.JobsRemoved, errorCount: r.Errors.Count,
+                notes: r.Errors.Count == 0 ? null : string.Join(" | ", r.Errors.Take(5)));
+            Completed?.Invoke();
+        }
+        catch (OperationCanceledException)
+        {
+            StatusText = "Cancelled — daily quota reached.";
+            _runs.FinishRun(runId, "cancelled");
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"Failed: {ex.GetType().Name}: {ex.Message}";
+            _runs.FinishRun(runId, "failed", notes: $"{ex.GetType().Name}: {ex.Message}");
+        }
+        finally { if (!_runningMaintenance) IsBusy = false; }
+    }
+
+    [RelayCommand(CanExecute = nameof(CanRun))]
+    private async Task RefreshExistingAsync()
+    {
+        IsBusy = true;
+        var ct = BeginSession();
+        StatusText = "Revisiting URLs for existing jobs to backfill salary and description...";
+        var runId = _runs.StartRun("refresh_existing", "max=250");
+        try
+        {
+            var progress = StepProgressFor(runId);
+            var r = await Task.Run(() => _detailRefresher.RefreshExistingAsync(max: 250, progress: progress, ct: ct), ct).ConfigureAwait(true);
+            StatusText = $"Refreshed existing: {r.Examined} examined, {r.Updated} updated, " +
+                         $"{r.NoChange} unchanged, {r.Failed} failed."
+                         + (r.Errors.Count > 0 ? $"  First error: {r.Errors[0]}" : "");
+            _runs.FinishRun(runId, r.Errors.Count == 0 ? "completed" : "partial",
+                examined: r.Examined, updated: r.Updated, skipped: r.NoChange, failed: r.Failed,
+                errorCount: r.Errors.Count,
+                notes: r.Errors.Count == 0 ? null : string.Join(" | ", r.Errors.Take(5)));
+            Completed?.Invoke();
+        }
+        catch (OperationCanceledException)
+        {
+            StatusText = "Cancelled — daily quota reached.";
+            _runs.FinishRun(runId, "cancelled");
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"Failed: {ex.GetType().Name}: {ex.Message}";
+            _runs.FinishRun(runId, "failed", notes: $"{ex.GetType().Name}: {ex.Message}");
+        }
+        finally { if (!_runningMaintenance) IsBusy = false; }
+    }
+
+    [RelayCommand(CanExecute = nameof(CanRun))]
+    private async Task GenerateSummariesAsync()
+    {
+        IsBusy = true;
+        var ct = BeginSession();
+        StatusText = "Generating AI summaries for jobs that don't have one...";
+        var runId = _runs.StartRun("summary_backfill", "max=100");
+        try
+        {
+            var progress = StepProgressFor(runId);
+            var r = await Task.Run(() => _summarizer.BackfillAsync(max: 100, progress: progress, ct: ct), ct).ConfigureAwait(true);
+            StatusText = $"Summaries: {r.Examined} examined, {r.Generated} generated, " +
+                         $"{r.Skipped} skipped, {r.Failed} failed."
+                         + (r.Errors.Count > 0 ? $"  First error: {r.Errors[0]}" : "");
+            _runs.FinishRun(runId, r.Errors.Count == 0 ? "completed" : "partial",
+                examined: r.Examined, added: r.Generated, skipped: r.Skipped, failed: r.Failed,
+                errorCount: r.Errors.Count,
+                notes: r.Errors.Count == 0 ? null : string.Join(" | ", r.Errors.Take(5)));
+            Completed?.Invoke();
+        }
+        catch (OperationCanceledException)
+        {
+            StatusText = "Cancelled — daily quota reached.";
+            _runs.FinishRun(runId, "cancelled");
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"Failed: {ex.GetType().Name}: {ex.Message}";
+            _runs.FinishRun(runId, "failed", notes: $"{ex.GetType().Name}: {ex.Message}");
+        }
+        finally { if (!_runningMaintenance) IsBusy = false; }
+    }
+
+    [RelayCommand(CanExecute = nameof(CanRun))]
+    private async Task RegenerateSummariesAsync()
+    {
+        IsBusy = true;
+        var ct = BeginSession();
+        StatusText = "Regenerating AI summaries for ALL jobs (overwriting existing)...";
+        var runId = _runs.StartRun("summary_regenerate_all", "max=500");
+        try
+        {
+            var progress = StepProgressFor(runId);
+            var r = await Task.Run(() => _summarizer.RegenerateAllAsync(max: 500, progress: progress, ct: ct), ct).ConfigureAwait(true);
+            StatusText = $"Regenerated: {r.Examined} examined, {r.Generated} written, " +
+                         $"{r.Skipped} skipped, {r.Failed} failed."
+                         + (r.Errors.Count > 0 ? $"  First error: {r.Errors[0]}" : "");
+            _runs.FinishRun(runId, r.Errors.Count == 0 ? "completed" : "partial",
+                examined: r.Examined, added: r.Generated, skipped: r.Skipped, failed: r.Failed,
+                errorCount: r.Errors.Count,
+                notes: r.Errors.Count == 0 ? null : string.Join(" | ", r.Errors.Take(5)));
+            Completed?.Invoke();
+        }
+        catch (OperationCanceledException)
+        {
+            StatusText = "Cancelled — daily quota reached.";
+            _runs.FinishRun(runId, "cancelled");
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"Failed: {ex.GetType().Name}: {ex.Message}";
+            _runs.FinishRun(runId, "failed", notes: $"{ex.GetType().Name}: {ex.Message}");
+        }
+        finally { if (!_runningMaintenance) IsBusy = false; }
+    }
+
+    [RelayCommand(CanExecute = nameof(CanRun))]
+    private void ReclassifyJobs()
+    {
+        IsBusy = true;
+        var runId = _runs.StartRun("reclassify_jobs");
+        try
+        {
+            var r = _reclassifier.ReclassifyAll();
+            StatusText = $"Reclassified: {r.Examined} examined, {r.Changed} updated with new level/area.";
+            _runs.FinishRun(runId, "completed", examined: r.Examined, updated: r.Changed);
+            Completed?.Invoke();
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"Failed: {ex.GetType().Name}: {ex.Message}";
+            _runs.FinishRun(runId, "failed", notes: $"{ex.GetType().Name}: {ex.Message}");
+        }
+        finally { if (!_runningMaintenance) IsBusy = false; }
+    }
+
+    [RelayCommand(CanExecute = nameof(CanRun))]
+    private async Task MatchResumeAsync()
+    {
+        IsBusy = true;
+        var ct = BeginSession();
+        StatusText = $"Scoring jobs against your resume ({_configRepo.GetOrDefault("ai_provider", "ai")}, ~10 jobs per call)...";
+        var runId = _runs.StartRun("resume_match", "max=500/batch=10");
+        try
+        {
+            var progress = StepProgressFor(runId);
+            var r = await Task.Run(() => _resume.MatchAllAsync(max: 500, batchSize: 10, progress: progress, ct: ct), ct).ConfigureAwait(true);
+            StatusText = $"Resume match: {r.JobsExamined} examined, {r.JobsScored} scored, {r.JobsFailed} failed."
+                         + (r.Errors.Count > 0 ? $"  First error: {r.Errors[0]}" : "");
+            _runs.FinishRun(runId, r.Errors.Count == 0 ? "completed" : "partial",
+                examined: r.JobsExamined, added: r.JobsScored, failed: r.JobsFailed,
+                errorCount: r.Errors.Count,
+                notes: r.Errors.Count == 0 ? null : string.Join(" | ", r.Errors.Take(5)));
+            Completed?.Invoke();
+        }
+        catch (OperationCanceledException)
+        {
+            StatusText = "Cancelled — daily quota reached.";
+            _runs.FinishRun(runId, "cancelled");
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"Failed: {ex.GetType().Name}: {ex.Message}";
+            _runs.FinishRun(runId, "failed", notes: $"{ex.GetType().Name}: {ex.Message}");
+        }
+        finally { if (!_runningMaintenance) IsBusy = false; }
+    }
+
+    [RelayCommand(CanExecute = nameof(CanRun))]
+    private void PruneOutOfArea()
+    {
+        IsBusy = true;
+        var runId = _runs.StartRun("prune_out_of_area");
+        try
+        {
+            var rows = _jobs.GetActiveLocations();
+            var removed = 0;
+            var examined = rows.Count;
+            var now = DateTime.UtcNow;
+            foreach (var (id, location) in rows)
+            {
+                if (LocationMatcher.IsVancouverArea(location)) continue;
+                _jobs.MarkRemoved(id, now);
+                removed++;
+            }
+            StatusText = $"Pruned {removed} job(s) whose location is clearly outside Vancouver area.";
+            _runs.FinishRun(runId, "completed", examined: examined, failed: removed);
+            Completed?.Invoke();
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"Failed: {ex.GetType().Name}: {ex.Message}";
+            _runs.FinishRun(runId, "failed", notes: $"{ex.GetType().Name}: {ex.Message}");
+        }
+        finally { if (!_runningMaintenance) IsBusy = false; }
+    }
+}

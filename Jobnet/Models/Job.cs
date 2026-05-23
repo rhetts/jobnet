@@ -15,12 +15,17 @@ public sealed class Job
     public int? LevelId { get; set; }
     public IReadOnlyList<int> AreaIds { get; set; } = Array.Empty<int>();
     public string? DescriptionSnippet { get; init; }
+    public string? Summary { get; set; }
     public string? SalaryRange { get; init; }
     public int? SalaryMin { get; init; }
     public int? SalaryMax { get; init; }
     public string? SalaryCurrency { get; init; }
     public string? SalaryPeriod { get; init; }
+    public int? ResumeMatchScore { get; set; }
+    public string? ResumeMatchReason { get; set; }
     public InterestLevel InterestLevel { get; set; }
+    public DateTime? DateApplied { get; set; }
+    public DateTime? DateViewed { get; set; }
     public required DateTime DateFirstSeen { get; init; }
     public required DateTime DateLastSeen { get; init; }
     public DateTime? DateRemoved { get; init; }

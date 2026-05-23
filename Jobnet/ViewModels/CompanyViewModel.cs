@@ -13,11 +13,14 @@ public partial class CompanyViewModel : ObservableObject
 
     public string Name => IsAllJobsSentinel ? "All Jobs" : Company!.Name;
 
+    public string? City => IsAllJobsSentinel ? null : Company?.City;
+    public bool HasCity => !string.IsNullOrWhiteSpace(City);
+
     public InterestLevel InterestLevel => IsAllJobsSentinel ? InterestLevel.Neutral : Company!.InterestLevel;
 
     public string InterestGlyph => InterestLevel switch
     {
-        InterestLevel.Interesting    => "★", // ★
+        InterestLevel.Approved    => "★", // ★
         InterestLevel.NotInteresting => "✗", // ✗
         _                            => " "
     };

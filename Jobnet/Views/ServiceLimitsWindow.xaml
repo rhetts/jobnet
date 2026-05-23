@@ -1,0 +1,99 @@
+<Window x:Class="Jobnet.Views.ServiceLimitsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="clr-namespace:Jobnet.ViewModels"
+        Title="Jobnet — Service Limits"
+        Width="720" Height="600"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        Background="#FAFAFA">
+
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0" Margin="0,0,0,12">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" Text="API usage — per-provider limits" FontSize="16" FontWeight="SemiBold"/>
+                <Button Grid.Column="1" Content="Refresh"
+                        Command="{Binding RefreshCommand}"
+                        Padding="14,4"/>
+            </Grid>
+            <TextBlock Text="{Binding LastRefreshed}" Foreground="#888" FontSize="11" Margin="0,4,0,0"/>
+            <TextBlock Foreground="#666" FontSize="11" TextWrapping="Wrap" Margin="0,8,0,0"
+                       Text="RPM = requests in the last 60s · RPD = requests today (UTC) · TPD = AI tokens today (UTC) — this is the limit Groq usually hits. Green &lt;70% of cap, amber 70-90%, red ≥90%. Caps come from the api_rpm_cap.* / api_soft_cap.* / api_tpd_cap.* config keys; set 0 to disable a dimension."/>
+        </StackPanel>
+
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+            <ItemsControl ItemsSource="{Binding Providers}">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate DataType="{x:Type vm:ProviderUsageTile}">
+                        <Border Background="White" BorderBrush="#DDD" BorderThickness="1"
+                                Padding="12,10" Margin="0,0,0,8" CornerRadius="3">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
+                                <Grid Grid.Row="0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="{Binding Provider}"
+                                               FontWeight="SemiBold" FontSize="13"/>
+                                    <TextBlock Grid.Column="1" FontSize="11" Foreground="#888">
+                                        <Run Text="last call "/>
+                                        <Run Text="{Binding LastCall, Mode=OneWay}"/>
+                                    </TextBlock>
+                                </Grid>
+                                <Grid Grid.Row="1" Margin="0,10,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+
+                                    <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                                        <TextBlock Text="RPM (last 60s)" Foreground="#666" FontSize="11"/>
+                                        <TextBlock Text="{Binding Rpm}" FontSize="14" FontWeight="SemiBold" Margin="0,2,0,4"
+                                                   Foreground="{Binding RpmStatusBrush}"/>
+                                        <ProgressBar Height="4" Minimum="0" Maximum="1" Value="{Binding RpmFraction, Mode=OneWay}"
+                                                     Foreground="{Binding RpmStatusBrush}"/>
+                                    </StackPanel>
+
+                                    <StackPanel Grid.Column="1" Margin="4,0,4,0">
+                                        <TextBlock Text="RPD (today)" Foreground="#666" FontSize="11"/>
+                                        <TextBlock Text="{Binding Rpd}" FontSize="14" FontWeight="SemiBold" Margin="0,2,0,4"
+                                                   Foreground="{Binding RpdStatusBrush}"/>
+                                        <ProgressBar Height="4" Minimum="0" Maximum="1" Value="{Binding RpdFraction, Mode=OneWay}"
+                                                     Foreground="{Binding RpdStatusBrush}"/>
+                                    </StackPanel>
+
+                                    <StackPanel Grid.Column="2" Margin="8,0,0,0">
+                                        <TextBlock Text="TPD (today)" Foreground="#666" FontSize="11"/>
+                                        <TextBlock Text="{Binding Tpd}" FontSize="14" FontWeight="SemiBold" Margin="0,2,0,4"
+                                                   Foreground="{Binding TpdStatusBrush}"/>
+                                        <ProgressBar Height="4" Minimum="0" Maximum="1" Value="{Binding TpdFraction, Mode=OneWay}"
+                                                     Foreground="{Binding TpdStatusBrush}"/>
+                                    </StackPanel>
+                                </Grid>
+                            </Grid>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </ScrollViewer>
+
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
+            <Button Content="Close" Padding="14,4" Click="Close_Click"/>
+        </StackPanel>
+    </Grid>
+</Window>

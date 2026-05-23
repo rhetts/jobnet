@@ -9,6 +9,8 @@ using Jobnet.Data;
 using Jobnet.Data.Repositories;
 using Jobnet.Models;
 using Jobnet.Services.Classification;
+using Jobnet.Services.Location;
+using Jobnet.Services.Profile;
 
 namespace Jobnet.Services.AtsAdapters;
 
@@ -22,11 +24,15 @@ public sealed class JobRefresher : IJobRefresher
     private readonly IAreaRepository _areas;
     private readonly IJobClassifier _classifier;
     private readonly IDbConnectionFactory _connections;
+    private readonly Jobnet.Services.AtsDetection.IAtsDetector _atsDetector;
+    private readonly IConfigRepository _config;
 
     public JobRefresher(IEnumerable<IAtsJobSource> sources, AiExtractedJobSource aiSource,
                          ICompanyRepository companies, ICompanyUrlsRepository urls,
                          IJobRepository jobs, IAreaRepository areas,
-                         IJobClassifier classifier, IDbConnectionFactory connections)
+                         IJobClassifier classifier, IDbConnectionFactory connections,
+                         Jobnet.Services.AtsDetection.IAtsDetector atsDetector,
+                         IConfigRepository config)
     {
         _sources = sources.ToDictionary(s => s.AtsType, StringComparer.OrdinalIgnoreCase);
         _aiSource = aiSource;
@@ -36,6 +42,18 @@ public sealed class JobRefresher : IJobRefresher
         _areas = areas;
         _classifier = classifier;
         _connections = connections;
+        _atsDetector = atsDetector;
+        _config = config;
+    }
+
+    /// <summary>Greylist tokens compiled once at the start of a batch run and cached across all
+    /// companies / jobs in that pass. Stored per-instance because JobRefresher is a singleton.</summary>
+    private System.Collections.Generic.IReadOnlyList<System.Text.RegularExpressions.Regex> _greylistTokens
+        = System.Array.Empty<System.Text.RegularExpressions.Regex>();
+
+    private void RefreshGreylistTokens()
+    {
+        _greylistTokens = GreylistMatcher.Parse(_config.GetOrDefault("profile_greylist_keywords", ""));
     }
 
     public async Task<JobRefreshReport> RefreshAsync(Company company, CancellationToken ct = default)
@@ -72,20 +90,48 @@ public sealed class JobRefresher : IJobRefresher
         };
     }
 
-    public async Task<JobRefreshReport> RefreshAllAsync(CancellationToken ct = default)
+    public async Task<JobRefreshReport> RefreshAllAsync(int minDaysSinceLastScan = 0, IProgress<JobRefreshProgress>? progress = null, CancellationToken ct = default)
     {
         var scanId = StartScanLog("global");
         var errors = new List<string>();
         var added = 0; var updated = 0; var removed = 0;
-        var skipped = 0; var failed = 0; var processed = 0;
+        var skipped = 0; var skippedRecent = 0; var failed = 0; var processed = 0;
 
         // Prune URLs that haven't yielded jobs in 30 days. Keeps the cache clean over time.
         var prunedUrls = _urls.DeleteStale(notYieldedDays: 30);
 
+        // Refresh the greylist regex set once per batch — applied per-new-job below.
+        RefreshGreylistTokens();
+
+        DateTime? cutoff = minDaysSinceLastScan > 0
+            ? DateTime.UtcNow.AddDays(-minDaysSinceLastScan)
+            : null;
+
         var all = _companies.GetAll();
-        foreach (var c in all)
+        // Pre-filter to the eligible list so the progress Total reflects what we'll actually visit.
+        var eligible = cutoff.HasValue
+            ? all.Where(c => !c.DateLastScan.HasValue || c.DateLastScan.Value <= cutoff.Value).ToList()
+            : all.ToList();
+        skippedRecent = all.Count - eligible.Count;
+
+        var total = eligible.Count;
+        var idx = 0;
+        foreach (var c in eligible)
         {
             ct.ThrowIfCancellationRequested();
+            idx++;
+
+            // Emit "starting" BEFORE the work — critical for the local-llama path where a single
+            // company can take 5-15 minutes. Otherwise the UI sits on a stale "done" message for
+            // the prior company until this one finishes.
+            progress?.Report(new JobRefreshProgress
+            {
+                Current = idx, Total = total,
+                CompanyName = c.Name, CompanyDomain = c.Domain,
+                Stage = "starting",
+                JobsAddedSoFar = added, JobsUpdatedSoFar = updated, ErrorsSoFar = errors.Count,
+            });
+
             try
             {
                 var (a, u, r) = await RefreshOneAsync(c, errors, ct);
@@ -101,6 +147,14 @@ public sealed class JobRefresher : IJobRefresher
                 errors.Add($"[{c.Domain}] {ex.Message}");
                 failed++;
             }
+
+            progress?.Report(new JobRefreshProgress
+            {
+                Current = idx, Total = total,
+                CompanyName = c.Name, CompanyDomain = c.Domain,
+                Stage = "done",
+                JobsAddedSoFar = added, JobsUpdatedSoFar = updated, ErrorsSoFar = errors.Count,
+            });
         }
 
         FinishScanLog(scanId, processed, added, removed, errors);
@@ -108,6 +162,7 @@ public sealed class JobRefresher : IJobRefresher
         {
             CompaniesProcessed = processed,
             CompaniesSkippedNoAts = skipped,
+            CompaniesSkippedRecent = skippedRecent,
             CompaniesFailed = failed,
             JobsAdded = added, JobsUpdated = updated, JobsRemoved = removed,
             Errors = errors,
@@ -129,6 +184,36 @@ public sealed class JobRefresher : IJobRefresher
         }
         else
         {
+            // 1b) Cheap HTTP-only ATS probe before falling back to Playwright + AI extraction.
+            // Catches static iframe embeds and redirect-based ATS hosting (most Greenhouse / Lever /
+            // Ashby customers). On a hit we persist the result and use the native adapter, saving
+            // ~3K AI tokens per company. On a miss we proceed to AI as today.
+            IAtsJobSource? detectedNative = null;
+            string? detectedSlug = null;
+            try
+            {
+                var det = await _atsDetector.DetectViaHttpAsync(company, ct);
+                if (det.AtsType is not null && det.AtsSlug is not null
+                    && _sources.TryGetValue(det.AtsType, out var maybeNative))
+                {
+                    _companies.SetAtsInfo(company.Id, det.AtsType, det.AtsSlug, det.ResolvedCareersUrl);
+                    detectedNative = maybeNative;
+                    detectedSlug = det.AtsSlug;
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // Detection failures are non-fatal — fall through to AI extraction.
+                errors.Add($"[{company.Domain}] ats-detect: {ex.GetType().Name}: {ex.Message}");
+            }
+
+            if (detectedNative is not null && detectedSlug is not null)
+            {
+                allRaw.AddRange(await detectedNative.FetchAsync(detectedSlug, ct));
+                sourceType = detectedNative.AtsType;
+            }
+            else
+            {
             sourceType = _aiSource.AtsType;
             var cachedUrls = _urls.GetByCompany(company.Id);
 
@@ -183,6 +268,18 @@ public sealed class JobRefresher : IJobRefresher
             // Free upgrade: if the network listener saw an ATS API call we recognize, persist it on
             // the company so subsequent refreshes use the native adapter (faster, no rate limit).
             UpgradeCompanyAtsIfDetected(company);
+            }
+        }
+
+        // Some ATS boards are shared across brands (e.g. Match Group's Lever slug lists
+        // Hinge, Tinder, Plenty of Fish, etc.). If the company has a department filter set,
+        // keep only postings whose ATS-reported department matches.
+        if (!string.IsNullOrWhiteSpace(company.AtsDepartmentFilter))
+        {
+            var brand = company.AtsDepartmentFilter!;
+            allRaw = allRaw
+                .Where(r => string.Equals(r.Department, brand, StringComparison.OrdinalIgnoreCase))
+                .ToList();
         }
 
         // Dedupe by native ID across runs (a department crawl can hit the same job from multiple URLs).
@@ -197,6 +294,11 @@ public sealed class JobRefresher : IJobRefresher
         foreach (var r in deduped)
         {
             ct.ThrowIfCancellationRequested();
+
+            // Vancouver-area gate: skip jobs whose location is clearly elsewhere.
+            // Blank/unknown locations pass through (handled inside LocationMatcher).
+            if (!LocationMatcher.IsVancouverArea(r.Location)) continue;
+
             var hashKey = $"{sourceType}:{company.Id}:{r.NativeId}";
             var classified = _classifier.Classify(r.Title, r.Department);
 
@@ -225,7 +327,18 @@ public sealed class JobRefresher : IJobRefresher
 
             var (id, wasNew) = _jobs.Upsert(job, hashKey, hashTier: 1);
             seenJobIds.Add(id);
-            if (wasNew) added++; else updated++;
+            if (wasNew)
+            {
+                added++;
+                // Greylist applies only to brand-new rows — existing rows preserve whatever
+                // interest the user has set. company.Name comes from the Company we already loaded.
+                if (_greylistTokens.Count > 0 &&
+                    GreylistMatcher.MatchesAny(_greylistTokens, job.Title, job.DescriptionSnippet, company.Name))
+                {
+                    _jobs.SetInterestLevel(id, InterestLevel.NotInteresting);
+                }
+            }
+            else updated++;
         }
 
         // Mark previously-active jobs that no longer appear as removed

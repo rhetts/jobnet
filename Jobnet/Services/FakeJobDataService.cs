@@ -34,15 +34,15 @@ public sealed class FakeJobDataService
 
         _companies = new()
         {
-            new Company { Id = 1,  Name = "Acme Corp",        Domain = "acme.com",        City = "Vancouver", AtsType = "greenhouse", InterestLevel = InterestLevel.Interesting,    DateDiscovered = now.AddDays(-90),  DateLastScan = now.AddHours(-3) },
+            new Company { Id = 1,  Name = "Acme Corp",        Domain = "acme.com",        City = "Vancouver", AtsType = "greenhouse", InterestLevel = InterestLevel.Approved,    DateDiscovered = now.AddDays(-90),  DateLastScan = now.AddHours(-3) },
             new Company { Id = 2,  Name = "Hootsuite",        Domain = "hootsuite.com",   City = "Vancouver", AtsType = "greenhouse", InterestLevel = InterestLevel.Neutral,        DateDiscovered = now.AddDays(-120), DateLastScan = now.AddHours(-5) },
             new Company { Id = 3,  Name = "Slack",            Domain = "slack.com",       City = "Vancouver", AtsType = "lever",      InterestLevel = InterestLevel.NotInteresting, DateDiscovered = now.AddDays(-200), DateLastScan = now.AddHours(-12) },
             new Company { Id = 4,  Name = "Coinbase",         Domain = "coinbase.com",    City = "Vancouver", AtsType = "greenhouse", InterestLevel = InterestLevel.Neutral,        DateDiscovered = now.AddDays(-60),  DateLastScan = now.AddHours(-2) },
-            new Company { Id = 5,  Name = "Shopify",          Domain = "shopify.com",     City = "Vancouver", AtsType = "custom",     InterestLevel = InterestLevel.Interesting,    DateDiscovered = now.AddDays(-150), DateLastScan = now.AddHours(-1) },
+            new Company { Id = 5,  Name = "Shopify",          Domain = "shopify.com",     City = "Vancouver", AtsType = "custom",     InterestLevel = InterestLevel.Approved,    DateDiscovered = now.AddDays(-150), DateLastScan = now.AddHours(-1) },
             new Company { Id = 6,  Name = "Klue",             Domain = "klue.com",        City = "Vancouver", AtsType = "ashby",      InterestLevel = InterestLevel.Neutral,        DateDiscovered = now.AddDays(-30),  DateLastScan = now.AddHours(-4) },
             new Company { Id = 7,  Name = "Trulioo",          Domain = "trulioo.com",     City = "Vancouver", AtsType = "greenhouse", InterestLevel = InterestLevel.Neutral,        DateDiscovered = now.AddDays(-45),  DateLastScan = now.AddHours(-6) },
             new Company { Id = 8,  Name = "TELUS",            Domain = "telus.com",       City = "Burnaby",   AtsType = "workday",    InterestLevel = InterestLevel.Neutral,        DateDiscovered = now.AddDays(-180), DateLastScan = now.AddHours(-8) },
-            new Company { Id = 9,  Name = "Bench Accounting", Domain = "bench.co",        City = "Vancouver", AtsType = "lever",      InterestLevel = InterestLevel.Interesting,    DateDiscovered = now.AddDays(-72),  DateLastScan = now.AddHours(-2) },
+            new Company { Id = 9,  Name = "Bench Accounting", Domain = "bench.co",        City = "Vancouver", AtsType = "lever",      InterestLevel = InterestLevel.Approved,    DateDiscovered = now.AddDays(-72),  DateLastScan = now.AddHours(-2) },
             new Company { Id = 10, Name = "Aurinko",          Domain = "aurinko.io",      City = "Vancouver", AtsType = "ashby",      InterestLevel = InterestLevel.Neutral,        DateDiscovered = now.AddDays(-15),  DateLastScan = now.AddHours(-1) },
             new Company { Id = 11, Name = "Visier",           Domain = "visier.com",      City = "Vancouver", AtsType = "greenhouse", InterestLevel = InterestLevel.Neutral,        DateDiscovered = now.AddDays(-100), DateLastScan = now.AddHours(-7) },
             new Company { Id = 12, Name = "Mobify",           Domain = "mobify.com",      City = "Vancouver", AtsType = "lever",      InterestLevel = InterestLevel.Neutral,        DateDiscovered = now.AddDays(-220), DateLastScan = now.AddHours(-10) },
@@ -66,9 +66,9 @@ public sealed class FakeJobDataService
 
             J(401, 4,  "Senior Blockchain Engineer",      "remote",  "full-time", "Senior",            "Software Engineering", now.AddDays(-12)),
             J(402, 4,  "Security Engineer",               "hybrid",  "full-time", "Senior",            "Security",             now.AddDays(-22)),
-            J(403, 4,  "Staff iOS Engineer",              "remote",  "full-time", "Staff / Principal", "Software Engineering", now.AddDays(-4),  interest: InterestLevel.Interesting),
+            J(403, 4,  "Staff iOS Engineer",              "remote",  "full-time", "Staff / Principal", "Software Engineering", now.AddDays(-4),  interest: InterestLevel.Approved),
 
-            J(501, 5,  "Senior Rails Engineer",           "remote",  "full-time", "Senior",            "Software Engineering", now.AddDays(-2),  interest: InterestLevel.Interesting),
+            J(501, 5,  "Senior Rails Engineer",           "remote",  "full-time", "Senior",            "Software Engineering", now.AddDays(-2),  interest: InterestLevel.Approved),
             J(502, 5,  "Staff Engineer, Storefront",      "hybrid",  "full-time", "Staff / Principal", "Software Engineering", now.AddDays(-6)),
             J(503, 5,  "Director of Engineering",         "hybrid",  "full-time", "Director",          "Management",           now.AddDays(-18)),
             J(504, 5,  "ML Engineer, Search",             "remote",  "full-time", "Senior",            "Data / ML",            now.AddDays(-11)),
@@ -85,7 +85,7 @@ public sealed class FakeJobDataService
             J(803, 8,  "Project Manager",                 "on-site", "full-time", "Manager",           "Management",           now.AddDays(-70), interest: InterestLevel.NotInteresting),
             J(804, 8,  "Retail Store Manager",            "on-site", "full-time", "Manager",           "Other",                now.AddDays(-85), interest: InterestLevel.NotInteresting),
 
-            J(901, 9,  "Senior Software Engineer, Tax",   "remote",  "full-time", "Senior",            "Software Engineering", now.AddDays(-3),  interest: InterestLevel.Interesting),
+            J(901, 9,  "Senior Software Engineer, Tax",   "remote",  "full-time", "Senior",            "Software Engineering", now.AddDays(-3),  interest: InterestLevel.Approved),
             J(902, 9,  "Staff Engineer, Payments",        "remote",  "full-time", "Staff / Principal", "Software Engineering", now.AddDays(-10)),
             J(903, 9,  "Bookkeeper",                      "on-site", "full-time", "Junior",            "Other",                now.AddDays(-50), interest: InterestLevel.NotInteresting),
 

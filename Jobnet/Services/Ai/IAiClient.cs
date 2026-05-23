@@ -12,8 +12,11 @@ public interface IAiClient
     /// <summary>True when the provider has the credentials it needs to make a call.</summary>
     bool IsConfigured { get; }
 
-    /// <summary>Send a user message and get a text response. Throws AiUnavailableException if creds are missing.</summary>
-    Task<AiResponse> CompleteAsync(string userMessage, string? system = null, int? maxTokens = null, CancellationToken ct = default);
+    /// <summary>Send a user message and get a text response. Throws AiUnavailableException if creds are missing.
+    /// <paramref name="task"/> is an optional caller-supplied tag (e.g. "extraction", "cover_letter") that
+    /// RoutingAiClient uses to pick a per-task provider chain from <c>ai_provider.{task}</c> config keys.
+    /// Underlying clients (Gemini/Groq/Claude/LLama) ignore it.</summary>
+    Task<AiResponse> CompleteAsync(string userMessage, string? system = null, int? maxTokens = null, CancellationToken ct = default, string? task = null);
 }
 
 public sealed class AiResponse

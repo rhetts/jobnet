@@ -22,3 +22,8 @@ screenshot*.png
 # OS junk
 Thumbs.db
 .DS_Store
+
+# Local LLM model files (multi-GB binaries — never commit)
+*.gguf
+Jobnet/AI/
+

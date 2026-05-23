@@ -19,6 +19,9 @@
     <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.8" />
     <PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="10.0.8" />
     <PackageReference Include="Microsoft.Playwright" Version="1.59.0" />
+    <PackageReference Include="PdfPig" Version="0.1.11" />
+    <PackageReference Include="LLamaSharp" Version="0.19.0" />
+    <PackageReference Include="LLamaSharp.Backend.Vulkan" Version="0.19.0" />
   </ItemGroup>
 
   <ItemGroup>

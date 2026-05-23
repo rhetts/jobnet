@@ -50,7 +50,7 @@ public sealed class AshbyJobSource : IAtsJobSource
                 RemoteType = GuessRemoteType(j.IsRemote, j.Location),
                 EmploymentType = j.EmploymentType?.ToLowerInvariant(),
                 Department = j.Department ?? j.Team,
-                DescriptionSnippet = Trunc(j.DescriptionPlain, 500),
+                DescriptionSnippet = SnippetCleaner.Clean(j.DescriptionPlain, maxChars: 500),
             });
         }
         return results;

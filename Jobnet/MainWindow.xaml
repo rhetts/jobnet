@@ -4,12 +4,15 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:vm="clr-namespace:Jobnet.ViewModels"
+        xmlns:sys="clr-namespace:System;assembly=mscorlib"
         mc:Ignorable="d"
         Title="Jobnet" Height="700" Width="1100"
         WindowStartupLocation="CenterScreen"
         Background="#FAFAFA">
 
     <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVis"/>
+
         <Style x:Key="ToolbarButton" TargetType="Button">
             <Setter Property="Padding" Value="10,6"/>
             <Setter Property="Margin" Value="0,0,8,0"/>
@@ -30,6 +33,270 @@
                 </Trigger>
             </Style.Triggers>
         </Style>
+
+        <!-- Shared job-card template. Used by both the All-jobs and Approved-jobs ListBoxes.
+             The action buttons at the bottom-right swap based on IsApproved: Tab 1 cards
+             (IsApproved=false) show Approve+Downvote; Tab 2 cards (IsApproved=true) show
+             a single Applied toggle button. -->
+        <DataTemplate x:Key="JobCardTemplate" DataType="{x:Type vm:JobViewModel}">
+            <Border Background="White"
+                    BorderBrush="#E5E5E5"
+                    BorderThickness="1"
+                    Padding="14,12"
+                    CornerRadius="3"
+                    Cursor="Hand"
+                    MouseLeftButtonUp="JobCard_MouseLeftButtonUp">
+                <Border.ContextMenu>
+                    <ContextMenu>
+                        <MenuItem Header="Open in browser"
+                                  Command="{Binding DataContext.OpenJobInBrowserCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                  CommandParameter="{Binding}"/>
+                        <MenuItem Header="Copy URL"
+                                  Command="{Binding DataContext.CopyJobUrlCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                  CommandParameter="{Binding}"/>
+                        <Separator/>
+                        <MenuItem Header="Approve (move to Approved tab)"
+                                  Command="{Binding DataContext.MarkJobInterestingCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                  CommandParameter="{Binding}"/>
+                        <MenuItem Header="Downvote (sink to bottom)"
+                                  Command="{Binding DataContext.MarkJobNotInterestingCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                  CommandParameter="{Binding}"/>
+                        <MenuItem Header="Clear interest"
+                                  Command="{Binding DataContext.ClearJobInterestCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                  CommandParameter="{Binding}"/>
+                    </ContextMenu>
+                </Border.ContextMenu>
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsActive}" Value="False">
+                                <Setter Property="Opacity" Value="0.55"/>
+                            </DataTrigger>
+                            <DataTrigger Binding="{Binding IsApplied}" Value="True">
+                                <Setter Property="Background" Value="#F4FBF6"/>
+                                <Setter Property="BorderBrush" Value="#B7E4C7"/>
+                            </DataTrigger>
+                            <DataTrigger Binding="{Binding IsDownvoted}" Value="True">
+                                <Setter Property="Opacity" Value="0.55"/>
+                            </DataTrigger>
+                            <DataTrigger Binding="{Binding IsApproved}" Value="True">
+                                <Setter Property="BorderBrush" Value="#2A8F4F"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="20"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    <TextBlock Grid.Column="0" Grid.Row="0"
+                               Text="{Binding InterestGlyph}"
+                               FontSize="13"
+                               VerticalAlignment="Top"
+                               Margin="0,2,0,0">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Foreground" Value="#BBB"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding InterestLevel}" Value="Approved">
+                                        <Setter Property="Foreground" Value="#F2B400"/>
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding InterestLevel}" Value="NotInteresting">
+                                        <Setter Property="Foreground" Value="#C44"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <StackPanel Grid.Column="1" Grid.Row="0">
+                        <TextBlock>
+                            <Run Text="{Binding Title, Mode=OneWay}" FontWeight="SemiBold" FontSize="14"/>
+                            <Run Text=" — " Foreground="#888"/>
+                            <Run Text="{Binding CompanyName, Mode=OneWay}" Foreground="#666"/>
+                        </TextBlock>
+                        <TextBlock Text="{Binding CityDisplay}"
+                                   Foreground="#666"
+                                   FontSize="12"
+                                   Margin="0,2,0,0"
+                                   Visibility="{Binding HasCity, Converter={StaticResource BoolToVis}}"/>
+                        <StackPanel Orientation="Horizontal" Margin="0,3,0,0">
+                            <Border CornerRadius="2"
+                                    Padding="6,1"
+                                    Margin="0,0,6,0"
+                                    Background="#E3F2FD"
+                                    Visibility="{Binding HasResumeMatch, Converter={StaticResource BoolToVis}}"
+                                    ToolTip="{Binding ResumeMatchReason}">
+                                <TextBlock Text="{Binding ResumeMatchDisplay}"
+                                           FontSize="11" FontWeight="SemiBold"
+                                           Foreground="#0D47A1"/>
+                            </Border>
+                            <TextBlock Text="{Binding MetaLine}"
+                                       Foreground="#888"
+                                       FontSize="12"/>
+                        </StackPanel>
+                    </StackPanel>
+                    <StackPanel Grid.Column="2" Grid.Row="0"
+                                Orientation="Vertical"
+                                HorizontalAlignment="Right"
+                                VerticalAlignment="Top">
+                        <Button Command="{Binding DataContext.CopyJobIdCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                CommandParameter="{Binding}"
+                                ToolTip="Click to copy job ID"
+                                Background="Transparent"
+                                BorderThickness="0"
+                                FontFamily="Consolas"
+                                FontSize="11"
+                                Padding="4,1"
+                                Cursor="Hand"
+                                HorizontalAlignment="Right">
+                            <TextBlock>
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="{Binding JobIdDisplay}"/>
+                                        <Setter Property="Foreground" Value="#999"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsIdJustCopied}" Value="True">
+                                                <Setter Property="Text" Value="✓ copied"/>
+                                                <Setter Property="Foreground" Value="#2A8F4F"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Button>
+                        <!-- TAB 1 action row: Approve + Downvote (hidden when card is approved).
+                             Expand toggle was removed — single-click on the card body handles it
+                             via JobCard_MouseLeftButtonUp in MainWindow.xaml.cs. -->
+                        <StackPanel Orientation="Horizontal" Margin="0,6,0,0" HorizontalAlignment="Right">
+                            <StackPanel.Style>
+                                <Style TargetType="StackPanel">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsApproved}" Value="True">
+                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </StackPanel.Style>
+                            <Button Content="Approve"
+                                    Command="{Binding ApproveCommand}"
+                                    Padding="10,3"
+                                    Background="White"
+                                    BorderBrush="#2A8F4F"
+                                    Foreground="#2A8F4F"
+                                    FontWeight="SemiBold"
+                                    Cursor="Hand" Margin="0,0,4,0"
+                                    ToolTip="Approve — move this job to the Approved tab for your application pipeline"/>
+                            <Button Content="No"
+                                    Command="{Binding DownvoteCommand}"
+                                    Padding="10,3"
+                                    Background="Transparent" BorderThickness="1"
+                                    Cursor="Hand"
+                                    ToolTip="Downvote — sinks to the bottom of the list">
+                                <Button.Style>
+                                    <Style TargetType="Button">
+                                        <Setter Property="BorderBrush" Value="#DDD"/>
+                                        <Setter Property="Foreground" Value="#666"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsDownvoted}" Value="True">
+                                                <Setter Property="Background" Value="#FBECEC"/>
+                                                <Setter Property="BorderBrush" Value="#C44"/>
+                                                <Setter Property="Foreground" Value="#C44"/>
+                                                <Setter Property="FontWeight" Value="Bold"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Button.Style>
+                            </Button>
+                        </StackPanel>
+
+                        <!-- TAB 2 action: Applied toggle (only visible when card is approved) -->
+                        <Button Command="{Binding ToggleAppliedCommand}"
+                                Content="{Binding AppliedLabel}"
+                                Padding="10,3"
+                                Margin="0,6,0,0"
+                                HorizontalAlignment="Right"
+                                Cursor="Hand"
+                                ToolTip="Toggle whether you've applied. Applied jobs sort to the bottom of this tab.">
+                            <Button.Style>
+                                <Style TargetType="Button">
+                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                    <Setter Property="Background" Value="White"/>
+                                    <Setter Property="BorderBrush" Value="#1976D2"/>
+                                    <Setter Property="Foreground" Value="#1976D2"/>
+                                    <Setter Property="FontWeight" Value="SemiBold"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsApproved}" Value="True">
+                                            <Setter Property="Visibility" Value="Visible"/>
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding IsApplied}" Value="True">
+                                            <Setter Property="Background" Value="#E8F5E9"/>
+                                            <Setter Property="BorderBrush" Value="#2A8F4F"/>
+                                            <Setter Property="Foreground" Value="#2A8F4F"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+                    </StackPanel>
+                    <Border Grid.Column="1" Grid.Row="1" Grid.ColumnSpan="2"
+                            Margin="0,8,0,0"
+                            Padding="10,8"
+                            Background="#F7F7F8"
+                            BorderBrush="#E5E5E5"
+                            BorderThickness="1"
+                            CornerRadius="3"
+                            Visibility="{Binding IsExpanded, Converter={StaticResource BoolToVis}}">
+                        <StackPanel>
+                            <TextBlock Text="{Binding ClassificationLine}"
+                                       Foreground="#555"
+                                       FontSize="11"
+                                       Margin="0,0,0,6"/>
+                            <TextBlock Text="{Binding ExpandedText}"
+                                       TextWrapping="Wrap"
+                                       Foreground="#333"
+                                       FontSize="12"/>
+                            <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                                <Button Command="{Binding DataContext.OpenJobInBrowserCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                        CommandParameter="{Binding}"
+                                        Background="Transparent"
+                                        BorderThickness="0"
+                                        Foreground="#1976D2"
+                                        Cursor="Hand"
+                                        Padding="0"
+                                        Margin="0,0,18,0"
+                                        HorizontalAlignment="Left"
+                                        ToolTip="Open job posting in browser">
+                                    <TextBlock>
+                                        <Run Text="🔗"/>
+                                        <Run Text=" Open job posting" TextDecorations="Underline"/>
+                                    </TextBlock>
+                                </Button>
+                                <Button Command="{Binding DataContext.OpenCoverLetterCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                        CommandParameter="{Binding}"
+                                        Background="Transparent"
+                                        BorderThickness="0"
+                                        Foreground="#1976D2"
+                                        Cursor="Hand"
+                                        Padding="0"
+                                        HorizontalAlignment="Left"
+                                        ToolTip="Generate a cover letter using your resume and this job">
+                                    <TextBlock>
+                                        <Run Text="✉"/>
+                                        <Run Text=" Generate cover letter" TextDecorations="Underline"/>
+                                    </TextBlock>
+                                </Button>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+                </Grid>
+            </Border>
+        </DataTemplate>
     </Window.Resources>
 
     <Grid>
@@ -48,12 +315,18 @@
         <!-- Toolbar -->
         <Border Grid.Row="1" Background="White" BorderBrush="#DDD" BorderThickness="0,0,0,1" Padding="16,8">
             <StackPanel Orientation="Horizontal">
-                <Button Content="Discover Companies"
+                <Button Content="Refresh..."
                         Style="{StaticResource ToolbarButton}"
-                        Command="{Binding DiscoverCompaniesCommand}"/>
-                <Button Content="Refresh Jobs"
+                        Command="{Binding OpenRefreshCommand}"/>
+                <Button Content="Profile..."
                         Style="{StaticResource ToolbarButton}"
-                        Command="{Binding RefreshJobsCommand}"/>
+                        Command="{Binding OpenResumeCommand}"/>
+                <Button Content="Limits..."
+                        Style="{StaticResource ToolbarButton}"
+                        Command="{Binding OpenServiceLimitsCommand}"/>
+                <Button Content="Runs..."
+                        Style="{StaticResource ToolbarButton}"
+                        Command="{Binding OpenRunsCommand}"/>
                 <Button Content="Settings"
                         Style="{StaticResource ToolbarButton}"
                         Command="{Binding OpenSettingsCommand}"
@@ -114,7 +387,7 @@
                                         <Style TargetType="TextBlock">
                                             <Setter Property="Foreground" Value="#999"/>
                                             <Style.Triggers>
-                                                <DataTrigger Binding="{Binding InterestLevel}" Value="Interesting">
+                                                <DataTrigger Binding="{Binding InterestLevel}" Value="Approved">
                                                     <Setter Property="Foreground" Value="#F2B400"/>
                                                 </DataTrigger>
                                                 <DataTrigger Binding="{Binding InterestLevel}" Value="NotInteresting">
@@ -124,19 +397,23 @@
                                         </Style>
                                     </TextBlock.Style>
                                 </TextBlock>
-                                <TextBlock Grid.Column="1"
-                                           Text="{Binding Name}"
-                                           VerticalAlignment="Center">
-                                    <TextBlock.Style>
-                                        <Style TargetType="TextBlock">
-                                            <Style.Triggers>
-                                                <DataTrigger Binding="{Binding IsAllJobsSentinel}" Value="True">
-                                                    <Setter Property="FontWeight" Value="SemiBold"/>
-                                                </DataTrigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </TextBlock.Style>
-                                </TextBlock>
+                                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                    <TextBlock Text="{Binding Name}">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsAllJobsSentinel}" Value="True">
+                                                        <Setter Property="FontWeight" Value="SemiBold"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                    <TextBlock Text="{Binding City}"
+                                               FontSize="10"
+                                               Foreground="#999"
+                                               Visibility="{Binding HasCity, Converter={StaticResource BoolToVis}}"/>
+                                </StackPanel>
                                 <TextBlock Grid.Column="2"
                                            Text="{Binding ActiveJobCount}"
                                            Foreground="#888"
@@ -157,26 +434,45 @@
                     <RowDefinition Height="*"/>
                 </Grid.RowDefinitions>
 
-                <Border Grid.Row="0" Padding="20,12" BorderBrush="#DDD" BorderThickness="0,0,0,1" Background="White">
-                    <StackPanel>
+                <!-- Title strip (always visible above both tabs) -->
+                <Border Grid.Row="0" Padding="20,10" BorderBrush="#DDD" BorderThickness="0,0,0,1" Background="White">
+                    <TextBlock Text="{Binding JobsPaneHeader}" FontSize="16" FontWeight="SemiBold"/>
+                </Border>
+
+                <TabControl Grid.Row="1" Background="#FAFAFA" BorderThickness="0">
+                    <!-- TAB 1: All jobs (with filter bar) -->
+                    <TabItem>
+                        <TabItem.Header>
+                            <TextBlock>
+                                <Run Text="All jobs"/>
+                                <Run Text=" ("/><Run Text="{Binding AllJobsTabCount, Mode=OneWay}"/><Run Text=")"/>
+                            </TextBlock>
+                        </TabItem.Header>
                         <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
-                            <TextBlock Grid.Column="0"
-                                       Text="{Binding JobsPaneHeader}"
-                                       FontSize="16"
-                                       FontWeight="SemiBold"
-                                       VerticalAlignment="Center"/>
-                            <CheckBox Grid.Column="1"
-                                      Content="Show removed"
-                                      IsChecked="{Binding ShowRemovedJobs}"
-                                      VerticalAlignment="Center"/>
-                        </Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+
+                            <Border Grid.Row="0" Padding="20,10" BorderBrush="#DDD" BorderThickness="0,0,0,1" Background="White">
+                                <StackPanel>
+                                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                        <CheckBox Content="Include applied"
+                                                  IsChecked="{Binding IncludeAppliedJobs}"
+                                                  VerticalAlignment="Center"
+                                                  Margin="0,0,12,0"
+                                                  ToolTip="Show jobs you've already marked as applied"/>
+                                        <CheckBox Content="Show removed"
+                                                  IsChecked="{Binding ShowRemovedJobs}"
+                                                  VerticalAlignment="Center"
+                                                  ToolTip="Show inactive jobs (postings that have come down)"/>
+                                    </StackPanel>
                         <Grid Margin="0,10,0,0">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
@@ -186,38 +482,186 @@
                                      BorderBrush="#CCC"
                                      Tag="Filter by title, company, location, description..."
                                      Margin="0,0,8,0"/>
-                            <ComboBox Grid.Column="1"
-                                      ItemsSource="{Binding AvailableLevels}"
-                                      SelectedItem="{Binding LevelFilter}"
-                                      DisplayMemberPath="Name"
-                                      MinWidth="120"
+
+                            <!-- Level multi-select -->
+                            <Grid Grid.Column="1" MinWidth="101" Margin="0,0,8,0">
+                                <ToggleButton x:Name="LevelFilterButton"
+                                              Padding="8,4"
+                                              HorizontalContentAlignment="Stretch"
+                                              ToolTip="Filter by level (multi-select)">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0"
+                                                   Text="{Binding LevelFilterSummary}"
+                                                   HorizontalAlignment="Left"/>
+                                        <TextBlock Grid.Column="1" Text="▾" Margin="6,0,0,0" Foreground="#888"/>
+                                    </Grid>
+                                </ToggleButton>
+                                <Popup IsOpen="{Binding IsChecked, ElementName=LevelFilterButton}"
+                                       PlacementTarget="{Binding ElementName=LevelFilterButton}"
+                                       Placement="Bottom"
+                                       StaysOpen="False"
+                                       AllowsTransparency="True"
+                                       PopupAnimation="Fade">
+                                    <Border Background="White" BorderBrush="#CCC" BorderThickness="1" Padding="4" MinWidth="160">
+                                        <ItemsControl ItemsSource="{Binding AvailableLevels}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate DataType="{x:Type vm:FilterItemViewModel}">
+                                                    <CheckBox Content="{Binding Name}"
+                                                              IsChecked="{Binding IsSelected}"
+                                                              Padding="4,2"
+                                                              Margin="4,3"/>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </Border>
+                                </Popup>
+                            </Grid>
+
+                            <!-- Area multi-select -->
+                            <Grid Grid.Column="2" MinWidth="130" Margin="0,0,8,0">
+                                <ToggleButton x:Name="AreaFilterButton"
+                                              Padding="8,4"
+                                              HorizontalContentAlignment="Stretch"
+                                              ToolTip="Filter by area (multi-select)">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0"
+                                                   Text="{Binding AreaFilterSummary}"
+                                                   HorizontalAlignment="Left"/>
+                                        <TextBlock Grid.Column="1" Text="▾" Margin="6,0,0,0" Foreground="#888"/>
+                                    </Grid>
+                                </ToggleButton>
+                                <Popup IsOpen="{Binding IsChecked, ElementName=AreaFilterButton}"
+                                       PlacementTarget="{Binding ElementName=AreaFilterButton}"
+                                       Placement="Bottom"
+                                       StaysOpen="False"
+                                       AllowsTransparency="True"
+                                       PopupAnimation="Fade">
+                                    <Border Background="White" BorderBrush="#CCC" BorderThickness="1" Padding="4" MinWidth="200">
+                                        <ItemsControl ItemsSource="{Binding AvailableAreas}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate DataType="{x:Type vm:FilterItemViewModel}">
+                                                    <CheckBox Content="{Binding Name}"
+                                                              IsChecked="{Binding IsSelected}"
+                                                              Padding="4,2"
+                                                              Margin="4,3"/>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </Border>
+                                </Popup>
+                            </Grid>
+
+                            <!-- Resume match threshold (single-select) — placed before City to give it priority real estate -->
+                            <ComboBox Grid.Column="3"
+                                      ItemsSource="{Binding ResumeMatchThresholds}"
+                                      SelectedItem="{Binding SelectedResumeMatchThreshold}"
+                                      DisplayMemberPath="Label"
+                                      MinWidth="91"
                                       Padding="6,2"
-                                      Margin="0,0,8,0">
-                                <ComboBox.Resources>
-                                    <Style TargetType="ComboBox">
-                                        <Setter Property="ToolTip" Value="Filter by level"/>
-                                    </Style>
-                                </ComboBox.Resources>
-                            </ComboBox>
-                            <ComboBox Grid.Column="2"
-                                      ItemsSource="{Binding AvailableAreas}"
-                                      SelectedItem="{Binding AreaFilter}"
-                                      DisplayMemberPath="Name"
-                                      MinWidth="160"
-                                      Padding="6,2">
-                                <ComboBox.Resources>
-                                    <Style TargetType="ComboBox">
-                                        <Setter Property="ToolTip" Value="Filter by area"/>
-                                    </Style>
-                                </ComboBox.Resources>
-                            </ComboBox>
+                                      Margin="0,0,8,0"
+                                      ToolTip="Filter by resume match score (upload a resume first via the toolbar)"/>
+
+                            <!-- Posted within (single-select) -->
+                            <ComboBox Grid.Column="4"
+                                      ItemsSource="{Binding JobAgeFilters}"
+                                      SelectedItem="{Binding SelectedJobAge}"
+                                      DisplayMemberPath="Label"
+                                      MinWidth="86"
+                                      Padding="6,2"
+                                      Margin="0,0,8,0"
+                                      ToolTip="Restrict to jobs first seen within this window. 'Last 1 day' = posted in the last 24 hours."/>
+
+                            <!-- City multi-select -->
+                            <Grid Grid.Column="5" MinWidth="160">
+                                <ToggleButton x:Name="CityFilterButton"
+                                              Padding="8,4"
+                                              HorizontalContentAlignment="Stretch"
+                                              ToolTip="Filter by city (multi-select)">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0"
+                                                   Text="{Binding CityFilterSummary}"
+                                                   HorizontalAlignment="Left"/>
+                                        <TextBlock Grid.Column="1" Text="▾" Margin="6,0,0,0" Foreground="#888"/>
+                                    </Grid>
+                                </ToggleButton>
+                                <Popup IsOpen="{Binding IsChecked, ElementName=CityFilterButton}"
+                                       PlacementTarget="{Binding ElementName=CityFilterButton}"
+                                       Placement="Bottom"
+                                       StaysOpen="False"
+                                       AllowsTransparency="True"
+                                       PopupAnimation="Fade">
+                                    <Border Background="White" BorderBrush="#CCC" BorderThickness="1" Padding="4" MinWidth="200" MaxHeight="400">
+                                        <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                            <ItemsControl ItemsSource="{Binding AvailableCities}">
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate DataType="{x:Type vm:FilterItemViewModel}">
+                                                        <CheckBox Content="{Binding Name}"
+                                                                  IsChecked="{Binding IsSelected}"
+                                                                  Padding="4,2"
+                                                                  Margin="4,3"/>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </ScrollViewer>
+                                    </Border>
+                                </Popup>
+                            </Grid>
                         </Grid>
-                        <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
-                            <Button Content="Clear filters"
+                        <Grid Margin="0,6,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <Button Grid.Column="0"
+                                    Content="Clear filters"
                                     Command="{Binding ClearJobFiltersCommand}"
                                     Padding="6,2"
+                                    Margin="0,0,6,0"
                                     FontSize="11"/>
-                        </StackPanel>
+                            <ComboBox Grid.Column="1"
+                                      ItemsSource="{Binding SavedFilterList}"
+                                      SelectedItem="{Binding SelectedSavedFilter}"
+                                      DisplayMemberPath="Name"
+                                      MinWidth="160"
+                                      Padding="6,2"
+                                      Margin="0,0,6,0"
+                                      FontSize="11"
+                                      ToolTip="Load a saved filter"
+                                      IsEditable="False"
+                                      IsSynchronizedWithCurrentItem="False"/>
+                            <Button Grid.Column="2"
+                                    Content="Save current..."
+                                    Command="{Binding SaveCurrentFilterCommand}"
+                                    Padding="6,2"
+                                    Margin="0,0,6,0"
+                                    FontSize="11"/>
+                            <Button Grid.Column="3"
+                                    Content="Manage..."
+                                    Command="{Binding OpenSavedFiltersCommand}"
+                                    Padding="6,2"
+                                    FontSize="11"/>
+                            <TextBlock Grid.Column="4"
+                                       Text="{Binding FilteredJobsCountText}"
+                                       HorizontalAlignment="Right"
+                                       VerticalAlignment="Center"
+                                       Foreground="#666"
+                                       FontSize="11"/>
+                        </Grid>
                     </StackPanel>
                 </Border>
 
@@ -227,7 +671,8 @@
                          BorderThickness="0"
                          ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                          HorizontalContentAlignment="Stretch"
-                         MouseDoubleClick="JobsList_MouseDoubleClick">
+                         MouseDoubleClick="JobsList_MouseDoubleClick"
+                         ItemTemplate="{StaticResource JobCardTemplate}">
                     <ListBox.ItemContainerStyle>
                         <Style TargetType="ListBoxItem">
                             <Setter Property="Padding" Value="0"/>
@@ -236,82 +681,36 @@
                             <Setter Property="BorderThickness" Value="0"/>
                         </Style>
                     </ListBox.ItemContainerStyle>
-                    <ListBox.ItemTemplate>
-                        <DataTemplate DataType="{x:Type vm:JobViewModel}">
-                            <Border Background="White"
-                                    BorderBrush="#E5E5E5"
-                                    BorderThickness="1"
-                                    Padding="14,12"
-                                    CornerRadius="3">
-                                <Border.ContextMenu>
-                                    <ContextMenu>
-                                        <MenuItem Header="Open in browser"
-                                                  Command="{Binding DataContext.OpenJobInBrowserCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                  CommandParameter="{Binding}"/>
-                                        <MenuItem Header="Copy URL"
-                                                  Command="{Binding DataContext.CopyJobUrlCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                  CommandParameter="{Binding}"/>
-                                        <Separator/>
-                                        <MenuItem Header="Mark Interesting (★)"
-                                                  Command="{Binding DataContext.MarkJobInterestingCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                  CommandParameter="{Binding}"/>
-                                        <MenuItem Header="Mark Not Interesting (✗)"
-                                                  Command="{Binding DataContext.MarkJobNotInterestingCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                  CommandParameter="{Binding}"/>
-                                        <MenuItem Header="Clear interest"
-                                                  Command="{Binding DataContext.ClearJobInterestCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                  CommandParameter="{Binding}"/>
-                                    </ContextMenu>
-                                </Border.ContextMenu>
-                                <Border.Style>
-                                    <Style TargetType="Border">
-                                        <Style.Triggers>
-                                            <DataTrigger Binding="{Binding IsActive}" Value="False">
-                                                <Setter Property="Opacity" Value="0.55"/>
-                                            </DataTrigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </Border.Style>
-                                <Grid>
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="20"/>
-                                        <ColumnDefinition Width="*"/>
-                                    </Grid.ColumnDefinitions>
-                                    <TextBlock Grid.Column="0"
-                                               Text="{Binding InterestGlyph}"
-                                               FontSize="13"
-                                               VerticalAlignment="Top"
-                                               Margin="0,2,0,0">
-                                        <TextBlock.Style>
-                                            <Style TargetType="TextBlock">
-                                                <Setter Property="Foreground" Value="#BBB"/>
-                                                <Style.Triggers>
-                                                    <DataTrigger Binding="{Binding InterestLevel}" Value="Interesting">
-                                                        <Setter Property="Foreground" Value="#F2B400"/>
-                                                    </DataTrigger>
-                                                    <DataTrigger Binding="{Binding InterestLevel}" Value="NotInteresting">
-                                                        <Setter Property="Foreground" Value="#C44"/>
-                                                    </DataTrigger>
-                                                </Style.Triggers>
-                                            </Style>
-                                        </TextBlock.Style>
-                                    </TextBlock>
-                                    <StackPanel Grid.Column="1">
-                                        <TextBlock>
-                                            <Run Text="{Binding Title, Mode=OneWay}" FontWeight="SemiBold" FontSize="14"/>
-                                            <Run Text=" — " Foreground="#888"/>
-                                            <Run Text="{Binding CompanyName, Mode=OneWay}" Foreground="#666"/>
-                                        </TextBlock>
-                                        <TextBlock Text="{Binding MetaLine}"
-                                                   Foreground="#888"
-                                                   FontSize="12"
-                                                   Margin="0,3,0,0"/>
-                                    </StackPanel>
-                                </Grid>
-                            </Border>
-                        </DataTemplate>
-                    </ListBox.ItemTemplate>
                 </ListBox>
+                        </Grid>
+                    </TabItem>
+
+                    <!-- TAB 2: Approved jobs (no filters; applied sorts to bottom) -->
+                    <TabItem>
+                        <TabItem.Header>
+                            <TextBlock>
+                                <Run Text="Approved"/>
+                                <Run Text=" ("/><Run Text="{Binding ApprovedJobsTabCount, Mode=OneWay}"/><Run Text=")"/>
+                            </TextBlock>
+                        </TabItem.Header>
+                        <ListBox ItemsSource="{Binding ApprovedJobsView}"
+                                 Background="Transparent"
+                                 BorderThickness="0"
+                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                 HorizontalContentAlignment="Stretch"
+                                 MouseDoubleClick="JobsList_MouseDoubleClick"
+                                 ItemTemplate="{StaticResource JobCardTemplate}">
+                            <ListBox.ItemContainerStyle>
+                                <Style TargetType="ListBoxItem">
+                                    <Setter Property="Padding" Value="0"/>
+                                    <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                                    <Setter Property="Margin" Value="16,8,16,0"/>
+                                    <Setter Property="BorderThickness" Value="0"/>
+                                </Style>
+                            </ListBox.ItemContainerStyle>
+                        </ListBox>
+                    </TabItem>
+                </TabControl>
             </Grid>
         </Grid>
 

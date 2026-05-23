@@ -17,6 +17,7 @@ public partial class SettingsViewModel : ObservableObject
     private readonly IAggregatorRepository _aggregators;
     private readonly ILevelRepository _levels;
     private readonly IAreaRepository _areas;
+    private readonly IDiscoverySeedRepository _seeds;
     private readonly IAppPaths _paths;
 
     // Search tab
@@ -30,12 +31,19 @@ public partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private double _scoreWeightArea = 0.5;
     [ObservableProperty] private double _scoreWeightLevel = 0.5;
 
-    // AI provider tab
-    [ObservableProperty] private string _aiProvider = "gemini";
+    // AI tab — single dropdown toggles the global provider mode.
+    public System.Collections.Generic.IReadOnlyList<string> AiModes { get; } = new[] { "Online", "Local" };
+
+    [ObservableProperty] private string _aiMode = "Online";
     [ObservableProperty] private string _geminiApiKey = string.Empty;
     [ObservableProperty] private string _geminiModel = "gemini-2.5-flash-lite";
     [ObservableProperty] private string _claudeApiKey = string.Empty;
     [ObservableProperty] private string _claudeModel = "claude-haiku-4-5";
+    [ObservableProperty] private string _groqApiKey = string.Empty;
+    [ObservableProperty] private string _groqModel = "llama-3.3-70b-versatile";
+    [ObservableProperty] private string _llamaModelPath = string.Empty;
+    [ObservableProperty] private string _llamaGpuLayers = "0";
+    [ObservableProperty] private string _llamaContextSize = "4096";
 
     // Scraping tab
     [ObservableProperty] private int _scrapeDelayMs = 2000;
@@ -50,19 +58,27 @@ public partial class SettingsViewModel : ObservableObject
     public ObservableCollection<AggregatorToggleViewModel> Aggregators { get; } = new();
     public ObservableCollection<TaxonomyItemViewModel> Levels { get; } = new();
     public ObservableCollection<TaxonomyItemViewModel> Areas { get; } = new();
+    public ObservableCollection<DiscoverySeedItemViewModel> DiscoverySeeds { get; } = new();
+    [ObservableProperty] private DiscoverySeedItemViewModel? _selectedDiscoverySeed;
 
     private readonly HashSet<int> _deletedLevelIds = new();
     private readonly HashSet<int> _deletedAreaIds = new();
+    private readonly HashSet<int> _deletedSeedIds = new();
+    private readonly HashSet<int> _deletedAggregatorIds = new();
+
+    [ObservableProperty] private AggregatorToggleViewModel? _selectedAggregator;
 
     public event Action? CloseRequested;
 
     public SettingsViewModel(IConfigRepository config, IAggregatorRepository aggregators,
-                              ILevelRepository levels, IAreaRepository areas, IAppPaths paths)
+                              ILevelRepository levels, IAreaRepository areas,
+                              IDiscoverySeedRepository seeds, IAppPaths paths)
     {
         _config = config;
         _aggregators = aggregators;
         _levels = levels;
         _areas = areas;
+        _seeds = seeds;
         _paths = paths;
         DatabasePath = paths.DatabasePath;
 
@@ -79,11 +95,20 @@ public partial class SettingsViewModel : ObservableObject
         ScoreWeightArea         = ParseDouble(_config.GetOrDefault("score_weight_area", "0.5"));
         ScoreWeightLevel        = ParseDouble(_config.GetOrDefault("score_weight_level", "0.5"));
         ScrapeDelayMs           = ParseInt(_config.GetOrDefault("scrape_delay_ms", "2000"));
-        AiProvider              = _config.GetOrDefault("ai_provider", "gemini");
+        var provider = _config.GetOrDefault("ai_provider", "gemini").ToLowerInvariant();
+        // "Local" mode is whenever llama is the first token in the chain; everything else = "Online".
+        var firstProvider = provider.Replace("+", ",").Split(',', StringSplitOptions.RemoveEmptyEntries)
+                                    .Select(s => s.Trim()).FirstOrDefault() ?? "gemini";
+        AiMode = firstProvider is "llama" or "local" ? "Local" : "Online";
+        LlamaModelPath = _config.GetOrDefault("llama_model_path", "");
+        LlamaGpuLayers = _config.GetOrDefault("llama_gpu_layers", "0");
+        LlamaContextSize = _config.GetOrDefault("llama_context_size", "4096");
         GeminiApiKey            = _config.GetOrDefault("gemini_api_key", "");
         GeminiModel             = _config.GetOrDefault("gemini_model", "gemini-2.5-flash-lite");
         ClaudeApiKey            = _config.GetOrDefault("claude_api_key", "");
         ClaudeModel             = _config.GetOrDefault("claude_model", "claude-haiku-4-5");
+        GroqApiKey              = _config.GetOrDefault("groq_api_key", "");
+        GroqModel               = _config.GetOrDefault("groq_model", "llama-3.3-70b-versatile");
         ClaudeExtractionPrompt  = _config.GetOrDefault("claude_extraction_prompt", "");
 
         Aggregators.Clear();
@@ -97,6 +122,10 @@ public partial class SettingsViewModel : ObservableObject
         Areas.Clear();
         foreach (var a in _areas.GetAll())
             Areas.Add(new TaxonomyItemViewModel(a.Id, a.Name));
+
+        DiscoverySeeds.Clear();
+        foreach (var s in _seeds.GetAll())
+            DiscoverySeeds.Add(new DiscoverySeedItemViewModel(s.Id, s.Name, s.Url, s.Description, s.IsEnabled, s.MaxPages));
     }
 
     [RelayCommand]
@@ -110,15 +139,39 @@ public partial class SettingsViewModel : ObservableObject
         _config.Set("score_weight_area",         ScoreWeightArea.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture));
         _config.Set("score_weight_level",        ScoreWeightLevel.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture));
         _config.Set("scrape_delay_ms",           ScrapeDelayMs.ToString(System.Globalization.CultureInfo.InvariantCulture));
-        _config.Set("ai_provider",               AiProvider ?? "gemini");
+        // Mode dropdown → provider chain. Online uses the cloud fallback chain (gemini first,
+        // groq second). Local uses the in-process llama model. Per-task overrides are still
+        // honored if set via CLI; this only writes the global default.
+        var chain = AiMode == "Local" ? "llama" : "gemini,groq";
+        _config.Set("ai_provider",               chain);
+        _config.Set("llama_model_path",          LlamaModelPath ?? "");
+        if (int.TryParse(LlamaGpuLayers, out var gl) && gl >= 0)
+            _config.Set("llama_gpu_layers",      gl.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        if (int.TryParse(LlamaContextSize, out var cs) && cs > 0)
+            _config.Set("llama_context_size",    cs.ToString(System.Globalization.CultureInfo.InvariantCulture));
         _config.Set("gemini_api_key",            GeminiApiKey ?? "");
         _config.Set("gemini_model",              GeminiModel ?? "gemini-2.5-flash-lite");
         _config.Set("claude_api_key",            ClaudeApiKey ?? "");
         _config.Set("claude_model",              ClaudeModel ?? "claude-haiku-4-5");
+        _config.Set("groq_api_key",              GroqApiKey ?? "");
+        _config.Set("groq_model",                GroqModel ?? "llama-3.3-70b-versatile");
         _config.Set("claude_extraction_prompt",  ClaudeExtractionPrompt ?? "");
 
+        // Aggregators (Boards): delete-then-upsert in the same pattern as directory seeds.
+        foreach (var id in _deletedAggregatorIds) _aggregators.Delete(id);
+        _deletedAggregatorIds.Clear();
         foreach (var a in Aggregators)
-            _aggregators.SetEnabled(a.Source.Id, a.IsEnabled);
+        {
+            var name = (a.Name ?? "").Trim();
+            var baseUrl = (a.BaseUrl ?? "").Trim();
+            if (string.IsNullOrEmpty(name) || string.IsNullOrEmpty(baseUrl)) continue;
+            var notes = string.IsNullOrWhiteSpace(a.Notes) ? null : a.Notes.Trim();
+            var pages = Math.Max(1, a.MaxPages);
+            if (a.IsNew)
+                _aggregators.Insert(name, baseUrl, notes, a.IsEnabled, pages);
+            else
+                _aggregators.Update(a.Id, name, baseUrl, notes, a.IsEnabled, pages);
+        }
 
         // Levels: deletes, then upserts in display order
         foreach (var id in _deletedLevelIds) _levels.Delete(id);
@@ -150,6 +203,23 @@ public partial class SettingsViewModel : ObservableObject
                 _areas.Update(new Area { Id = item.Id, Name = item.Name.Trim(), SortOrder = i });
         }
 
+        // Discovery seeds
+        foreach (var id in _deletedSeedIds) _seeds.Delete(id);
+        _deletedSeedIds.Clear();
+        for (var i = 0; i < DiscoverySeeds.Count; i++)
+        {
+            var s = DiscoverySeeds[i];
+            if (string.IsNullOrWhiteSpace(s.Name) || string.IsNullOrWhiteSpace(s.Url)) continue;
+            if (s.IsNew)
+                _seeds.Insert(s.Name.Trim(), s.Url.Trim(),
+                               string.IsNullOrWhiteSpace(s.Description) ? null : s.Description.Trim(),
+                               s.IsEnabled, sortOrder: i, maxPages: Math.Max(1, s.MaxPages));
+            else
+                _seeds.Update(s.Id, s.Name.Trim(), s.Url.Trim(),
+                               string.IsNullOrWhiteSpace(s.Description) ? null : s.Description.Trim(),
+                               s.IsEnabled, sortOrder: i, maxPages: Math.Max(1, s.MaxPages));
+        }
+
         CloseRequested?.Invoke();
     }
 
@@ -168,6 +238,18 @@ public partial class SettingsViewModel : ObservableObject
             });
         }
         catch { }
+    }
+
+    [RelayCommand]
+    private void BrowseLlamaModel()
+    {
+        var dlg = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "Select a .gguf model file",
+            Filter = "GGUF model files (*.gguf)|*.gguf|All files (*.*)|*.*",
+            CheckFileExists = true,
+        };
+        if (dlg.ShowDialog() == true) LlamaModelPath = dlg.FileName;
     }
 
     [RelayCommand]
@@ -215,6 +297,43 @@ public partial class SettingsViewModel : ObservableObject
 
     [RelayCommand]
     private void MoveAreaDown() => MoveSelected(Areas, SelectedArea, +1);
+
+    [RelayCommand]
+    private void AddDiscoverySeed()
+    {
+        var item = new DiscoverySeedItemViewModel(0, "(new source)", "https://", "", true, maxPages: 1);
+        DiscoverySeeds.Add(item);
+        SelectedDiscoverySeed = item;
+    }
+
+    [RelayCommand]
+    private void DeleteDiscoverySeed()
+    {
+        if (SelectedDiscoverySeed is null) return;
+        if (!SelectedDiscoverySeed.IsNew) _deletedSeedIds.Add(SelectedDiscoverySeed.Id);
+        DiscoverySeeds.Remove(SelectedDiscoverySeed);
+        SelectedDiscoverySeed = null;
+    }
+
+    [RelayCommand]
+    private void AddAggregator()
+    {
+        var item = new AggregatorToggleViewModel(new Models.AggregatorSource
+        {
+            Id = 0, Name = "(new board)", BaseUrl = "https://", IsEnabled = false, Notes = "", MaxPages = 1
+        });
+        Aggregators.Add(item);
+        SelectedAggregator = item;
+    }
+
+    [RelayCommand]
+    private void DeleteAggregator()
+    {
+        if (SelectedAggregator is null) return;
+        if (!SelectedAggregator.IsNew) _deletedAggregatorIds.Add(SelectedAggregator.Id);
+        Aggregators.Remove(SelectedAggregator);
+        SelectedAggregator = null;
+    }
 
     private static void MoveSelected(ObservableCollection<TaxonomyItemViewModel> list, TaxonomyItemViewModel? selected, int delta)
     {

@@ -53,7 +53,7 @@ public sealed class AiFallbackClassifier : IJobClassifier
         AiResponse response;
         try
         {
-            response = _ai.CompleteAsync(user, system, maxTokens: 256).GetAwaiter().GetResult();
+            response = _ai.CompleteAsync(user, system, maxTokens: 256, task: "classifier").GetAwaiter().GetResult();
         }
         catch (Exception ex)
         {

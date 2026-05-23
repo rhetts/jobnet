@@ -8,4 +8,5 @@ public sealed class AggregatorSource
     public string? SearchUrlTemplate { get; init; }
     public bool IsEnabled { get; set; }
     public string? Notes { get; init; }
+    public int MaxPages { get; init; } = 1;
 }

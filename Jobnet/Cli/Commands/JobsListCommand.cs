@@ -38,7 +38,8 @@ public sealed class JobsListCommand : ICliCommand
 
         var list = jobs
             .Select(j => new { Job = j, Score = dataService.ScoreJob(j) })
-            .OrderByDescending(x => x.Score)
+            .OrderByDescending(x => x.Job.ResumeMatchScore ?? -1)
+            .ThenByDescending(x => x.Score)
             .ThenByDescending(x => x.Job.DateFirstSeen)
             .ToList();
 
@@ -50,15 +51,16 @@ public sealed class JobsListCommand : ICliCommand
             return 0;
         }
 
-        Console.WriteLine($"{"Score",-5}  {"Title",-38}  {"Company",-20}  {"Remote",-7}  {"Age",-9}  Status");
-        Console.WriteLine(new string('-', 100));
+        Console.WriteLine($"{"Score",-5}  {"Match",-5}  {"Title",-36}  {"Company",-20}  {"Remote",-7}  {"Age",-7}  Status");
+        Console.WriteLine(new string('-', 110));
         foreach (var x in list)
         {
             var j = x.Job;
             companies.TryGetValue(j.CompanyId, out var companyName);
             var status = j.IsActive ? "active" : "removed";
             var age = (int)Math.Floor((DateTime.UtcNow - j.DateFirstSeen).TotalDays) + "d";
-            Console.WriteLine($"{x.Score,-5}  {Trunc(j.Title, 38),-38}  {Trunc(companyName ?? $"#{j.CompanyId}", 20),-20}  {Trunc(j.RemoteType ?? "", 7),-7}  {age,-9}  {status}");
+            var match = j.ResumeMatchScore?.ToString() ?? "";
+            Console.WriteLine($"{x.Score,-5}  {match,-5}  {Trunc(j.Title, 36),-36}  {Trunc(companyName ?? $"#{j.CompanyId}", 20),-20}  {Trunc(j.RemoteType ?? "", 7),-7}  {age,-7}  {status}");
         }
         Console.WriteLine();
         Console.WriteLine($"{list.Count} job{(list.Count == 1 ? "" : "s")} shown.");

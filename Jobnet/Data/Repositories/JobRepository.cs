@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Dapper;
 using Jobnet.Models;
+using Jobnet.Services.Profile;
 
 namespace Jobnet.Data.Repositories;
 
@@ -11,9 +12,13 @@ public sealed class JobRepository : IJobRepository
     private const string SelectAll = @"
         SELECT id, company_id, hash, hash_tier, title, url, location,
                remote_type, employment_type, level_id,
-               description_snippet, salary_range,
+               description_snippet, summary, salary_range,
                salary_min AS SalaryMin, salary_max AS SalaryMax,
                salary_currency AS SalaryCurrency, salary_period AS SalaryPeriod,
+               resume_match_score AS ResumeMatchScore,
+               resume_match_reason AS ResumeMatchReason,
+               applied_at AS AppliedAt,
+               viewed_at AS ViewedAt,
                source, interest_level, notes,
                extraction_version, date_first_seen, date_last_seen, date_removed, is_active
         FROM jobs";
@@ -212,6 +217,80 @@ public sealed class JobRepository : IJobRepository
             .ToDictionary(r => r.CompanyId, r => r.Count);
     }
 
+    public IReadOnlyList<(int Id, string? Location)> GetActiveLocations()
+    {
+        using var conn = _connections.Open();
+        return conn.Query<(int Id, string? Location)>(
+            "SELECT id, location FROM jobs WHERE is_active = 1").ToList();
+    }
+
+    public void SetSummary(int id, string summary, string model, DateTime generatedAt)
+    {
+        using var conn = _connections.Open();
+        conn.Execute(@"
+            UPDATE jobs SET summary = @summary,
+                            summary_model = @model,
+                            summary_generated_at = @when
+            WHERE id = @id",
+            new { id, summary, model, when = generatedAt.ToUniversalTime().ToString("o") });
+    }
+
+    public void SetLevel(int id, int? levelId)
+    {
+        using var conn = _connections.Open();
+        conn.Execute("UPDATE jobs SET level_id = @levelId WHERE id = @id",
+            new { id, levelId });
+    }
+
+    public void SetResumeMatch(int id, int score, string reason)
+    {
+        using var conn = _connections.Open();
+        conn.Execute(@"
+            UPDATE jobs SET resume_match_score = @score,
+                            resume_match_reason = @reason,
+                            resume_match_at = @when
+            WHERE id = @id",
+            new { id, score, reason, when = DateTime.UtcNow.ToString("o") });
+    }
+
+    public void ClearAllResumeMatches()
+    {
+        using var conn = _connections.Open();
+        conn.Execute(@"
+            UPDATE jobs SET resume_match_score = NULL,
+                            resume_match_reason = NULL,
+                            resume_match_at = NULL");
+    }
+
+    public void SetApplied(int id, bool isApplied)
+    {
+        using var conn = _connections.Open();
+        conn.Execute("UPDATE jobs SET applied_at = @when WHERE id = @id",
+            new { id, when = isApplied ? DateTime.UtcNow.ToString("o") : null });
+    }
+
+    public void SetViewed(int id, bool isViewed)
+    {
+        using var conn = _connections.Open();
+        conn.Execute("UPDATE jobs SET viewed_at = @when WHERE id = @id",
+            new { id, when = isViewed ? DateTime.UtcNow.ToString("o") : null });
+    }
+
+    public IReadOnlyList<Job> GetJobsNeedingSummary(int max = 200)
+    {
+        using var conn = _connections.Open();
+        // Need either a description we can summarize, or a URL we can fetch.
+        var sql = SelectAll + @"
+            WHERE is_active = 1
+              AND (summary IS NULL OR summary = '')
+              AND ((description_snippet IS NOT NULL AND LENGTH(description_snippet) > 40)
+                   OR (url IS NOT NULL AND LENGTH(url) > 0))
+            ORDER BY date_first_seen DESC
+            LIMIT @max";
+        var rows = conn.Query<JobRow>(sql, new { max }).ToList();
+        return Hydrate(conn, rows);
+    }
+
     private static IReadOnlyList<Job> Hydrate(System.Data.IDbConnection conn, IEnumerable<JobRow> rows)
     {
         var jobs = rows.Select(MapToJob).ToList();
@@ -248,11 +327,16 @@ public sealed class JobRepository : IJobRepository
         EmploymentType = r.EmploymentType,
         LevelId = r.LevelId,
         DescriptionSnippet = r.DescriptionSnippet,
+        Summary = r.Summary,
         SalaryRange = r.SalaryRange,
         SalaryMin = r.SalaryMin,
         SalaryMax = r.SalaryMax,
         SalaryCurrency = r.SalaryCurrency,
         SalaryPeriod = r.SalaryPeriod,
+        ResumeMatchScore = r.ResumeMatchScore,
+        ResumeMatchReason = r.ResumeMatchReason,
+        DateApplied = string.IsNullOrEmpty(r.AppliedAt) ? null : DateTime.Parse(r.AppliedAt).ToUniversalTime(),
+        DateViewed = string.IsNullOrEmpty(r.ViewedAt) ? null : DateTime.Parse(r.ViewedAt).ToUniversalTime(),
         InterestLevel = ParseInterest(r.InterestLevel),
         DateFirstSeen = DateTime.Parse(r.DateFirstSeen).ToUniversalTime(),
         DateLastSeen = DateTime.Parse(r.DateLastSeen).ToUniversalTime(),
@@ -260,18 +344,53 @@ public sealed class JobRepository : IJobRepository
         IsActive = r.IsActive != 0,
     };
 
+    public int ApplyGreylist(string? rawGreylist)
+    {
+        var tokens = GreylistMatcher.Parse(rawGreylist);
+        if (tokens.Count == 0) return 0;
+
+        using var conn = _connections.Open();
+        // Only sweep Neutral jobs — never override a user's explicit Approve or Downvote.
+        // Neutral in this codebase is stored as NULL (ToDbText returns null for Neutral).
+        var rows = conn.Query<(int Id, string Title, string? Summary, string? DescriptionSnippet, string? CompanyName)>(@"
+            SELECT j.id   AS Id,
+                   j.title AS Title,
+                   j.summary AS Summary,
+                   j.description_snippet AS DescriptionSnippet,
+                   c.name AS CompanyName
+            FROM jobs j
+            LEFT JOIN companies c ON c.id = j.company_id
+            WHERE j.is_active = 1
+              AND j.interest_level IS NULL").ToList();
+
+        var updated = 0;
+        foreach (var r in rows)
+        {
+            if (GreylistMatcher.MatchesAny(tokens, r.Title, r.Summary, r.DescriptionSnippet, r.CompanyName))
+            {
+                SetInterestLevel(r.Id, InterestLevel.NotInteresting);
+                updated++;
+            }
+        }
+        return updated;
+    }
+
+    // DB text is constrained by a CHECK from migration 001 to ('interesting','not_interesting').
+    // The C# enum value was renamed to Approved but DB still stores 'interesting' so we don't
+    // have to rebuild the table. Parse maps both spellings just in case a future migration
+    // relaxes the constraint and the DB ever contains "approved".
     private static string? ToDbText(InterestLevel level) => level switch
     {
-        InterestLevel.Interesting    => "interesting",
+        InterestLevel.Approved       => "interesting",
         InterestLevel.NotInteresting => "not_interesting",
         _                            => null
     };
 
     private static InterestLevel ParseInterest(string? value) => value switch
     {
-        "interesting"     => InterestLevel.Interesting,
-        "not_interesting" => InterestLevel.NotInteresting,
-        _                 => InterestLevel.Neutral
+        "approved" or "interesting" => InterestLevel.Approved,
+        "not_interesting"           => InterestLevel.NotInteresting,
+        _                           => InterestLevel.Neutral
     };
 
     private sealed class JobRow
@@ -287,11 +406,16 @@ public sealed class JobRepository : IJobRepository
         public string? EmploymentType { get; set; }
         public int? LevelId { get; set; }
         public string? DescriptionSnippet { get; set; }
+        public string? Summary { get; set; }
         public string? SalaryRange { get; set; }
         public int? SalaryMin { get; set; }
         public int? SalaryMax { get; set; }
         public string? SalaryCurrency { get; set; }
         public string? SalaryPeriod { get; set; }
+        public int?    ResumeMatchScore { get; set; }
+        public string? ResumeMatchReason { get; set; }
+        public string? AppliedAt { get; set; }
+        public string? ViewedAt { get; set; }
         public string? Source { get; set; }
         public string? InterestLevel { get; set; }
         public string? Notes { get; set; }

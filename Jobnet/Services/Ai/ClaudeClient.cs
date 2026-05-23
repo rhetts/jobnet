@@ -24,19 +24,23 @@ public sealed class ClaudeClient : IAiClient
     private readonly IConfigRepository _config;
     private readonly IApiUsageTracker _usage;
     private readonly IRateLimiter _rateLimiter;
+    private readonly IApiQuotaController _quota;
 
-    public ClaudeClient(HttpClient http, IConfigRepository config, IApiUsageTracker usage, IRateLimiter rateLimiter)
+    public ClaudeClient(HttpClient http, IConfigRepository config, IApiUsageTracker usage,
+                         IRateLimiter rateLimiter, IApiQuotaController quota)
     {
         _http = http;
         _config = config;
         _usage = usage;
         _rateLimiter = rateLimiter;
+        _quota = quota;
     }
 
     public bool IsConfigured => !string.IsNullOrWhiteSpace(_config.GetOrDefault("claude_api_key", ""));
 
-    public async Task<AiResponse> CompleteAsync(string userMessage, string? system = null, int? maxTokens = null, CancellationToken ct = default)
+    public async Task<AiResponse> CompleteAsync(string userMessage, string? system = null, int? maxTokens = null, CancellationToken ct = default, string? task = null)
     {
+        _ = task;
         var apiKey = _config.GetOrDefault("claude_api_key", "");
         if (string.IsNullOrWhiteSpace(apiKey))
             throw new AiUnavailableException("Claude API key is not configured. Set claude_api_key in Settings.");
@@ -63,6 +67,16 @@ public sealed class ClaudeClient : IAiClient
         _usage.RecordCall(Provider);
 
         using var response = await _http.SendAsync(req, ct);
+        if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
+        {
+            var body = await response.Content.ReadAsStringAsync(ct);
+            var snapshot = _usage.GetSnapshot(Provider);
+            var isDaily = body.Contains("per_day", StringComparison.OrdinalIgnoreCase)
+                       || body.Contains("daily", StringComparison.OrdinalIgnoreCase)
+                       || (snapshot.RpdCap > 0 && snapshot.Rpd >= snapshot.RpdCap);
+            var label = isDaily ? "daily" : "per-minute";
+            throw new AiUnavailableException($"Claude API HTTP 429 ({label}) — {Truncate(body, 300)}");
+        }
         if (!response.IsSuccessStatusCode)
         {
             var body = await response.Content.ReadAsStringAsync(ct);
@@ -74,11 +88,15 @@ public sealed class ClaudeClient : IAiClient
                      ?? throw new AiUnavailableException("Claude API returned empty response body.");
         var text = parsed.Content?.Count > 0 ? string.Concat(parsed.Content.ConvertAll(c => c.Text ?? "")) : "";
 
+        var inTok  = parsed.Usage?.InputTokens ?? 0;
+        var outTok = parsed.Usage?.OutputTokens ?? 0;
+        _usage.UpdateLastCallTokens(Provider, inTok, outTok);
+
         return new AiResponse
         {
             Text = text,
-            InputTokens = parsed.Usage?.InputTokens ?? 0,
-            OutputTokens = parsed.Usage?.OutputTokens ?? 0,
+            InputTokens = inTok,
+            OutputTokens = outTok,
             Model = parsed.Model ?? model,
             ProviderId = Provider,
         };

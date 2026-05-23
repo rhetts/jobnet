@@ -38,7 +38,7 @@ public sealed class CompaniesListCommand : ICliCommand
             counts.TryGetValue(c.Id, out var jobCount);
             var interest = c.InterestLevel switch
             {
-                InterestLevel.Interesting => "+",
+                InterestLevel.Approved => "+",
                 InterestLevel.NotInteresting => "-",
                 _ => " "
             };

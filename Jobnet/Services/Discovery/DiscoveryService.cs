@@ -17,13 +17,16 @@ public sealed class DiscoveryService : IDiscoveryService
     private readonly ICompanyRepository _companies;
     private readonly IConfigRepository _config;
     private readonly IDbConnectionFactory _connections;
+    private readonly ICompanyDiscoveryRepository _sightings;
 
-    public DiscoveryService(ISearchClient cse, ICompanyRepository companies, IConfigRepository config, IDbConnectionFactory connections)
+    public DiscoveryService(ISearchClient cse, ICompanyRepository companies, IConfigRepository config,
+                             IDbConnectionFactory connections, ICompanyDiscoveryRepository sightings)
     {
         _search = cse;
         _companies = companies;
         _config = config;
         _connections = connections;
+        _sightings = sightings;
     }
 
     public async Task<DiscoveryReport> RunAsync(int maxQueriesPerTerm = 1, CancellationToken ct = default)
@@ -86,6 +89,8 @@ public sealed class DiscoveryService : IDiscoveryService
                     var existing = _companies.GetByDomain(extracted.CanonicalDomain);
                     if (existing is not null)
                     {
+                        // Record a fresh sighting from this search term + URL.
+                        _sightings.Record(existing.Id, "brave_search", term, result.Url, runId: null);
                         companiesSkippedExisting++;
                         continue;
                     }
@@ -98,7 +103,8 @@ public sealed class DiscoveryService : IDiscoveryService
                         WebsiteUrl = $"https://{extracted.HostDomain}",
                         DateDiscovered = DateTime.UtcNow,
                     };
-                    _companies.Insert(company);
+                    var newId = _companies.Insert(company);
+                    _sightings.Record(newId, "brave_search", term, result.Url, runId: null);
                     companiesAdded++;
                     addedDomains.Add(extracted.CanonicalDomain);
                 }

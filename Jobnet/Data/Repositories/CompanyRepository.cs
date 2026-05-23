@@ -10,6 +10,7 @@ public sealed class CompanyRepository : ICompanyRepository
 {
     private const string SelectAll = @"
         SELECT id, name, domain, website_url, careers_url, ats_type, ats_slug,
+               ats_department_filter,
                parser_strategy, industry_tags, city, interest_level, notes,
                date_discovered, date_last_scan, is_active
         FROM companies";
@@ -158,24 +159,27 @@ public sealed class CompanyRepository : ICompanyRepository
         CareersUrl = r.CareersUrl,
         AtsType = r.AtsType,
         AtsSlug = r.AtsSlug,
+        AtsDepartmentFilter = r.AtsDepartmentFilter,
         City = r.City,
         InterestLevel = ParseInterest(r.InterestLevel),
         DateDiscovered = DateTime.Parse(r.DateDiscovered).ToUniversalTime(),
         DateLastScan = string.IsNullOrEmpty(r.DateLastScan) ? null : DateTime.Parse(r.DateLastScan).ToUniversalTime(),
     };
 
+    // Same caveat as JobRepository.ToDbText — DB CHECK forces 'interesting' on disk for the
+    // Approved enum value. Parse accepts both spellings.
     private static string? ToDbText(InterestLevel level) => level switch
     {
-        InterestLevel.Interesting    => "interesting",
+        InterestLevel.Approved       => "interesting",
         InterestLevel.NotInteresting => "not_interesting",
         _                            => null
     };
 
     private static InterestLevel ParseInterest(string? value) => value switch
     {
-        "interesting"     => InterestLevel.Interesting,
-        "not_interesting" => InterestLevel.NotInteresting,
-        _                 => InterestLevel.Neutral
+        "approved" or "interesting" => InterestLevel.Approved,
+        "not_interesting"           => InterestLevel.NotInteresting,
+        _                           => InterestLevel.Neutral
     };
 
     private sealed class CompanyRow
@@ -187,6 +191,7 @@ public sealed class CompanyRepository : ICompanyRepository
         public string? CareersUrl { get; set; }
         public string? AtsType { get; set; }
         public string? AtsSlug { get; set; }
+        public string? AtsDepartmentFilter { get; set; }
         public string? ParserStrategy { get; set; }
         public string? IndustryTags { get; set; }
         public string? City { get; set; }

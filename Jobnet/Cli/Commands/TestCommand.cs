@@ -31,6 +31,7 @@ public sealed class TestCommand : ICliCommand
         RunClassifierTests(services);
         RunDomainExtractorTests();
         RunUrlClassifierTests();
+        RunLocationMatcherTests();
         RunRateLimiterTests(services).GetAwaiter().GetResult();
         RunMigrationTests(services);
 
@@ -57,7 +58,7 @@ public sealed class TestCommand : ICliCommand
         AssertClassify(c, "Security Engineer",            "Mid",               "Security");
         AssertClassify(c, "QA Automation Engineer",       "Mid",               "QA / Test");
         AssertClassify(c, "Product Manager",              "Manager",           "Product Management");
-        AssertClassify(c, "Bookkeeper",                   null,                "Other");
+        AssertClassify(c, "Bookkeeper",                   null,                "Finance");
         Console.WriteLine();
     }
 
@@ -142,6 +143,51 @@ public sealed class TestCommand : ICliCommand
         AssertKindNull("https://twitter.com/acme");
         AssertKindNull("https://linkedin.com/company/acme");
         Console.WriteLine();
+    }
+
+    private void RunLocationMatcherTests()
+    {
+        Console.WriteLine("LocationMatcher tests:");
+        // Vancouver-area cities — accept
+        AssertLocationKept("Vancouver, BC, Canada");
+        AssertLocationKept("Burnaby");
+        AssertLocationKept("Remote, Canada");
+        AssertLocationKept("Remote - Canada");
+        AssertLocationKept("Remote (North America)");
+        AssertLocationKept(null);   // unknown — pass through
+        AssertLocationKept("");
+        AssertLocationKept("Remote");                              // pure remote
+        AssertLocationKept("Remote (United States | Canada)");     // explicit dual-region
+
+        // US-only / UK-only / other-region — reject. These ALL slipped through the previous
+        // matcher because they didn't list a city, just a country / region tag.
+        AssertLocationRejected("Remote - United States");
+        AssertLocationRejected("Remote U.S.");
+        AssertLocationRejected("Remote US");
+        AssertLocationRejected("United States - Remote");
+        AssertLocationRejected("USA - Remote");
+        AssertLocationRejected("Remote UK");
+        AssertLocationRejected("Remote - United Kingdom");
+        AssertLocationRejected("Remote, EMEA");
+        AssertLocationRejected("New York, NY");
+        AssertLocationRejected("Toronto, ON");
+        Console.WriteLine();
+    }
+
+    private void AssertLocationKept(string? location)
+    {
+        var keep = Jobnet.Services.Location.LocationMatcher.IsVancouverArea(location);
+        var label = location ?? "(null)";
+        if (keep) Pass($"\"{label}\" → kept");
+        else      Fail($"\"{label}\" → rejected (expected kept)");
+    }
+
+    private void AssertLocationRejected(string? location)
+    {
+        var keep = Jobnet.Services.Location.LocationMatcher.IsVancouverArea(location);
+        var label = location ?? "(null)";
+        if (!keep) Pass($"\"{label}\" → rejected");
+        else       Fail($"\"{label}\" → kept (expected rejected)");
     }
 
     private void AssertKind(string url, string expectedKind)

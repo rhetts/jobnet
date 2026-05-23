@@ -27,19 +27,23 @@ public sealed class GeminiClient : IAiClient
     private readonly IConfigRepository _config;
     private readonly IApiUsageTracker _usage;
     private readonly IRateLimiter _rateLimiter;
+    private readonly IApiQuotaController _quota;
 
-    public GeminiClient(HttpClient http, IConfigRepository config, IApiUsageTracker usage, IRateLimiter rateLimiter)
+    public GeminiClient(HttpClient http, IConfigRepository config, IApiUsageTracker usage,
+                         IRateLimiter rateLimiter, IApiQuotaController quota)
     {
         _http = http;
         _config = config;
         _usage = usage;
         _rateLimiter = rateLimiter;
+        _quota = quota;
     }
 
     public bool IsConfigured => !string.IsNullOrWhiteSpace(_config.GetOrDefault("gemini_api_key", ""));
 
-    public async Task<AiResponse> CompleteAsync(string userMessage, string? system = null, int? maxTokens = null, CancellationToken ct = default)
+    public async Task<AiResponse> CompleteAsync(string userMessage, string? system = null, int? maxTokens = null, CancellationToken ct = default, string? task = null)
     {
+        _ = task;
         var apiKey = _config.GetOrDefault("gemini_api_key", "");
         if (string.IsNullOrWhiteSpace(apiKey))
             throw new AiUnavailableException("Gemini API key is not configured. Set gemini_api_key in Settings (get a free key at https://aistudio.google.com/apikey).");
@@ -66,24 +70,22 @@ public sealed class GeminiClient : IAiClient
 
         var response = await _http.SendAsync(req, ct);
 
-        // 429 retry: Google's error body says "Please retry in Xs". Honor it (capped at 90s).
+        // 429: classify and throw — RoutingAiClient decides whether to fall back to another
+        // provider or escalate to the user dialog.
         if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
         {
             var body = await response.Content.ReadAsStringAsync(ct);
             var waitSec = ExtractRetryAfter(body);
             response.Dispose();
-            if (waitSec > 0 && waitSec <= 90)
-            {
-                await Task.Delay(TimeSpan.FromSeconds(waitSec + 1), ct);
-                _usage.RecordCall(Provider);
-                using var retryReq = BuildRequest(url, payload);
-                response = await _http.SendAsync(retryReq, ct);
-            }
-            else
-            {
-                throw new AiUnavailableException(
-                    $"Gemini API HTTP 429 — quota exceeded and retry-after ({waitSec}s) is too large. {Truncate(body, 200)}");
-            }
+
+            var snapshot = _usage.GetSnapshot(Provider);
+            var isDailyLimit = waitSec > 120
+                            || (snapshot.RpdCap > 0 && snapshot.Rpd >= snapshot.RpdCap)
+                            || body.Contains("per_day", StringComparison.OrdinalIgnoreCase)
+                            || body.Contains("requests_per_day", StringComparison.OrdinalIgnoreCase);
+            var label = isDailyLimit ? "daily" : "per-minute";
+            throw new AiUnavailableException(
+                $"Gemini API HTTP 429 ({label}) — retry-after {waitSec}s. {Truncate(body, 200)}");
         }
 
         if (!response.IsSuccessStatusCode)
@@ -105,11 +107,15 @@ public sealed class GeminiClient : IAiClient
             foreach (var p in content.Parts!) text += p.Text ?? "";
         }
 
+        var inTok  = parsed.UsageMetadata?.PromptTokenCount ?? 0;
+        var outTok = parsed.UsageMetadata?.CandidatesTokenCount ?? 0;
+        _usage.UpdateLastCallTokens(Provider, inTok, outTok);
+
         return new AiResponse
         {
             Text = text,
-            InputTokens = parsed.UsageMetadata?.PromptTokenCount ?? 0,
-            OutputTokens = parsed.UsageMetadata?.CandidatesTokenCount ?? 0,
+            InputTokens = inTok,
+            OutputTokens = outTok,
             Model = parsed.ModelVersion ?? model,
             ProviderId = Provider,
         };

@@ -1,0 +1,165 @@
+<Window x:Class="Jobnet.Views.ResumeWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="clr-namespace:Jobnet.ViewModels"
+        Title="Jobnet — Profile"
+        Width="720" Height="680"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        Background="#FAFAFA">
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVis"/>
+        <Style x:Key="FieldLabel" TargetType="TextBlock">
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Foreground" Value="#333"/>
+            <Setter Property="Margin" Value="0,10,0,4"/>
+        </Style>
+        <Style x:Key="HintText" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="#888"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="TextWrapping" Value="Wrap"/>
+            <Setter Property="Margin" Value="0,2,0,0"/>
+        </Style>
+    </Window.Resources>
+
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <TextBlock Grid.Row="0" Text="Profile" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,8"/>
+
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+            <StackPanel>
+                <!-- Resume status + upload -->
+                <Border Background="White" BorderBrush="#DDD" BorderThickness="1" Padding="10,8" CornerRadius="3">
+                    <StackPanel>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0">
+                                <TextBlock Text="Resume" FontWeight="SemiBold"/>
+                                <TextBlock Text="{Binding StatusLine}" Foreground="#666" FontSize="11" Margin="0,2,0,0"/>
+                            </StackPanel>
+                            <Button Grid.Column="1" Content="Upload PDF..."
+                                    Command="{Binding UploadCommand}"
+                                    Padding="14,6"
+                                    Background="#1976D2" Foreground="White"/>
+                        </Grid>
+                        <TextBox Text="{Binding ResumeText, Mode=OneWay}"
+                                 IsReadOnly="True"
+                                 AcceptsReturn="True"
+                                 TextWrapping="Wrap"
+                                 VerticalScrollBarVisibility="Auto"
+                                 FontFamily="Consolas" FontSize="11"
+                                 Background="#F8F8F8"
+                                 Height="180"
+                                 Margin="0,8,0,0"
+                                 Visibility="{Binding HasResume, Converter={StaticResource BoolToVis}}"/>
+                    </StackPanel>
+                </Border>
+
+                <!-- Preferred areas -->
+                <Border Background="White" BorderBrush="#DDD" BorderThickness="1" Padding="10,8" CornerRadius="3" Margin="0,8,0,0">
+                    <StackPanel>
+                        <TextBlock Text="Preferred areas" FontWeight="SemiBold"/>
+                        <TextBlock Style="{StaticResource HintText}"
+                                   Text="The matcher boosts jobs whose area is checked here. Leave all unchecked to score purely on resume content."/>
+                        <ItemsControl ItemsSource="{Binding PreferredAreas}" Margin="0,6,0,0">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <WrapPanel/>
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate DataType="{x:Type vm:FilterItemViewModel}">
+                                    <CheckBox Content="{Binding Name}"
+                                              IsChecked="{Binding IsSelected}"
+                                              Margin="0,2,16,2"/>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </Border>
+
+                <!-- Preferred levels -->
+                <Border Background="White" BorderBrush="#DDD" BorderThickness="1" Padding="10,8" CornerRadius="3" Margin="0,8,0,0">
+                    <StackPanel>
+                        <TextBlock Text="Preferred levels" FontWeight="SemiBold"/>
+                        <TextBlock Style="{StaticResource HintText}"
+                                   Text="Seniority levels you're targeting. Mismatched levels get penalized in scoring."/>
+                        <ItemsControl ItemsSource="{Binding PreferredLevels}" Margin="0,6,0,0">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <WrapPanel/>
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate DataType="{x:Type vm:FilterItemViewModel}">
+                                    <CheckBox Content="{Binding Name}"
+                                              IsChecked="{Binding IsSelected}"
+                                              Margin="0,2,16,2"/>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </Border>
+
+                <!-- Boost keywords -->
+                <Border Background="White" BorderBrush="#DDD" BorderThickness="1" Padding="10,8" CornerRadius="3" Margin="0,8,0,0">
+                    <StackPanel>
+                        <TextBlock Text="Boost keywords" FontWeight="SemiBold"/>
+                        <TextBlock Style="{StaticResource HintText}"
+                                   Text="Comma or newline separated. Jobs whose title/description/summary mention any of these get a scoring boost from the AI."/>
+                        <TextBox Text="{Binding BoostKeywords, UpdateSourceTrigger=PropertyChanged}"
+                                 AcceptsReturn="True"
+                                 TextWrapping="Wrap"
+                                 Padding="6,4"
+                                 BorderBrush="#CCC"
+                                 Height="60"
+                                 Margin="0,6,0,0"/>
+                    </StackPanel>
+                </Border>
+
+                <!-- Greylist keywords -->
+                <Border Background="White" BorderBrush="#DDD" BorderThickness="1" Padding="10,8" CornerRadius="3" Margin="0,8,0,0">
+                    <StackPanel>
+                        <TextBlock Text="Greylist keywords" FontWeight="SemiBold" Foreground="#A03030"/>
+                        <TextBlock Style="{StaticResource HintText}"
+                                   Text="Comma or newline separated. Any job whose title / summary / description / company name contains a greylist word (whole-word, case-insensitive) gets auto-downvoted to the bottom of the list. Existing Approved or already-downvoted jobs are NOT touched. Sweep runs on Save."/>
+                        <TextBox Text="{Binding GreylistKeywords, UpdateSourceTrigger=PropertyChanged}"
+                                 AcceptsReturn="True"
+                                 TextWrapping="Wrap"
+                                 Padding="6,4"
+                                 BorderBrush="#CCC"
+                                 Height="60"
+                                 Margin="0,6,0,0"/>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+
+        <Border Grid.Row="2" Background="White" BorderBrush="#DDD" BorderThickness="1" Padding="10,8" CornerRadius="3" Margin="0,8,0,0">
+            <StackPanel>
+                <TextBlock Text="Result" FontWeight="SemiBold" Foreground="#444" FontSize="11"/>
+                <TextBlock Text="{Binding ResultLine}"
+                           Margin="0,4,0,0" Foreground="#333" FontSize="12" TextWrapping="Wrap"/>
+                <ProgressBar IsIndeterminate="{Binding IsBusy}"
+                             Height="3" Margin="0,6,0,0"
+                             Visibility="{Binding IsBusy, Converter={StaticResource BoolToVis}}"/>
+            </StackPanel>
+        </Border>
+
+        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
+            <Button Content="Save profile" Padding="14,6" Margin="0,0,8,0"
+                    Background="#1976D2" Foreground="White"
+                    Command="{Binding SaveProfileCommand}"/>
+            <Button Content="Close" Padding="14,6" Click="Close_Click"/>
+        </StackPanel>
+    </Grid>
+</Window>

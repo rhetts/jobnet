@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using Jobnet.ViewModels;
 
@@ -38,5 +39,24 @@ public partial class MainWindow : Window
             if (DataContext is MainWindowViewModel vm)
                 vm.StatusBarText = $"Could not open {url}: {ex.Message}";
         }
+    }
+
+    /// <summary>Single-click on a job card toggles the accordion. Skipped if the click landed on
+    /// an inner Button/ToggleButton/CheckBox — those handle their own clicks.</summary>
+    private void JobCard_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not FrameworkElement fe) return;
+        if (fe.DataContext is not JobViewModel jvm) return;
+
+        // Walk up from the original source — if any ancestor is a button, the click belongs to that
+        // button and we should not also toggle the card.
+        DependencyObject? d = e.OriginalSource as DependencyObject;
+        while (d is not null && d != fe)
+        {
+            if (d is ButtonBase) return;
+            d = System.Windows.Media.VisualTreeHelper.GetParent(d);
+        }
+
+        jvm.IsExpanded = !jvm.IsExpanded;
     }
 }

@@ -23,17 +23,25 @@ public sealed class ApiUsageTracker : IApiUsageTracker
         _config = config;
     }
 
-    public int RecordCall(string provider)
+    public int RecordCall(string provider, int inputTokens = 0, int outputTokens = 0)
     {
         var date = TodayUtc();
         using var conn = _connections.Open();
         var now = DateTime.UtcNow.ToString("o");
+
+        // Daily roll-up (preserves the existing API surface).
         conn.Execute(@"
             INSERT INTO api_usage (provider, date, count, last_call)
             VALUES (@provider, @date, 1, @now)
             ON CONFLICT(provider, date) DO UPDATE
                 SET count = count + 1, last_call = excluded.last_call",
             new { provider, date, now });
+
+        // Per-call log row for RPM/TPM analytics.
+        conn.Execute(@"
+            INSERT INTO api_call_log (provider, called_at, input_tokens, output_tokens)
+            VALUES (@provider, @now, @inputTokens, @outputTokens)",
+            new { provider, now, inputTokens, outputTokens });
 
         var count = conn.ExecuteScalar<int>(
             "SELECT count FROM api_usage WHERE provider = @provider AND date = @date",
@@ -83,6 +91,91 @@ public sealed class ApiUsageTracker : IApiUsageTracker
             SoftCap = GetSoftCap(r.Provider),
             LastCall = DateTime.Parse(r.LastCall).ToUniversalTime()
         }).ToList();
+    }
+
+    public void UpdateLastCallTokens(string provider, int inputTokens, int outputTokens)
+    {
+        using var conn = _connections.Open();
+        conn.Execute(@"
+            UPDATE api_call_log
+            SET input_tokens = @inputTokens, output_tokens = @outputTokens
+            WHERE id = (SELECT id FROM api_call_log
+                        WHERE provider = @provider
+                        ORDER BY id DESC LIMIT 1)",
+            new { provider, inputTokens, outputTokens });
+    }
+
+    public void RecordCallOutcome(string provider, int statusCode, string? errorMessage = null)
+    {
+        // Trim the error body so a giant HTML page doesn't bloat the row. 500 chars is enough
+        // to read the JSON error envelope returned by every provider we hit.
+        if (errorMessage is { Length: > 500 }) errorMessage = errorMessage.Substring(0, 500);
+        using var conn = _connections.Open();
+        conn.Execute(@"
+            UPDATE api_call_log
+            SET status_code = @statusCode, error_message = @errorMessage
+            WHERE id = (SELECT id FROM api_call_log
+                        WHERE provider = @provider
+                        ORDER BY id DESC LIMIT 1)",
+            new { provider, statusCode, errorMessage });
+    }
+
+    public ApiUsageSnapshot GetSnapshot(string provider)
+    {
+        using var conn = _connections.Open();
+        var date = TodayUtc();
+        var cutoff = DateTime.UtcNow.AddMinutes(-1).ToString("o");
+
+        var rpd = conn.ExecuteScalar<int?>(
+            "SELECT count FROM api_usage WHERE provider = @provider AND date = @date",
+            new { provider, date }) ?? 0;
+
+        var lastCall = conn.ExecuteScalar<string?>(
+            "SELECT last_call FROM api_usage WHERE provider = @provider AND date = @date",
+            new { provider, date });
+
+        var rpm = conn.ExecuteScalar<int?>(
+            "SELECT COUNT(*) FROM api_call_log WHERE provider = @provider AND called_at >= @cutoff",
+            new { provider, cutoff }) ?? 0;
+
+        var tpm = conn.ExecuteScalar<int?>(@"
+            SELECT COALESCE(SUM(input_tokens + output_tokens), 0)
+            FROM api_call_log WHERE provider = @provider AND called_at >= @cutoff",
+            new { provider, cutoff }) ?? 0;
+
+        var tokensToday = conn.ExecuteScalar<int?>(@"
+            SELECT COALESCE(SUM(input_tokens + output_tokens), 0)
+            FROM api_call_log WHERE provider = @provider AND called_at >= @startOfDay",
+            new { provider, startOfDay = DateTime.UtcNow.Date.ToString("o") }) ?? 0;
+
+        return new ApiUsageSnapshot
+        {
+            Provider = provider,
+            Rpd = rpd,
+            RpdCap = GetSoftCap(provider),
+            Rpm = rpm,
+            RpmCap = GetIntCap($"api_rpm_cap.{provider}"),
+            Tpm = tpm,
+            TpmCap = GetIntCap($"api_tpm_cap.{provider}"),
+            TokensToday = tokensToday,
+            TokensTodayCap = GetIntCap($"api_tpd_cap.{provider}"),
+            LastCallUtc = string.IsNullOrEmpty(lastCall) ? null : DateTime.Parse(lastCall).ToUniversalTime(),
+        };
+    }
+
+    public IReadOnlyList<ApiUsageSnapshot> GetAllSnapshots()
+    {
+        // Union of providers we've ever seen calls from in api_usage (today or older).
+        using var conn = _connections.Open();
+        var providers = conn.Query<string>(
+            "SELECT DISTINCT provider FROM api_usage ORDER BY provider").ToList();
+        return providers.Select(GetSnapshot).ToList();
+    }
+
+    private int GetIntCap(string key)
+    {
+        var raw = _config.GetOrDefault(key, "");
+        return int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var v) ? v : 0;
     }
 
     private static string TodayUtc() => DateTime.UtcNow.ToString("yyyy-MM-dd");

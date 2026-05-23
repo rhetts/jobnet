@@ -74,7 +74,7 @@ public sealed class CompanyProfiler : ICompanyProfiler
         AiResponse response;
         try
         {
-            response = await _ai.CompleteAsync(user, system, maxTokens: 1024, ct);
+            response = await _ai.CompleteAsync(user, system, maxTokens: 1024, ct, task: "profile");
         }
         catch (Exception ex)
         {

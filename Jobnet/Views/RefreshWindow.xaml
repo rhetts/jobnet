@@ -1,0 +1,276 @@
+<Window x:Class="Jobnet.Views.RefreshWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="clr-namespace:Jobnet.ViewModels"
+        mc:Ignorable="d"
+        Title="Jobnet — Refresh"
+        Width="620" Height="600"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        Background="#FAFAFA">
+
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVis"/>
+        <Style x:Key="ActionButton" TargetType="Button">
+            <Setter Property="Padding" Value="14,10"/>
+            <Setter Property="Margin" Value="0,0,0,8"/>
+            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+            <Setter Property="Background" Value="White"/>
+            <Setter Property="BorderBrush" Value="#DDD"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="FontSize" Value="13"/>
+        </Style>
+        <Style x:Key="ActionHint" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="#666"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="TextWrapping" Value="Wrap"/>
+            <Setter Property="Margin" Value="0,2,0,0"/>
+        </Style>
+    </Window.Resources>
+
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <ScrollViewer Grid.Row="0" VerticalScrollBarVisibility="Auto">
+            <StackPanel>
+                <!-- DISCOVER COMPANIES (unchanged) -->
+                <Border BorderBrush="#DDD" BorderThickness="1" Padding="10,8" Margin="0,0,0,8" Background="White" CornerRadius="3">
+                    <StackPanel>
+                        <TextBlock Text="Discover companies" FontWeight="SemiBold"/>
+                        <TextBlock Style="{StaticResource ActionHint}"
+                                   Text="Pick one or more sources, then click Run. Sources combine into a single batch run."/>
+                        <Grid Margin="0,8,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <CheckBox Grid.Column="0"
+                                      Content="Brave search (keyword queries from the search_terms table)"
+                                      IsChecked="{Binding UseBraveSearch}"/>
+                            <TextBlock Grid.Column="1"
+                                       Text="{Binding LastBraveRunText}"
+                                       Foreground="#888" FontSize="11"
+                                       VerticalAlignment="Center" Margin="8,0,0,0"/>
+                        </Grid>
+                        <Grid Margin="0,4,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <CheckBox Grid.Column="0"
+                                      Content="Directories (every enabled row in Settings → Directories)"
+                                      IsChecked="{Binding UseDirectories}"/>
+                            <TextBlock Grid.Column="1"
+                                       Text="{Binding LastDirectoriesRunText}"
+                                       Foreground="#888" FontSize="11"
+                                       VerticalAlignment="Center" Margin="8,0,0,0"/>
+                        </Grid>
+                        <Grid Margin="0,4,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <CheckBox Grid.Column="0"
+                                      Content="Boards (every enabled row in Settings → Boards)"
+                                      IsChecked="{Binding UseBoards}"/>
+                            <TextBlock Grid.Column="1"
+                                       Text="{Binding LastBoardsRunText}"
+                                       Foreground="#888" FontSize="11"
+                                       VerticalAlignment="Center" Margin="8,0,0,0"/>
+                        </Grid>
+                        <Grid Margin="0,10,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="Throttle:" VerticalAlignment="Center" Foreground="#666" FontSize="11" Margin="0,0,6,0"/>
+                            <ComboBox Grid.Column="1"
+                                      ItemsSource="{Binding SkipDaysOptions}"
+                                      SelectedItem="{Binding SelectedSkipDays}"
+                                      DisplayMemberPath="Label"
+                                      Padding="6,2"
+                                      MinWidth="180"
+                                      HorizontalAlignment="Left"
+                                      ToolTip="Skip pages whose last successful crawl is within this window."/>
+                            <Button Grid.Column="2"
+                                    Content="Run discovery"
+                                    Padding="14,4"
+                                    Command="{Binding DiscoverCompaniesCommand}"/>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <!-- MAINTENANCE: consolidated discover jobs + refresh existing + summaries + reclassify + prune -->
+                <Border BorderBrush="#DDD" BorderThickness="1" Padding="10,8" Margin="0,0,0,8" Background="White" CornerRadius="3">
+                    <StackPanel>
+                        <TextBlock Text="Maintenance" FontWeight="SemiBold"/>
+                        <TextBlock Style="{StaticResource ActionHint}"
+                                   Text="Pick the steps to run. They execute in order in a single batch."/>
+
+                        <Grid Margin="0,8,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <CheckBox Grid.Column="0"
+                                      Content="Discover jobs — scan ATS / careers pages for new postings (removes ones that came down)"
+                                      IsChecked="{Binding DoDiscoverJobs}"/>
+                            <TextBlock Grid.Column="1" Text="{Binding LastDiscoverJobsRunText}"
+                                       Foreground="#888" FontSize="11" VerticalAlignment="Center" Margin="8,0,0,0"/>
+                        </Grid>
+                        <Grid Margin="0,4,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <CheckBox Grid.Column="0"
+                                      Content="Refresh existing — re-fetch detail URLs to backfill missing salary / description"
+                                      IsChecked="{Binding DoRefreshExisting}"/>
+                            <TextBlock Grid.Column="1" Text="{Binding LastRefreshExistingRunText}"
+                                       Foreground="#888" FontSize="11" VerticalAlignment="Center" Margin="8,0,0,0"/>
+                        </Grid>
+                        <Grid Margin="0,4,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <CheckBox Grid.Column="0"
+                                      Content="Regenerate ALL summaries — overwrites existing (1 AI call per active job)"
+                                      IsChecked="{Binding DoRegenerateSummaries}"
+                                      Foreground="#A03030"/>
+                            <TextBlock Grid.Column="1" Text="{Binding LastRegenerateSummariesRunText}"
+                                       Foreground="#888" FontSize="11" VerticalAlignment="Center" Margin="8,0,0,0"/>
+                        </Grid>
+                        <Grid Margin="0,4,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <CheckBox Grid.Column="0"
+                                      Content="Recategorize jobs — re-run title classifier across all active jobs"
+                                      IsChecked="{Binding DoReclassifyJobs}"/>
+                            <TextBlock Grid.Column="1" Text="{Binding LastReclassifyRunText}"
+                                       Foreground="#888" FontSize="11" VerticalAlignment="Center" Margin="8,0,0,0"/>
+                        </Grid>
+                        <Grid Margin="0,4,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <CheckBox Grid.Column="0"
+                                      Content="Prune out-of-area — mark jobs outside Vancouver area as removed"
+                                      IsChecked="{Binding DoPruneOutOfArea}"/>
+                            <TextBlock Grid.Column="1" Text="{Binding LastPruneRunText}"
+                                       Foreground="#888" FontSize="11" VerticalAlignment="Center" Margin="8,0,0,0"/>
+                        </Grid>
+
+                        <Grid Margin="0,10,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="Discover jobs throttle:" VerticalAlignment="Center" Foreground="#666" FontSize="11" Margin="0,0,6,0"/>
+                            <ComboBox Grid.Column="1"
+                                      ItemsSource="{Binding SkipScanOptions}"
+                                      SelectedItem="{Binding SelectedSkipScan}"
+                                      DisplayMemberPath="Label"
+                                      Padding="6,2"
+                                      MinWidth="200"
+                                      HorizontalAlignment="Left"
+                                      ToolTip="Skip companies whose last successful scan is within this window. Only applies to the 'Discover jobs' step."/>
+                            <Button Grid.Column="2"
+                                    Content="Run selected steps"
+                                    Padding="14,4"
+                                    Command="{Binding RunMaintenanceCommand}"/>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <!-- MATCH RESUME -->
+                <Border BorderBrush="#DDD" BorderThickness="1" Padding="10,8" Margin="0,0,0,8" Background="White" CornerRadius="3">
+                    <StackPanel>
+                        <TextBlock Text="Match resume to jobs" FontWeight="SemiBold"/>
+                        <TextBlock Style="{StaticResource ActionHint}"
+                                   Text="Score every active job against your uploaded resume (~10 jobs per AI call). Upload + preferences live in Profile."/>
+                        <Button Content="Run resume match"
+                                Padding="14,4"
+                                HorizontalAlignment="Right"
+                                Margin="0,8,0,0"
+                                Command="{Binding MatchResumeCommand}"/>
+                    </StackPanel>
+                </Border>
+
+                <!-- Backfill missing summaries (incremental — separate from regenerate-all) -->
+                <Button Style="{StaticResource ActionButton}"
+                        Command="{Binding GenerateSummariesCommand}">
+                    <StackPanel>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="Generate AI summaries (only missing)" FontWeight="SemiBold"/>
+                            <TextBlock Grid.Column="1" Text="{Binding LastGenerateSummariesRunText}"
+                                       Foreground="#888" FontSize="11" VerticalAlignment="Center"/>
+                        </Grid>
+                        <TextBlock Style="{StaticResource ActionHint}"
+                                   Text="Produce a 2-3 sentence summary for each job that doesn't have one yet. Incremental — cheaper than 'Regenerate ALL'."/>
+                    </StackPanel>
+                </Button>
+
+                <!-- Generate missing company profiles -->
+                <Button Style="{StaticResource ActionButton}"
+                        Command="{Binding GenerateCompanyProfilesCommand}">
+                    <StackPanel>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="Generate company profiles" FontWeight="SemiBold"/>
+                            <TextBlock Grid.Column="1" Text="{Binding LastCompanyProfilesRunText}"
+                                       Foreground="#888" FontSize="11" VerticalAlignment="Center"/>
+                        </Grid>
+                        <TextBlock Style="{StaticResource ActionHint}"
+                                   Text="Short AI-written description of what each company does. Runs for companies without one yet (≤50 per click)."/>
+                    </StackPanel>
+                </Button>
+
+            </StackPanel>
+        </ScrollViewer>
+
+        <Border Grid.Row="1" Background="White" BorderBrush="#DDD" BorderThickness="1"
+                Padding="10,8" Margin="0,12,0,8" CornerRadius="3">
+            <StackPanel>
+                <TextBlock Text="Status" FontWeight="SemiBold" Foreground="#444" FontSize="11"/>
+                <TextBlock Text="{Binding StatusText}"
+                           Margin="0,4,0,0"
+                           Foreground="#333"
+                           FontSize="12"
+                           TextWrapping="Wrap"/>
+                <ProgressBar IsIndeterminate="{Binding IsBusy}"
+                             Height="3"
+                             Margin="0,6,0,0"
+                             Visibility="{Binding IsBusy, Converter={StaticResource BoolToVis}}"/>
+            </StackPanel>
+        </Border>
+
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button Content="Stop run"
+                    Padding="14,6"
+                    Margin="0,0,8,0"
+                    Background="#C44" Foreground="White"
+                    Command="{Binding StopRunCommand}"
+                    ToolTip="Cancel the in-flight batch. The current AI call finishes but no further companies / jobs are processed."/>
+            <Button Content="Close" Padding="14,6" Click="Close_Click"/>
+        </StackPanel>
+    </Grid>
+</Window>

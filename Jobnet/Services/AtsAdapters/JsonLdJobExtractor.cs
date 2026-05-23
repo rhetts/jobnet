@@ -123,7 +123,7 @@ internal static class JsonLdJobExtractor
             SalaryMax = smax,
             SalaryCurrency = scurrency,
             SalaryPeriod = speriod,
-            DescriptionSnippet = string.IsNullOrEmpty(description) ? null : (description.Length <= 500 ? description : description.Substring(0, 500)),
+            DescriptionSnippet = SnippetCleaner.Clean(description, maxChars: 500),
         };
     }
 
