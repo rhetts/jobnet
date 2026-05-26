@@ -22,6 +22,13 @@ public interface IJobRepository
     void SetInterestLevel(int id, InterestLevel level);
     Dictionary<int, int> GetActiveCountsByCompany();
 
+    /// <summary>Per-company 30-day churn rate: for each company, returns the percentage of
+    /// jobs first seen 30+ days ago that are now inactive (0-100). null when the cohort is
+    /// empty (company too new — needs at least one job ≥30 days old to be meaningful).
+    /// CohortSize is the absolute count of jobs in the 30+-day cohort, useful for displaying
+    /// "12% (8 of 65)" so the user can judge confidence.</summary>
+    Dictionary<int, ChurnStat> GetChurnRate30dByCompany();
+
     /// <summary>Return id+location for every active job. Used by location-prune passes.</summary>
     IReadOnlyList<(int Id, string? Location)> GetActiveLocations();
 
@@ -53,3 +60,7 @@ public interface IJobRepository
     /// newly downvoted.</summary>
     int ApplyGreylist(string? rawGreylist);
 }
+
+/// <summary>30-day cohort churn snapshot. ChurnPct ranges 0-100 (% of cohort that's now inactive).
+/// CohortSize is total jobs in the cohort. Inactive is jobs from that cohort now marked removed.</summary>
+public readonly record struct ChurnStat(int CohortSize, int Inactive, double ChurnPct);

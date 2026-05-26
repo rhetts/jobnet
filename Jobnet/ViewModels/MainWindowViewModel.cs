@@ -81,6 +81,9 @@ public partial class MainWindowViewModel : ObservableObject
     private string _cityFilterSummary = "Any city";
 
     [ObservableProperty]
+    private string _technologyFilterSummary = "Any tech";
+
+    [ObservableProperty]
     private string _filteredJobsCountText = string.Empty;
 
     public ObservableCollection<ResumeMatchThreshold> ResumeMatchThresholds { get; } = new()
@@ -107,9 +110,10 @@ public partial class MainWindowViewModel : ObservableObject
     [ObservableProperty]
     private JobAgeFilter? _selectedJobAge;
 
-    public ObservableCollection<FilterItemViewModel> AvailableLevels { get; } = new();
-    public ObservableCollection<FilterItemViewModel> AvailableAreas  { get; } = new();
-    public ObservableCollection<FilterItemViewModel> AvailableCities { get; } = new();
+    public ObservableCollection<FilterItemViewModel> AvailableLevels       { get; } = new();
+    public ObservableCollection<FilterItemViewModel> AvailableAreas        { get; } = new();
+    public ObservableCollection<FilterItemViewModel> AvailableCities       { get; } = new();
+    public ObservableCollection<FilterItemViewModel> AvailableTechnologies { get; } = new();
 
     /// <summary>Drop-down entries for quick-loading saved filters.</summary>
     public ObservableCollection<SavedFilterRef> SavedFilterList { get; } = new();
@@ -125,6 +129,7 @@ public partial class MainWindowViewModel : ObservableObject
     private readonly ILevelRepository? _levelsRepo;
     private readonly IAreaRepository? _areasRepo;
     private readonly IConfigRepository? _config;
+    private readonly ITechnologyRepository? _techsRepo;
     private bool _settingsLoaded;        // suppresses persistence during initial load
 
     public MainWindowViewModel(IJobDataService data,
@@ -142,7 +147,8 @@ public partial class MainWindowViewModel : ObservableObject
                                 Func<ResumeWindow>? resumeWindowFactory = null,
                                 Func<ServiceLimitsWindow>? limitsWindowFactory = null,
                                 Func<RunsWindow>? runsWindowFactory = null,
-                                Func<CoverLetterWindow>? coverLetterWindowFactory = null)
+                                Func<CoverLetterWindow>? coverLetterWindowFactory = null,
+                                ITechnologyRepository? techsRepo = null)
     {
         _data = data;
         _jobsRepo = jobsRepo;
@@ -160,6 +166,7 @@ public partial class MainWindowViewModel : ObservableObject
         _limitsWindowFactory = limitsWindowFactory;
         _runsWindowFactory = runsWindowFactory;
         _coverLetterWindowFactory = coverLetterWindowFactory;
+        _techsRepo = techsRepo;
 
         CompaniesView = CollectionViewSource.GetDefaultView(Companies);
         CompaniesView.Filter = FilterCompany;
@@ -182,6 +189,7 @@ public partial class MainWindowViewModel : ObservableObject
 
         var savedLevelIds = LoadIdSet("ui_filter_level_ids");
         var savedAreaIds  = LoadIdSet("ui_filter_area_ids");
+        var savedTechIds  = LoadIdSet("ui_filter_tech_ids");
 
         if (_levelsRepo is not null)
             foreach (var l in _levelsRepo.GetAll())
@@ -189,6 +197,22 @@ public partial class MainWindowViewModel : ObservableObject
         if (_areasRepo is not null)
             foreach (var a in _areasRepo.GetAll())
                 AvailableAreas.Add(new FilterItemViewModel(a.Id, a.Name, savedAreaIds.Contains(a.Id), OnAreaSelectionChanged));
+        if (_techsRepo is not null)
+        {
+            // Only surface technologies that actually appear on at least one active job —
+            // pinning 180+ checkboxes in the popup would be unusable, and unused entries
+            // just clutter the UI. Sorted by usage count so the most-seen tech is at the top.
+            var counts = _techsRepo.GetActiveCountsByTechnology();
+            foreach (var t in _techsRepo.GetAll()
+                                       .Where(t => counts.ContainsKey(t.Id))
+                                       .OrderByDescending(t => counts[t.Id])
+                                       .ThenBy(t => t.Name))
+            {
+                AvailableTechnologies.Add(new FilterItemViewModel(
+                    t.Id, $"{t.Name} ({counts[t.Id]})",
+                    savedTechIds.Contains(t.Id), OnTechnologySelectionChanged));
+            }
+        }
 
         // Restore non-filter UI prefs
         if (_config is not null)
@@ -207,6 +231,7 @@ public partial class MainWindowViewModel : ObservableObject
 
         UpdateLevelFilterSummary();
         UpdateAreaFilterSummary();
+        UpdateTechnologyFilterSummary();
 
         LoadFromDataService();
         ReloadSavedFilterList();
@@ -273,6 +298,28 @@ public partial class MainWindowViewModel : ObservableObject
         RefreshJobsView();
         if (_settingsLoaded)
             SaveNameSet("ui_filter_city_names", AvailableCities.Where(x => x.IsSelected).Select(x => x.Name));
+    }
+
+    private void OnTechnologySelectionChanged()
+    {
+        UpdateTechnologyFilterSummary();
+        RefreshJobsView();
+        if (_settingsLoaded)
+            SaveIdSet("ui_filter_tech_ids", AvailableTechnologies.Where(x => x.IsSelected).Select(x => x.Id));
+    }
+
+    private void UpdateTechnologyFilterSummary()
+    {
+        // Strip the "(N)" usage-count suffix when displaying picked techs in the summary.
+        var picks = AvailableTechnologies.Where(x => x.IsSelected).Select(x =>
+        {
+            var n = x.Name;
+            var paren = n.LastIndexOf(" (");
+            return paren > 0 ? n.Substring(0, paren) : n;
+        }).ToList();
+        TechnologyFilterSummary = picks.Count == 0 ? "Any tech"
+                                : picks.Count <= 2 ? string.Join(", ", picks)
+                                : $"{picks.Count} techs";
     }
 
     private void UpdateLevelFilterSummary()
@@ -346,6 +393,8 @@ public partial class MainWindowViewModel : ObservableObject
 
         var levelNameById = _levelsRepo?.GetAll().ToDictionary(l => l.Id, l => l.Name) ?? new Dictionary<int, string>();
         var areaNameById  = _areasRepo?.GetAll().ToDictionary(a => a.Id, a => a.Name)  ?? new Dictionary<int, string>();
+        var techNameById  = _techsRepo?.GetAll().ToDictionary(t => t.Id, t => t.Name)  ?? new Dictionary<int, string>();
+        var jobTechs      = _techsRepo?.GetAllJobTechnologies()                        ?? new Dictionary<int, List<int>>();
 
         _allJobs = jobs
             .Where(j => companyById.ContainsKey(j.CompanyId))
@@ -354,8 +403,13 @@ public partial class MainWindowViewModel : ObservableObject
                 var levelName = j.LevelId.HasValue && levelNameById.TryGetValue(j.LevelId.Value, out var ln) ? ln : null;
                 var areaNames = j.AreaIds.Select(id => areaNameById.TryGetValue(id, out var n) ? n : null!)
                                           .Where(n => n is not null);
+                var techIdsForJob = jobTechs.TryGetValue(j.Id, out var tids) ? tids : new List<int>();
+                var techNames = techIdsForJob
+                    .Select(id => techNameById.TryGetValue(id, out var tn) ? tn : null!)
+                    .Where(s => s is not null);
                 return new JobViewModel(j, companyById[j.CompanyId].Name, companyById[j.CompanyId].City, _data.ScoreJob(j),
-                                         levelName, areaNames, OnAppliedToggled, OnInterestChanged);
+                                         levelName, areaNames, OnAppliedToggled, OnInterestChanged,
+                                         techNames, techIdsForJob);
             })
             .ToList();
 
@@ -363,6 +417,11 @@ public partial class MainWindowViewModel : ObservableObject
             .Where(j => j.IsActive)
             .GroupBy(j => j.CompanyId)
             .ToDictionary(g => g.Key, g => g.Count());
+
+        // 30-day churn per company, batch-loaded so we don't N+1 in the sidebar render.
+        // Absent from the dict => no jobs ≥30 days old yet — sidebar shows "—".
+        var churnByCompany = _jobsRepo?.GetChurnRate30dByCompany()
+                              ?? new Dictionary<int, Jobnet.Data.Repositories.ChurnStat>();
 
         var previousSelectionId = SelectedCompany?.Company?.Id;
         var wasAllJobs = SelectedCompany?.IsAllJobsSentinel ?? true;
@@ -372,7 +431,9 @@ public partial class MainWindowViewModel : ObservableObject
         foreach (var c in companies.OrderBy(c => c.Name))
         {
             activeJobCounts.TryGetValue(c.Id, out var count);
-            Companies.Add(new CompanyViewModel(c, count));
+            churnByCompany.TryGetValue(c.Id, out var churn);
+            Companies.Add(new CompanyViewModel(c, count,
+                churnByCompany.ContainsKey(c.Id) ? churn : (Jobnet.Data.Repositories.ChurnStat?)null));
         }
 
         // Restore selection where possible
@@ -502,6 +563,10 @@ public partial class MainWindowViewModel : ObservableObject
         if (selectedCities.Count > 0
             && !selectedCities.Contains(jvm.NormalizedCity, StringComparer.OrdinalIgnoreCase)
             && !Services.Location.LocationMatcher.IsRemoteAnywhereInCanada(jvm.Job.Location))
+            return false;
+
+        var selectedTechs = AvailableTechnologies.Where(x => x.IsSelected).Select(x => x.Id).ToList();
+        if (selectedTechs.Count > 0 && !jvm.TechnologyIds.Any(id => selectedTechs.Contains(id)))
             return false;
 
         var threshold = SelectedResumeMatchThreshold;
@@ -677,9 +742,10 @@ public partial class MainWindowViewModel : ObservableObject
     private void ClearJobFilters()
     {
         JobKeywordFilter = string.Empty;
-        foreach (var f in AvailableLevels) f.IsSelected = false;
-        foreach (var f in AvailableAreas)  f.IsSelected = false;
-        foreach (var f in AvailableCities) f.IsSelected = false;
+        foreach (var f in AvailableLevels)       f.IsSelected = false;
+        foreach (var f in AvailableAreas)        f.IsSelected = false;
+        foreach (var f in AvailableCities)       f.IsSelected = false;
+        foreach (var f in AvailableTechnologies) f.IsSelected = false;
         SelectedResumeMatchThreshold = ResumeMatchThresholds.First();
         SelectedJobAge = JobAgeFilters.First();
     }
@@ -732,6 +798,7 @@ public partial class MainWindowViewModel : ObservableObject
 
         UpdateLevelFilterSummary();
         UpdateAreaFilterSummary();
+        UpdateTechnologyFilterSummary();
         UpdateCityFilterSummary();
         RefreshJobsView();
     }

@@ -102,7 +102,30 @@
                     </TextBlock>
                     <TextBlock Text="{Binding AtsLine}"     Margin="0,4,0,0"/>
                     <TextBlock Text="{Binding CareersLine}" Margin="0,4,0,0" TextTrimming="CharacterEllipsis"/>
+                    <TextBlock Margin="0,4,0,0"
+                               ToolTip="30-day churn rate: % of jobs first seen 30+ days ago that are now inactive. High = roles close fast (or are pulled); low = stable board.">
+                        <Run Text="Churn (30d): " FontWeight="SemiBold" Foreground="#666"/>
+                        <Run Text="{Binding ChurnLine, Mode=OneWay}"/>
+                    </TextBlock>
                     <TextBlock Text="{Binding GeneratedLine}" Foreground="#999" FontSize="11" Margin="0,8,0,0"/>
+                </StackPanel>
+
+                <TextBlock Style="{StaticResource SectionLabel}" Text="DISCOVERY"/>
+                <StackPanel>
+                    <TextBlock>
+                        <Run Text="Discovered via: " FontWeight="SemiBold" Foreground="#666"/>
+                        <Run Text="{Binding DiscoveryLine, Mode=OneWay}"/>
+                    </TextBlock>
+                    <ItemsControl ItemsSource="{Binding AdditionalDiscoveryLines}" Margin="0,4,0,0">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock Margin="0,2,0,0" Foreground="#777" FontSize="12">
+                                    <Run Text="Also seen via: " FontWeight="SemiBold" Foreground="#888"/>
+                                    <Run Text="{Binding Mode=OneWay}"/>
+                                </TextBlock>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
                 </StackPanel>
             </StackPanel>
         </ScrollViewer>

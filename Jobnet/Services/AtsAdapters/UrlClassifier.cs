@@ -34,9 +34,19 @@ internal static class UrlClassifier
         if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)) return null;
         var path = uri.AbsolutePath;
         var pathAndQuery = uri.PathAndQuery;
-
         var low = uri.AbsoluteUri.ToLowerInvariant();
-        // Skip obvious non-job links so we don't pollute the cache.
+
+        // Positive patterns run BEFORE the skip list — a URL like
+        // /about/careers/search/ otherwise gets killed by "/about" before the
+        // job-signal check can save it (common WordPress site convention).
+        if (JobDetail.IsMatch(pathAndQuery))       return UrlKind.JobDetail;
+        if (JobDetailAlt.IsMatch(pathAndQuery))    return UrlKind.JobDetail;
+        if (DepartmentQuery.IsMatch(pathAndQuery)) return UrlKind.Department;
+        if (DepartmentPath.IsMatch(pathAndQuery))  return UrlKind.Department;
+        if (JobListPath.IsMatch(pathAndQuery))     return UrlKind.JobList;
+        if (low.Contains("/career") || low.Contains("/jobs")) return UrlKind.JobList;
+
+        // No positive job signal — apply the skip list to weed out generic noise links.
         var skip = new[] {
             "/login", "/signin", "/sign-in", "/signup", "/register",
             "/privacy", "/cookie", "/terms", "/legal", "/security",
@@ -48,14 +58,6 @@ internal static class UrlClassifier
         };
         foreach (var s in skip) if (low.Contains(s)) return null;
 
-        // Order matters: most-specific first.
-        if (JobDetail.IsMatch(pathAndQuery))    return UrlKind.JobDetail;
-        if (JobDetailAlt.IsMatch(pathAndQuery)) return UrlKind.JobDetail;
-        if (DepartmentQuery.IsMatch(pathAndQuery)) return UrlKind.Department;
-        if (DepartmentPath.IsMatch(pathAndQuery))  return UrlKind.Department;
-        if (JobListPath.IsMatch(pathAndQuery))     return UrlKind.JobList;
-        // Path contains careers/jobs but doesn't fit a more specific pattern
-        if (low.Contains("/career") || low.Contains("/jobs")) return UrlKind.JobList;
         return null;
     }
 }

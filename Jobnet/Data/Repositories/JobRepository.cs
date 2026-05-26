@@ -217,6 +217,26 @@ public sealed class JobRepository : IJobRepository
             .ToDictionary(r => r.CompanyId, r => r.Count);
     }
 
+    public Dictionary<int, ChurnStat> GetChurnRate30dByCompany()
+    {
+        using var conn = _connections.Open();
+        // Cohort = jobs whose date_first_seen is at least 30 days ago. The metric is the
+        // proportion of that cohort now marked inactive. Companies with no cohort members
+        // (added <30 days ago, or only ever had brand-new jobs) are simply absent from the
+        // result dict — the ViewModel surfaces them as "n/a".
+        var cutoff = DateTime.UtcNow.AddDays(-30).ToString("o");
+        var rows = conn.Query<(int CompanyId, int Cohort, int Inactive)>(@"
+            SELECT company_id AS CompanyId,
+                   COUNT(*)   AS Cohort,
+                   SUM(CASE WHEN is_active = 0 THEN 1 ELSE 0 END) AS Inactive
+            FROM jobs
+            WHERE date_first_seen <= @cutoff
+            GROUP BY company_id", new { cutoff });
+        return rows.ToDictionary(r => r.CompanyId,
+            r => new ChurnStat(r.Cohort, r.Inactive,
+                               r.Cohort > 0 ? 100.0 * r.Inactive / r.Cohort : 0));
+    }
+
     public IReadOnlyList<(int Id, string? Location)> GetActiveLocations()
     {
         using var conn = _connections.Open();

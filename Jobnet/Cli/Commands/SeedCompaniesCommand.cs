@@ -26,6 +26,8 @@ public sealed class SeedCompaniesCommand : ICliCommand
         if (!File.Exists(path)) { Console.WriteLine($"File not found: {path}"); return 1; }
 
         var companies = services.GetRequiredService<ICompanyRepository>();
+        var discoveries = services.GetRequiredService<ICompanyDiscoveryRepository>();
+        var sourceName = Path.GetFileName(path);
         var added = 0; var skipped = 0; var bad = 0;
 
         var lines = File.ReadAllLines(path);
@@ -71,6 +73,7 @@ public sealed class SeedCompaniesCommand : ICliCommand
             var newId = companies.Insert(company);
             if (!string.IsNullOrEmpty(atsType))
                 companies.SetAtsInfo(newId, atsType, atsSlug, careersUrl);
+            discoveries.Record(newId, "seed_csv", sourceName, sourceUrl: careersUrl, runId: null);
 
             Console.WriteLine($"  + {name} ({domain})" + (atsType is null ? "" : $"  [{atsType}{(atsSlug is null ? "" : ":" + atsSlug)}]"));
             added++;

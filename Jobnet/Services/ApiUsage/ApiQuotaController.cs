@@ -18,6 +18,9 @@ public sealed class ApiQuotaController : IApiQuotaController
     private readonly ConcurrentDictionary<string, QuotaDecision> _cachedDecisions = new();
     private readonly object _ctsLock = new();
     private CancellationTokenSource _sessionCts = new();
+    private volatile bool _wasCancelledByDailyQuota;
+
+    public bool WasCancelledByDailyQuota => _wasCancelledByDailyQuota;
 
     public CancellationToken SessionCancellationToken
     {
@@ -31,6 +34,7 @@ public sealed class ApiQuotaController : IApiQuotaController
             _sessionCts.Dispose();
             _sessionCts = new CancellationTokenSource();
             _cachedDecisions.Clear();
+            _wasCancelledByDailyQuota = false;
         }
     }
 
@@ -98,6 +102,7 @@ public sealed class ApiQuotaController : IApiQuotaController
                 // Signal every batch loop holding our token to unwind. Without this, only the
                 // single AI call that triggered the dialog throws — the outer foreach happily
                 // moves to the next item and hits the same exhausted provider all over again.
+                _wasCancelledByDailyQuota = true;
                 lock (_ctsLock) { _sessionCts.Cancel(); }
             }
             return decision;

@@ -24,6 +24,7 @@ public sealed class CompaniesAddCommand : ICliCommand
         var careers = ParseArg(args, "--careers");
 
         var repo = services.GetRequiredService<ICompanyRepository>();
+        var discoveries = services.GetRequiredService<ICompanyDiscoveryRepository>();
         if (repo.GetByDomain(domain) is not null)
         {
             Console.WriteLine($"Company already exists for domain: {domain}");
@@ -40,6 +41,7 @@ public sealed class CompaniesAddCommand : ICliCommand
             DateDiscovered = DateTime.UtcNow,
         };
         var id = repo.Insert(company);
+        discoveries.Record(id, "manual", "companies-add CLI", sourceUrl: careers, runId: null);
         Console.WriteLine($"Inserted company id={id}: {name} ({domain})");
         return 0;
     }

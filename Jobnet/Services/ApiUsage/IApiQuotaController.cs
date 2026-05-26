@@ -29,6 +29,13 @@ public interface IApiQuotaController
     /// <summary>Fire the session cancellation token now. Same effect as the user clicking "No"
     /// on a per-day quota popup, but driven from a UI Stop button instead of a 429.</summary>
     void CancelSession();
+
+    /// <summary>True if the current session was cancelled because the user chose "No" on a
+    /// per-day quota dialog (i.e. an actual cloud provider returned a daily-quota 429).
+    /// False if the cancellation came from the user pressing Stop or any other CT trigger.
+    /// Lets the UI distinguish "quota exhausted" from "user cancelled" / "internal timeout"
+    /// — important when the active provider is local llama, which never produces a quota event.</summary>
+    bool WasCancelledByDailyQuota { get; }
 }
 
 public enum QuotaDecision { Continue, Cancel }

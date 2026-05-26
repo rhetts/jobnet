@@ -95,6 +95,19 @@ public sealed class DiscoveryService : IDiscoveryService
                         continue;
                     }
 
+                    // Cross-attribution guard: when the canonical domain has no token in common with
+                    // the search term, the URL probably points at a portfolio / catalog / parent page
+                    // rather than the actual company's site. Example: searching "Yaletown Partners
+                    // portfolio" returned bdc.ca/.../portfolio/yaletown — bdc.ca is BDC, not Yaletown.
+                    // Saving a "Yaletown" company at bdc.ca means we'd scrape BDC forever looking for
+                    // Yaletown jobs. Cheaper to skip and let the user re-add manually if needed.
+                    if (!DomainMatchesSearchTerm(extracted.CanonicalDomain, term))
+                    {
+                        resultsSkipped++;
+                        errors.Add($"[{term}] skipped {result.Url} — domain '{extracted.CanonicalDomain}' has no token overlap with search term (likely portfolio/catalog page)");
+                        continue;
+                    }
+
                     var company = new Company
                     {
                         Id = 0,
@@ -228,6 +241,51 @@ public sealed class DiscoveryService : IDiscoveryService
                 if (lower.Contains(noun, StringComparison.Ordinal)) return true;
         }
 
+        return false;
+    }
+
+    /// <summary>Token-overlap check between a canonical domain and a search term. Returns true
+    /// when at least one meaningful token from the search term appears in the domain.
+    /// Used to reject portfolio/catalog/aggregator pages — searching "Yaletown Partners portfolio"
+    /// shouldn't accept a hit on bdc.ca because BDC is not Yaletown.</summary>
+    internal static bool DomainMatchesSearchTerm(string canonicalDomain, string searchTerm)
+    {
+        if (string.IsNullOrWhiteSpace(canonicalDomain) || string.IsNullOrWhiteSpace(searchTerm))
+            return true; // can't judge — let it through rather than over-rejecting
+
+        // Reduce the domain to just the SLD (e.g. "bdc.ca" → "bdc", "mspcorp.ca" → "mspcorp").
+        var stem = canonicalDomain.ToLowerInvariant();
+        foreach (var prefix in new[] { "www.", "careers.", "jobs.", "hire.", "go." })
+            if (stem.StartsWith(prefix)) stem = stem[prefix.Length..];
+        var labels = stem.Split('.');
+        var sld = labels.Length >= 2 ? labels[^2] : labels[0];
+        sld = sld.Replace('-', ' ').Replace('_', ' ');
+
+        // Stoplist: common words that aren't identifying (location, role, parent/catalog tokens).
+        var stop = new System.Collections.Generic.HashSet<string>(System.StringComparer.OrdinalIgnoreCase)
+        {
+            "jobs", "job", "careers", "career", "hiring", "recruit", "recruiting",
+            "portfolio", "portfolios", "investment", "investments", "investor",
+            "fund", "funds", "capital", "ventures", "venture", "vc", "partners", "partnership",
+            "client", "clients", "company", "companies", "co", "inc", "ltd", "llc", "corp", "corporation",
+            "the", "and", "of", "for", "in", "to",
+            "vancouver", "burnaby", "toronto", "montreal", "calgary", "ottawa", "canada", "bc",
+            "tech", "technology", "technologies", "startup", "startups",
+        };
+
+        var tokens = searchTerm
+            .ToLowerInvariant()
+            .Split(new[] { ' ', ',', '-', '_', '/', '.', '\'', '"', '(', ')', '+' },
+                   System.StringSplitOptions.RemoveEmptyEntries)
+            .Where(t => t.Length >= 3 && !stop.Contains(t))
+            .ToList();
+
+        if (tokens.Count == 0) return true; // nothing identifying to compare — let it through
+
+        // Substring match in either direction handles "lulu" matching "lululemon" etc.
+        foreach (var t in tokens)
+            if (sld.Contains(t, System.StringComparison.Ordinal) || t.Contains(sld, System.StringComparison.Ordinal))
+                return true;
         return false;
     }
 

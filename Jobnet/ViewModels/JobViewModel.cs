@@ -17,6 +17,15 @@ public partial class JobViewModel : ObservableObject
     public string AreasDisplay { get; }
     public string ClassificationLine { get; }
 
+    /// <summary>Display names of technologies detected in this job's text. Rendered as chips
+    /// on the job card. Empty when nothing matched.</summary>
+    public IReadOnlyList<string> Technologies { get; }
+
+    /// <summary>Technology IDs matching the Technologies display list, in the same order.
+    /// Used by the filter to check whether the job has any of the user-selected tech IDs
+    /// without round-tripping through display strings.</summary>
+    public IReadOnlyList<int> TechnologyIds { get; }
+
     [ObservableProperty]
     private bool _isExpanded;
 
@@ -44,7 +53,9 @@ public partial class JobViewModel : ObservableObject
     public JobViewModel(Job job, string companyName, string? companyCity, int compositeScore,
                          string? levelName = null, IEnumerable<string>? areaNames = null,
                          Action<JobViewModel, bool>? onAppliedToggled = null,
-                         Action<JobViewModel, InterestLevel>? onInterestChanged = null)
+                         Action<JobViewModel, InterestLevel>? onInterestChanged = null,
+                         IEnumerable<string>? technologyNames = null,
+                         IEnumerable<int>? technologyIds = null)
     {
         Job = job;
         CompanyName = companyName;
@@ -54,6 +65,9 @@ public partial class JobViewModel : ObservableObject
         var areas = (areaNames ?? Array.Empty<string>()).Where(s => !string.IsNullOrWhiteSpace(s)).ToList();
         AreasDisplay = areas.Count == 0 ? "—" : string.Join(", ", areas);
         ClassificationLine = $"Level: {LevelName}   ·   Areas: {AreasDisplay}";
+        Technologies = (technologyNames ?? Array.Empty<string>())
+            .Where(s => !string.IsNullOrWhiteSpace(s)).ToList();
+        TechnologyIds = (technologyIds ?? Array.Empty<int>()).ToList();
 
         // Initialise via the backing field so the partial change handler doesn't fire on construction.
         _isApplied = job.DateApplied is not null;

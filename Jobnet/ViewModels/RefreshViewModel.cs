@@ -266,6 +266,15 @@ public partial class RefreshViewModel : ObservableObject
         return _quota.SessionCancellationToken;
     }
 
+    /// <summary>Status text to show when a step finishes via OperationCanceledException. The
+    /// daily-quota message is only correct when a cloud provider actually triggered the quota
+    /// dialog — for local llama (which never produces a quota event) the cancel came from the
+    /// user's Stop button, an inference timeout, or some other CT trigger.</summary>
+    private string CancelledStatusText() =>
+        _quota.WasCancelledByDailyQuota
+            ? "Cancelled — daily quota reached."
+            : "Cancelled.";
+
     /// <summary>True when at least one maintenance checkbox is selected.</summary>
     private bool CanRunMaintenance() => !IsBusy && (DoDiscoverJobs || DoRefreshExisting || DoRegenerateSummaries || DoReclassifyJobs || DoPruneOutOfArea);
 
@@ -417,7 +426,7 @@ public partial class RefreshViewModel : ObservableObject
         catch (OperationCanceledException)
         {
             runStatus = "cancelled";
-            StatusText = "Cancelled — daily quota reached.";
+            StatusText = CancelledStatusText();
         }
         catch (Exception ex)
         {
@@ -476,7 +485,7 @@ public partial class RefreshViewModel : ObservableObject
         }
         catch (OperationCanceledException)
         {
-            StatusText = "Cancelled — daily quota reached.";
+            StatusText = CancelledStatusText();
             _runs.FinishRun(runId, "cancelled");
         }
         catch (Exception ex)
@@ -554,7 +563,7 @@ public partial class RefreshViewModel : ObservableObject
         }
         catch (OperationCanceledException)
         {
-            StatusText = "Cancelled — daily quota reached.";
+            StatusText = CancelledStatusText();
             _runs.FinishRun(runId, "cancelled");
         }
         catch (Exception ex)
@@ -587,7 +596,7 @@ public partial class RefreshViewModel : ObservableObject
         }
         catch (OperationCanceledException)
         {
-            StatusText = "Cancelled — daily quota reached.";
+            StatusText = CancelledStatusText();
             _runs.FinishRun(runId, "cancelled");
         }
         catch (Exception ex)
@@ -620,7 +629,7 @@ public partial class RefreshViewModel : ObservableObject
         }
         catch (OperationCanceledException)
         {
-            StatusText = "Cancelled — daily quota reached.";
+            StatusText = CancelledStatusText();
             _runs.FinishRun(runId, "cancelled");
         }
         catch (Exception ex)
@@ -653,7 +662,7 @@ public partial class RefreshViewModel : ObservableObject
         }
         catch (OperationCanceledException)
         {
-            StatusText = "Cancelled — daily quota reached.";
+            StatusText = CancelledStatusText();
             _runs.FinishRun(runId, "cancelled");
         }
         catch (Exception ex)
@@ -705,7 +714,7 @@ public partial class RefreshViewModel : ObservableObject
         }
         catch (OperationCanceledException)
         {
-            StatusText = "Cancelled — daily quota reached.";
+            StatusText = CancelledStatusText();
             _runs.FinishRun(runId, "cancelled");
         }
         catch (Exception ex)

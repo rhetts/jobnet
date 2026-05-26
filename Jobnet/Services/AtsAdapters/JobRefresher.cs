@@ -11,6 +11,7 @@ using Jobnet.Models;
 using Jobnet.Services.Classification;
 using Jobnet.Services.Location;
 using Jobnet.Services.Profile;
+using Jobnet.Services.Technology;
 
 namespace Jobnet.Services.AtsAdapters;
 
@@ -26,13 +27,17 @@ public sealed class JobRefresher : IJobRefresher
     private readonly IDbConnectionFactory _connections;
     private readonly Jobnet.Services.AtsDetection.IAtsDetector _atsDetector;
     private readonly IConfigRepository _config;
+    private readonly ITechnologyMatcher _techMatcher;
+    private readonly ITechnologyRepository _techs;
 
     public JobRefresher(IEnumerable<IAtsJobSource> sources, AiExtractedJobSource aiSource,
                          ICompanyRepository companies, ICompanyUrlsRepository urls,
                          IJobRepository jobs, IAreaRepository areas,
                          IJobClassifier classifier, IDbConnectionFactory connections,
                          Jobnet.Services.AtsDetection.IAtsDetector atsDetector,
-                         IConfigRepository config)
+                         IConfigRepository config,
+                         ITechnologyMatcher techMatcher,
+                         ITechnologyRepository techs)
     {
         _sources = sources.ToDictionary(s => s.AtsType, StringComparer.OrdinalIgnoreCase);
         _aiSource = aiSource;
@@ -44,6 +49,8 @@ public sealed class JobRefresher : IJobRefresher
         _connections = connections;
         _atsDetector = atsDetector;
         _config = config;
+        _techMatcher = techMatcher;
+        _techs = techs;
     }
 
     /// <summary>Greylist tokens compiled once at the start of a batch run and cached across all
@@ -327,6 +334,15 @@ public sealed class JobRefresher : IJobRefresher
 
             var (id, wasNew) = _jobs.Upsert(job, hashKey, hashTier: 1);
             seenJobIds.Add(id);
+
+            // Tag with detected technologies from title + description snippet. We re-run on every
+            // upsert (not just new rows) so updated descriptions pick up newly-added vocabulary.
+            // Job summary isn't included here because it's generated asynchronously by a separate
+            // step — the technology backfill CLI re-runs once summaries exist.
+            var techText = (r.Title ?? "") + "\n" + (r.DescriptionSnippet ?? "");
+            var techIds = _techMatcher.Match(techText);
+            _techs.SetForJob(id, techIds);
+
             if (wasNew)
             {
                 added++;

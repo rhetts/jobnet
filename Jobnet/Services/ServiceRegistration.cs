@@ -30,6 +30,8 @@ internal static class ServiceRegistration
         services.AddSingleton<ICompanyDiscoveryRepository, CompanyDiscoveryRepository>();
         services.AddSingleton<IDirectoryCrawlRepository, DirectoryCrawlRepository>();
         services.AddSingleton<IAiExtractionCacheRepository, AiExtractionCacheRepository>();
+        services.AddSingleton<ITechnologyRepository, TechnologyRepository>();
+        services.AddSingleton<Technology.ITechnologyMatcher, Technology.TechnologyMatcher>();
 
         services.AddSingleton<Classification.HeuristicClassifier>();
         services.AddSingleton<Classification.AiFallbackClassifier>();

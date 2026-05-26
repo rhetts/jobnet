@@ -46,6 +46,43 @@ public sealed class AiExtractedJobSource : IAtsJobSource
     /// observed in the network log) to company_urls so future refreshes can skip rediscovery.</summary>
     public async Task<IReadOnlyList<RawJobPosting>> FetchForCompanyAsync(int companyId, string url, CancellationToken ct = default)
     {
+        var jobs = await FetchOnceAsync(companyId, url, ct);
+        if (jobs.Count > 0 || companyId <= 0) return jobs;
+
+        // The starting URL was probably a marketing landing page that lists categories instead
+        // of postings (common on WordPress-style /about/careers pages). The anchor scan just
+        // discovered the real job board — follow the freshest JobList URL once and re-extract.
+        // Depth is capped at one extra hop; we never recurse into this branch again.
+        var followups = _urls.GetByCompany(companyId)
+            .Where(u => u.Kind == UrlKind.JobList
+                     && !string.Equals(u.Url, url, StringComparison.OrdinalIgnoreCase)
+                     && u.FailCount < 3)
+            .OrderBy(u => u.FailCount)
+            .ThenByDescending(u => u.LastSeen)
+            .Take(2)
+            .ToList();
+
+        foreach (var fu in followups)
+        {
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                var more = await FetchOnceAsync(companyId, fu.Url, ct);
+                if (more.Count > 0) return more;
+                _urls.RecordFailure(companyId, fu.Url);
+            }
+            catch
+            {
+                _urls.RecordFailure(companyId, fu.Url);
+            }
+        }
+        return jobs;
+    }
+
+    /// <summary>Single-shot fetch + extract, no follow-up logic. Persists discovered URLs and
+    /// marks the source URL as yielded when jobs come back.</summary>
+    private async Task<IReadOnlyList<RawJobPosting>> FetchOnceAsync(int companyId, string url, CancellationToken ct)
+    {
         var fetch = await _fetcher.FetchAsync(url, ct);
         PersistDiscoveredUrls(companyId, fetch);
 
@@ -168,6 +205,17 @@ public sealed class AiExtractedJobSource : IAtsJobSource
                 $"Anchors found on page (label → href):\n{anchorBlock}";
             var secondResp = await _ai.CompleteAsync(secondUser, system, maxTokens: 2048, ct, task: "extraction");
             jobs = ParseJobs(secondResp.Text, fetch.FinalUrl);
+        }
+
+        // Hallucination guard. Local llama in particular tends to invent generic office-job titles
+        // when given a non-listing page (homepage, about page, portfolio listing). The signature is:
+        // every "job" has the source URL because none of them came from a real per-job anchor.
+        // Real careers boards have distinct per-job URLs; only tiny custom sites might have ≤4 jobs
+        // sharing a URL, so we only reject the batch above that threshold.
+        if (jobs.Count >= 5 && jobs.All(j => string.Equals(j.Url, fetch.FinalUrl, StringComparison.OrdinalIgnoreCase)))
+        {
+            System.Diagnostics.Debug.WriteLine($"[ai_extraction] rejecting {jobs.Count} jobs from {fetch.FinalUrl} — all share source URL (likely hallucination)");
+            return System.Array.Empty<RawJobPosting>();
         }
 
         // Only cache when we actually extracted something. An empty result pinned for the 7-day
