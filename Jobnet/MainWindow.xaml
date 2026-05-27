@@ -129,6 +129,18 @@
                             <Border CornerRadius="2"
                                     Padding="6,1"
                                     Margin="0,0,6,0"
+                                    Background="#FFF4D6"
+                                    BorderBrush="#E5B564"
+                                    BorderThickness="1"
+                                    Visibility="{Binding IsAgency, Converter={StaticResource BoolToVis}}"
+                                    ToolTip="Posted by a recruitment agency, not the hiring company directly.">
+                                <TextBlock Text="Agency"
+                                           FontSize="10" FontWeight="SemiBold"
+                                           Foreground="#7A5810"/>
+                            </Border>
+                            <Border CornerRadius="2"
+                                    Padding="6,1"
+                                    Margin="0,0,6,0"
                                     Background="#E3F2FD"
                                     Visibility="{Binding HasResumeMatch, Converter={StaticResource BoolToVis}}"
                                     ToolTip="{Binding ResumeMatchReason}">
@@ -377,11 +389,26 @@
                                  Padding="6,4"
                                  BorderBrush="#CCC"
                                  Tag="Search companies..."/>
-                        <CheckBox Content="Show all (including 0 jobs)"
-                                  IsChecked="{Binding ShowAllCompanies}"
-                                  Margin="0,6,0,0"
-                                  FontSize="11"
-                                  Foreground="#666"/>
+                        <Grid Margin="0,6,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <CheckBox Grid.Column="0"
+                                      Content="Show all (including 0 jobs)"
+                                      IsChecked="{Binding ShowAllCompanies}"
+                                      VerticalAlignment="Center"
+                                      FontSize="11"
+                                      Foreground="#666"/>
+                            <ComboBox Grid.Column="1"
+                                      ItemsSource="{Binding CompanySortModes}"
+                                      SelectedItem="{Binding SelectedCompanySort}"
+                                      DisplayMemberPath="Label"
+                                      MinWidth="100"
+                                      Padding="6,2"
+                                      FontSize="11"
+                                      ToolTip="Sort the company list"/>
+                        </Grid>
                     </StackPanel>
                 </Border>
 
@@ -421,17 +448,30 @@
                                     </TextBlock.Style>
                                 </TextBlock>
                                 <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                                    <TextBlock Text="{Binding Name}">
-                                        <TextBlock.Style>
-                                            <Style TargetType="TextBlock">
-                                                <Style.Triggers>
-                                                    <DataTrigger Binding="{Binding IsAllJobsSentinel}" Value="True">
-                                                        <Setter Property="FontWeight" Value="SemiBold"/>
-                                                    </DataTrigger>
-                                                </Style.Triggers>
-                                            </Style>
-                                        </TextBlock.Style>
-                                    </TextBlock>
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="{Binding Name}">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsAllJobsSentinel}" Value="True">
+                                                            <Setter Property="FontWeight" Value="SemiBold"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                        <Border Background="#FFF4D6"
+                                                BorderBrush="#E5B564"
+                                                BorderThickness="1"
+                                                CornerRadius="3"
+                                                Padding="5,0"
+                                                Margin="6,1,0,1"
+                                                VerticalAlignment="Center"
+                                                Visibility="{Binding IsAgency, Converter={StaticResource BoolToVis}}"
+                                                ToolTip="Recruitment agency — postings here are on behalf of other employers.">
+                                            <TextBlock Text="Agency" FontSize="9" Foreground="#7A5810"/>
+                                        </Border>
+                                    </StackPanel>
                                     <TextBlock Text="{Binding City}"
                                                FontSize="10"
                                                Foreground="#999"
@@ -494,6 +534,11 @@
                                                   VerticalAlignment="Center"
                                                   Margin="0,0,12,0"
                                                   ToolTip="Show jobs you've already marked as applied"/>
+                                        <CheckBox Content="Hide agencies"
+                                                  IsChecked="{Binding HideAgencyJobs}"
+                                                  VerticalAlignment="Center"
+                                                  Margin="0,0,12,0"
+                                                  ToolTip="Hide jobs from recruitment agencies — only show postings from direct employers"/>
                                         <CheckBox Content="Show removed"
                                                   IsChecked="{Binding ShowRemovedJobs}"
                                                   VerticalAlignment="Center"
@@ -502,7 +547,6 @@
                         <Grid Margin="0,10,0,0">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="Auto"/>
@@ -638,46 +682,6 @@
                                     <Border Background="White" BorderBrush="#CCC" BorderThickness="1" Padding="4" MinWidth="200" MaxHeight="400">
                                         <ScrollViewer VerticalScrollBarVisibility="Auto">
                                             <ItemsControl ItemsSource="{Binding AvailableCities}">
-                                                <ItemsControl.ItemTemplate>
-                                                    <DataTemplate DataType="{x:Type vm:FilterItemViewModel}">
-                                                        <CheckBox Content="{Binding Name}"
-                                                                  IsChecked="{Binding IsSelected}"
-                                                                  Padding="4,2"
-                                                                  Margin="4,3"/>
-                                                    </DataTemplate>
-                                                </ItemsControl.ItemTemplate>
-                                            </ItemsControl>
-                                        </ScrollViewer>
-                                    </Border>
-                                </Popup>
-                            </Grid>
-
-                            <!-- Technology multi-select -->
-                            <Grid Grid.Column="6" MinWidth="130" Margin="8,0,0,0">
-                                <ToggleButton x:Name="TechFilterButton"
-                                              Padding="8,4"
-                                              HorizontalContentAlignment="Stretch"
-                                              ToolTip="Filter by detected technology (multi-select)">
-                                    <Grid>
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*"/>
-                                            <ColumnDefinition Width="Auto"/>
-                                        </Grid.ColumnDefinitions>
-                                        <TextBlock Grid.Column="0"
-                                                   Text="{Binding TechnologyFilterSummary}"
-                                                   HorizontalAlignment="Left"/>
-                                        <TextBlock Grid.Column="1" Text="▾" Margin="6,0,0,0" Foreground="#888"/>
-                                    </Grid>
-                                </ToggleButton>
-                                <Popup IsOpen="{Binding IsChecked, ElementName=TechFilterButton}"
-                                       PlacementTarget="{Binding ElementName=TechFilterButton}"
-                                       Placement="Bottom"
-                                       StaysOpen="False"
-                                       AllowsTransparency="True"
-                                       PopupAnimation="Fade">
-                                    <Border Background="White" BorderBrush="#CCC" BorderThickness="1" Padding="4" MinWidth="220" MaxHeight="420">
-                                        <ScrollViewer VerticalScrollBarVisibility="Auto">
-                                            <ItemsControl ItemsSource="{Binding AvailableTechnologies}">
                                                 <ItemsControl.ItemTemplate>
                                                     <DataTemplate DataType="{x:Type vm:FilterItemViewModel}">
                                                         <CheckBox Content="{Binding Name}"

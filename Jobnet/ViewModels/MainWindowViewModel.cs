@@ -62,6 +62,9 @@ public partial class MainWindowViewModel : ObservableObject
     private bool _includeAppliedJobs;
 
     [ObservableProperty]
+    private bool _hideAgencyJobs;
+
+    [ObservableProperty]
     private string _statusBarText = string.Empty;
 
     [ObservableProperty]
@@ -79,9 +82,6 @@ public partial class MainWindowViewModel : ObservableObject
 
     [ObservableProperty]
     private string _cityFilterSummary = "Any city";
-
-    [ObservableProperty]
-    private string _technologyFilterSummary = "Any tech";
 
     [ObservableProperty]
     private string _filteredJobsCountText = string.Empty;
@@ -110,10 +110,22 @@ public partial class MainWindowViewModel : ObservableObject
     [ObservableProperty]
     private JobAgeFilter? _selectedJobAge;
 
-    public ObservableCollection<FilterItemViewModel> AvailableLevels       { get; } = new();
-    public ObservableCollection<FilterItemViewModel> AvailableAreas        { get; } = new();
-    public ObservableCollection<FilterItemViewModel> AvailableCities       { get; } = new();
-    public ObservableCollection<FilterItemViewModel> AvailableTechnologies { get; } = new();
+    public ObservableCollection<FilterItemViewModel> AvailableLevels { get; } = new();
+    public ObservableCollection<FilterItemViewModel> AvailableAreas  { get; } = new();
+    public ObservableCollection<FilterItemViewModel> AvailableCities { get; } = new();
+
+    /// <summary>Sort options for the company sidebar. Stored as a record so the combo's
+    /// DisplayMemberPath="Label" works directly.</summary>
+    public sealed record CompanySortOption(string Label, string Key);
+
+    public ObservableCollection<CompanySortOption> CompanySortModes { get; } = new()
+    {
+        new CompanySortOption("A → Z",      "name"),
+        new CompanySortOption("Most jobs",  "jobs"),
+    };
+
+    [ObservableProperty]
+    private CompanySortOption? _selectedCompanySort;
 
     /// <summary>Drop-down entries for quick-loading saved filters.</summary>
     public ObservableCollection<SavedFilterRef> SavedFilterList { get; } = new();
@@ -170,6 +182,9 @@ public partial class MainWindowViewModel : ObservableObject
 
         CompaniesView = CollectionViewSource.GetDefaultView(Companies);
         CompaniesView.Filter = FilterCompany;
+        // Sentinel "All Jobs" pinned to top regardless of sort. IsAllJobsSentinel descending
+        // puts true (sentinel) before false. Secondary sort is applied via ApplyCompanySort.
+        CompaniesView.SortDescriptions.Add(new SortDescription(nameof(CompanyViewModel.IsAllJobsSentinel), ListSortDirection.Descending));
 
         JobsView = CollectionViewSource.GetDefaultView(Jobs);
         // Tab 1 sort: active jobs first, downvoted at the bottom. Within each group, by
@@ -189,7 +204,6 @@ public partial class MainWindowViewModel : ObservableObject
 
         var savedLevelIds = LoadIdSet("ui_filter_level_ids");
         var savedAreaIds  = LoadIdSet("ui_filter_area_ids");
-        var savedTechIds  = LoadIdSet("ui_filter_tech_ids");
 
         if (_levelsRepo is not null)
             foreach (var l in _levelsRepo.GetAll())
@@ -197,22 +211,6 @@ public partial class MainWindowViewModel : ObservableObject
         if (_areasRepo is not null)
             foreach (var a in _areasRepo.GetAll())
                 AvailableAreas.Add(new FilterItemViewModel(a.Id, a.Name, savedAreaIds.Contains(a.Id), OnAreaSelectionChanged));
-        if (_techsRepo is not null)
-        {
-            // Only surface technologies that actually appear on at least one active job —
-            // pinning 180+ checkboxes in the popup would be unusable, and unused entries
-            // just clutter the UI. Sorted by usage count so the most-seen tech is at the top.
-            var counts = _techsRepo.GetActiveCountsByTechnology();
-            foreach (var t in _techsRepo.GetAll()
-                                       .Where(t => counts.ContainsKey(t.Id))
-                                       .OrderByDescending(t => counts[t.Id])
-                                       .ThenBy(t => t.Name))
-            {
-                AvailableTechnologies.Add(new FilterItemViewModel(
-                    t.Id, $"{t.Name} ({counts[t.Id]})",
-                    savedTechIds.Contains(t.Id), OnTechnologySelectionChanged));
-            }
-        }
 
         // Restore non-filter UI prefs
         if (_config is not null)
@@ -221,17 +219,24 @@ public partial class MainWindowViewModel : ObservableObject
             ShowAllCompanies    = _config.GetOrDefault("ui_show_all_companies", "false") == "true";
             ShowRemovedJobs     = _config.GetOrDefault("ui_show_removed_jobs", "false") == "true";
             IncludeAppliedJobs  = _config.GetOrDefault("ui_include_applied", "false") == "true";
+            HideAgencyJobs      = _config.GetOrDefault("ui_hide_agency", "false") == "true";
             var savedThresholdKey = _config.GetOrDefault("ui_filter_resume_threshold", "any");
             SelectedResumeMatchThreshold = ResumeMatchThresholds.FirstOrDefault(t => t.Key == savedThresholdKey)
                                             ?? ResumeMatchThresholds.First();
             var savedAgeKey = _config.GetOrDefault("ui_filter_job_age", "any");
             SelectedJobAge = JobAgeFilters.FirstOrDefault(a => a.Key == savedAgeKey)
                               ?? JobAgeFilters.First();
+            var savedSortKey = _config.GetOrDefault("ui_company_sort", "name");
+            SelectedCompanySort = CompanySortModes.FirstOrDefault(s => s.Key == savedSortKey)
+                                   ?? CompanySortModes.First();
+        }
+        else
+        {
+            SelectedCompanySort = CompanySortModes.First(); // default: A → Z
         }
 
         UpdateLevelFilterSummary();
         UpdateAreaFilterSummary();
-        UpdateTechnologyFilterSummary();
 
         LoadFromDataService();
         ReloadSavedFilterList();
@@ -298,28 +303,6 @@ public partial class MainWindowViewModel : ObservableObject
         RefreshJobsView();
         if (_settingsLoaded)
             SaveNameSet("ui_filter_city_names", AvailableCities.Where(x => x.IsSelected).Select(x => x.Name));
-    }
-
-    private void OnTechnologySelectionChanged()
-    {
-        UpdateTechnologyFilterSummary();
-        RefreshJobsView();
-        if (_settingsLoaded)
-            SaveIdSet("ui_filter_tech_ids", AvailableTechnologies.Where(x => x.IsSelected).Select(x => x.Id));
-    }
-
-    private void UpdateTechnologyFilterSummary()
-    {
-        // Strip the "(N)" usage-count suffix when displaying picked techs in the summary.
-        var picks = AvailableTechnologies.Where(x => x.IsSelected).Select(x =>
-        {
-            var n = x.Name;
-            var paren = n.LastIndexOf(" (");
-            return paren > 0 ? n.Substring(0, paren) : n;
-        }).ToList();
-        TechnologyFilterSummary = picks.Count == 0 ? "Any tech"
-                                : picks.Count <= 2 ? string.Join(", ", picks)
-                                : $"{picks.Count} techs";
     }
 
     private void UpdateLevelFilterSummary()
@@ -407,9 +390,10 @@ public partial class MainWindowViewModel : ObservableObject
                 var techNames = techIdsForJob
                     .Select(id => techNameById.TryGetValue(id, out var tn) ? tn : null!)
                     .Where(s => s is not null);
-                return new JobViewModel(j, companyById[j.CompanyId].Name, companyById[j.CompanyId].City, _data.ScoreJob(j),
+                var company = companyById[j.CompanyId];
+                return new JobViewModel(j, company.Name, company.City, _data.ScoreJob(j),
                                          levelName, areaNames, OnAppliedToggled, OnInterestChanged,
-                                         techNames, techIdsForJob);
+                                         techNames, techIdsForJob, isAgency: company.IsAgency);
             })
             .ToList();
 
@@ -451,6 +435,32 @@ public partial class MainWindowViewModel : ObservableObject
 
     partial void OnCompanySearchTextChanged(string value) => CompaniesView.Refresh();
 
+    partial void OnSelectedCompanySortChanged(CompanySortOption? value)
+    {
+        ApplyCompanySort();
+        if (_settingsLoaded && value is not null)
+            _config?.Set("ui_company_sort", value.Key);
+    }
+
+    /// <summary>Apply the active secondary sort to CompaniesView. The first SortDescription
+    /// (IsAllJobsSentinel descending) was added in the ctor and stays so the "All Jobs"
+    /// row keeps its pinned position regardless of the user's choice.</summary>
+    private void ApplyCompanySort()
+    {
+        // CompaniesView is always non-null after ctor.
+        // Drop any prior secondary sort, then push the new one.
+        while (CompaniesView.SortDescriptions.Count > 1)
+            CompaniesView.SortDescriptions.RemoveAt(1);
+
+        var key = SelectedCompanySort?.Key ?? "name";
+        CompaniesView.SortDescriptions.Add(key switch
+        {
+            "jobs" => new SortDescription(nameof(CompanyViewModel.ActiveJobCount), ListSortDirection.Descending),
+            _      => new SortDescription(nameof(CompanyViewModel.Name),           ListSortDirection.Ascending),
+        });
+        CompaniesView.Refresh();
+    }
+
     partial void OnShowAllCompaniesChanged(bool value)
     {
         CompaniesView.Refresh();
@@ -467,6 +477,12 @@ public partial class MainWindowViewModel : ObservableObject
     {
         RefreshJobsView();
         if (_settingsLoaded) _config?.Set("ui_include_applied", value ? "true" : "false");
+    }
+
+    partial void OnHideAgencyJobsChanged(bool value)
+    {
+        RefreshJobsView();
+        if (_settingsLoaded) _config?.Set("ui_hide_agency", value ? "true" : "false");
     }
 
     partial void OnJobKeywordFilterChanged(string value)
@@ -565,9 +581,7 @@ public partial class MainWindowViewModel : ObservableObject
             && !Services.Location.LocationMatcher.IsRemoteAnywhereInCanada(jvm.Job.Location))
             return false;
 
-        var selectedTechs = AvailableTechnologies.Where(x => x.IsSelected).Select(x => x.Id).ToList();
-        if (selectedTechs.Count > 0 && !jvm.TechnologyIds.Any(id => selectedTechs.Contains(id)))
-            return false;
+        if (HideAgencyJobs && jvm.IsAgency) return false;
 
         var threshold = SelectedResumeMatchThreshold;
         if (threshold is not null)
@@ -742,10 +756,9 @@ public partial class MainWindowViewModel : ObservableObject
     private void ClearJobFilters()
     {
         JobKeywordFilter = string.Empty;
-        foreach (var f in AvailableLevels)       f.IsSelected = false;
-        foreach (var f in AvailableAreas)        f.IsSelected = false;
-        foreach (var f in AvailableCities)       f.IsSelected = false;
-        foreach (var f in AvailableTechnologies) f.IsSelected = false;
+        foreach (var f in AvailableLevels) f.IsSelected = false;
+        foreach (var f in AvailableAreas)  f.IsSelected = false;
+        foreach (var f in AvailableCities) f.IsSelected = false;
         SelectedResumeMatchThreshold = ResumeMatchThresholds.First();
         SelectedJobAge = JobAgeFilters.First();
     }
@@ -798,7 +811,6 @@ public partial class MainWindowViewModel : ObservableObject
 
         UpdateLevelFilterSummary();
         UpdateAreaFilterSummary();
-        UpdateTechnologyFilterSummary();
         UpdateCityFilterSummary();
         RefreshJobsView();
     }

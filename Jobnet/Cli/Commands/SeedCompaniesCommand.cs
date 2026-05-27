@@ -12,7 +12,7 @@ public sealed class SeedCompaniesCommand : ICliCommand
     public string Name => "seed-companies";
     public string Description =>
         "Bulk-import companies from a CSV.  Usage: seed-companies <file.csv>\n" +
-        "Format: name,domain[,careers_url][,city][,ats_type][,ats_slug]  (header row optional)";
+        "Format: name,domain[,careers_url][,city][,ats_type][,ats_slug][,is_agency]  (header row optional, is_agency=1 marks recruiters)";
 
     public int Run(string[] args, IServiceProvider services)
     {
@@ -52,6 +52,7 @@ public sealed class SeedCompaniesCommand : ICliCommand
             var city = parts.Length > 3 && parts[3].Length > 0 ? parts[3] : null;
             var atsType = parts.Length > 4 && parts[4].Length > 0 ? parts[4] : null;
             var atsSlug = parts.Length > 5 && parts[5].Length > 0 ? parts[5] : null;
+            var isAgency = parts.Length > 6 && (parts[6] == "1" || parts[6].Equals("true", StringComparison.OrdinalIgnoreCase));
 
             if (companies.GetByDomain(domain) is not null)
             {
@@ -69,13 +70,16 @@ public sealed class SeedCompaniesCommand : ICliCommand
                 AtsType = atsType,
                 AtsSlug = atsSlug,
                 DateDiscovered = DateTime.UtcNow,
+                IsAgency = isAgency,
             };
             var newId = companies.Insert(company);
             if (!string.IsNullOrEmpty(atsType))
                 companies.SetAtsInfo(newId, atsType, atsSlug, careersUrl);
-            discoveries.Record(newId, "seed_csv", sourceName, sourceUrl: careersUrl, runId: null);
+            discoveries.Record(newId, isAgency ? "seed_csv_agency" : "seed_csv", sourceName, sourceUrl: careersUrl, runId: null);
 
-            Console.WriteLine($"  + {name} ({domain})" + (atsType is null ? "" : $"  [{atsType}{(atsSlug is null ? "" : ":" + atsSlug)}]"));
+            var tag = (atsType is null ? "" : $"  [{atsType}{(atsSlug is null ? "" : ":" + atsSlug)}]")
+                    + (isAgency ? "  [agency]" : "");
+            Console.WriteLine($"  + {name} ({domain}){tag}");
             added++;
         }
 

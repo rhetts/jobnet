@@ -1,0 +1,31 @@
+# Curated recruitment-agency seed list — Vancouver / BC and major Canadian agencies that
+# regularly post tech roles. Imported via `seed-companies` with the is_agency flag set
+# (extended CSV format).
+# Format: name,domain[,careers_url[,city[,ats_type[,ats_slug[,is_agency]]]]]
+# `is_agency` is 1 here for every row — that's the whole point of this file.
+
+name,domain,careers_url,city,ats_type,ats_slug,is_agency
+
+# National generalist staffing (Canadian presence, high tech volume)
+Robert Half,roberthalf.ca,https://www.roberthalf.com/ca/en/jobs,Vancouver,,,1
+Hays Canada,hays.ca,https://www.hays.ca/job-search,Vancouver,,,1
+Adecco Canada,adecco.ca,https://www.adecco.ca/find-a-job/,Vancouver,,,1
+Randstad Canada,randstad.ca,https://www.randstad.ca/jobs/,Vancouver,,,1
+Kelly Services,kellyservices.ca,https://www.kellyservices.ca/job-seekers/,Vancouver,,,1
+Manpower Canada,manpower.ca,https://www.manpower.ca/jobs/,Vancouver,,,1
+
+# Tech / contract IT staffing
+Aerotek,aerotek.com,https://www.aerotek.com/en-ca/job-search,,,,1
+Actalent Services,actalentservices.com,https://www.actalentservices.com/en-ca/job-search,,,,1
+TEKsystems,teksystems.com,https://www.teksystems.com/en-ca/careers/career-opportunities,,,,1
+Akkodis,akkodis.com,https://www.akkodis.com/en-ca/careers,,,,1
+Insight Global,insightglobal.com,https://insightglobal.com/job-seekers/,,,,1
+Procom,procom.ca,https://www.procom.ca/job-seekers/find-a-job/,,,,1
+Ian Martin Group,ianmartin.com,https://ianmartin.com/jobs/,Burlington,,,1
+
+# Vancouver / BC boutique tech recruiters
+Goldbeck Recruiting,goldbeckrecruiting.com,https://goldbeckrecruiting.com/jobs/,Vancouver,,,1
+Swim Recruiting,swimrecruiting.com,https://swimrecruiting.com/jobs/,Vancouver,,,1
+TPD,tpd.com,https://www.tpd.com/jobs,Vancouver,,,1
+Aplin,aplin.com,https://www.aplin.com/job-seekers/job-board/,Calgary,,,1
+Stoakley-Stewart Consultants,stoakley.com,https://www.stoakley.com/job-seekers/,,,,1

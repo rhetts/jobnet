@@ -12,7 +12,7 @@ public sealed class CompanyRepository : ICompanyRepository
         SELECT id, name, domain, website_url, careers_url, ats_type, ats_slug,
                ats_department_filter,
                parser_strategy, industry_tags, city, interest_level, notes,
-               date_discovered, date_last_scan, is_active
+               date_discovered, date_last_scan, is_active, is_agency
         FROM companies";
 
     private readonly IDbConnectionFactory _connections;
@@ -51,9 +51,9 @@ public sealed class CompanyRepository : ICompanyRepository
         return (int)conn.ExecuteScalar<long>(@"
             INSERT INTO companies (name, domain, website_url, careers_url, ats_type, ats_slug,
                                    parser_strategy, city, interest_level, notes, date_discovered,
-                                   date_last_scan, is_active)
+                                   date_last_scan, is_active, is_agency)
             VALUES (@Name, @Domain, @WebsiteUrl, @CareersUrl, @AtsType, NULL, NULL, @City,
-                    @InterestLevelText, NULL, @DateDiscoveredText, @DateLastScanText, 1);
+                    @InterestLevelText, NULL, @DateDiscoveredText, @DateLastScanText, 1, @IsAgencyInt);
             SELECT last_insert_rowid();",
             new
             {
@@ -65,7 +65,8 @@ public sealed class CompanyRepository : ICompanyRepository
                 company.City,
                 InterestLevelText = ToDbText(company.InterestLevel),
                 DateDiscoveredText = company.DateDiscovered.ToUniversalTime().ToString("o"),
-                DateLastScanText = company.DateLastScan?.ToUniversalTime().ToString("o")
+                DateLastScanText = company.DateLastScan?.ToUniversalTime().ToString("o"),
+                IsAgencyInt = company.IsAgency ? 1 : 0,
             });
     }
 
@@ -164,6 +165,7 @@ public sealed class CompanyRepository : ICompanyRepository
         InterestLevel = ParseInterest(r.InterestLevel),
         DateDiscovered = DateTime.Parse(r.DateDiscovered).ToUniversalTime(),
         DateLastScan = string.IsNullOrEmpty(r.DateLastScan) ? null : DateTime.Parse(r.DateLastScan).ToUniversalTime(),
+        IsAgency = r.IsAgency != 0,
     };
 
     // Same caveat as JobRepository.ToDbText — DB CHECK forces 'interesting' on disk for the
@@ -200,5 +202,6 @@ public sealed class CompanyRepository : ICompanyRepository
         public string DateDiscovered { get; set; } = string.Empty;
         public string? DateLastScan { get; set; }
         public int IsActive { get; set; }
+        public int IsAgency { get; set; }
     }
 }

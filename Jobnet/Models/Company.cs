@@ -17,4 +17,9 @@ public sealed class Company
     public InterestLevel InterestLevel { get; set; }
     public DateTime DateDiscovered { get; init; }
     public DateTime? DateLastScan { get; init; }
+
+    /// <summary>True when this company is a recruitment agency, not a direct employer.
+    /// Surfaced as a UI badge so the user can tell who they'd actually be applying to,
+    /// and supports an optional filter to hide agency postings entirely.</summary>
+    public bool IsAgency { get; init; }
 }

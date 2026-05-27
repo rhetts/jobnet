@@ -17,6 +17,10 @@ public partial class JobViewModel : ObservableObject
     public string AreasDisplay { get; }
     public string ClassificationLine { get; }
 
+    /// <summary>True when this job is posted by a recruitment agency, not a direct employer.
+    /// Drives the "Agency" chip on the job card and the "Hide agency postings" filter.</summary>
+    public bool IsAgency { get; }
+
     /// <summary>Display names of technologies detected in this job's text. Rendered as chips
     /// on the job card. Empty when nothing matched.</summary>
     public IReadOnlyList<string> Technologies { get; }
@@ -55,7 +59,8 @@ public partial class JobViewModel : ObservableObject
                          Action<JobViewModel, bool>? onAppliedToggled = null,
                          Action<JobViewModel, InterestLevel>? onInterestChanged = null,
                          IEnumerable<string>? technologyNames = null,
-                         IEnumerable<int>? technologyIds = null)
+                         IEnumerable<int>? technologyIds = null,
+                         bool isAgency = false)
     {
         Job = job;
         CompanyName = companyName;
@@ -65,6 +70,7 @@ public partial class JobViewModel : ObservableObject
         var areas = (areaNames ?? Array.Empty<string>()).Where(s => !string.IsNullOrWhiteSpace(s)).ToList();
         AreasDisplay = areas.Count == 0 ? "—" : string.Join(", ", areas);
         ClassificationLine = $"Level: {LevelName}   ·   Areas: {AreasDisplay}";
+        IsAgency = isAgency;
         Technologies = (technologyNames ?? Array.Empty<string>())
             .Where(s => !string.IsNullOrWhiteSpace(s)).ToList();
         TechnologyIds = (technologyIds ?? Array.Empty<int>()).ToList();

@@ -22,6 +22,10 @@ public partial class CompanyViewModel : ObservableObject
     public string? City => IsAllJobsSentinel ? null : Company?.City;
     public bool HasCity => !string.IsNullOrWhiteSpace(City);
 
+    /// <summary>True for recruitment agencies, used to render an amber chip in the sidebar
+    /// and on job cards so the user can spot agency postings at a glance.</summary>
+    public bool IsAgency => !IsAllJobsSentinel && (Company?.IsAgency ?? false);
+
     public InterestLevel InterestLevel => IsAllJobsSentinel ? InterestLevel.Neutral : Company!.InterestLevel;
 
     public string InterestGlyph => InterestLevel switch
