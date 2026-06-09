@@ -136,5 +136,20 @@ public sealed class RoutingAiClient : IAiClient
     /// <summary>The set of task tags the rest of the codebase passes. Display order matches the
     /// settings UI. Keep this in sync with the strings used at each call site.</summary>
     public static readonly System.Collections.Generic.IReadOnlyList<string> KnownTasks =
-        new[] { "extraction", "directory", "resume_match", "summary", "profile", "cover_letter", "classifier", "competitors" };
+        new[] { "extraction", "selector_derive", "directory", "resume_match", "summary", "profile", "cover_letter", "classifier", "competitors" };
+
+    /// <summary>Human-readable label for each task tag, parallel-indexed to <see cref="KnownTasks"/>.
+    /// Surfaced on the AI-routing settings tab so users see "Job extraction" instead of "extraction".</summary>
+    public static readonly System.Collections.Generic.IReadOnlyList<string> KnownTaskLabels =
+        new[] {
+            "Job extraction (careers-page AI parse)",
+            "Selector derivation (one-shot CSS profile)",
+            "Company directory harvest",
+            "Resume-to-job match scoring",
+            "Job description summary",
+            "Company profile generation",
+            "Cover letter draft",
+            "Job classifier fallback",
+            "Competitor company suggestions",
+        };
 }

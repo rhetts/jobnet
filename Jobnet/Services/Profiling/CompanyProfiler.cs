@@ -126,7 +126,7 @@ public sealed class CompanyProfiler : ICompanyProfiler
 
     private static CompanyProfile? ParseProfile(string responseText, string model)
     {
-        var json = StripFences(responseText.Trim());
+        var json = JsonExtractor.ExtractJsonObject(responseText);
         try
         {
             using var doc = JsonDocument.Parse(json);
@@ -143,8 +143,14 @@ public sealed class CompanyProfiler : ICompanyProfiler
                 Model = model,
             };
         }
-        catch
+        catch (Exception ex)
         {
+            AiLogger.LogParseFailure(
+                taskTag: "profile",
+                exception: ex,
+                rawResponse: responseText,
+                extractedJson: json,
+                extraContext: $"model={model}");
             return null;
         }
     }
@@ -187,17 +193,6 @@ public sealed class CompanyProfiler : ICompanyProfiler
         foreach (var elt in arr.EnumerateArray())
             if (elt.ValueKind == JsonValueKind.String) list.Add(elt.GetString() ?? "");
         return list;
-    }
-
-    private static string StripFences(string s)
-    {
-        if (s.StartsWith("```"))
-        {
-            var firstNl = s.IndexOf('\n');
-            if (firstNl > 0) s = s[(firstNl + 1)..];
-            if (s.EndsWith("```")) s = s[..^3];
-        }
-        return s.Trim();
     }
 
     private static string Truncate(string s, int max) => s.Length <= max ? s : s.Substring(0, max) + "…";

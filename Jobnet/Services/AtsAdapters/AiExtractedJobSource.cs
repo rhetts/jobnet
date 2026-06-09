@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using Jobnet.Data.Repositories;
 using Jobnet.Models;
 using Jobnet.Services.Ai;
+using Jobnet.Services.Parsing;
 using Jobnet.Services.Playwright;
 using Jobnet.Services.Profiling;
 
@@ -27,16 +28,30 @@ public sealed class AiExtractedJobSource : IAtsJobSource
     private readonly ICompanyUrlsRepository _urls;
     private readonly IAiExtractionCacheRepository _cache;
     private readonly IConfigRepository _config;
+    private readonly SelectorParser _selectorParser;
+    private readonly AiSelectorDeriver _selectorDeriver;
+    private readonly ICompanyRepository _companies;
 
     public AiExtractedJobSource(IPlaywrightFetcher fetcher, IAiClient ai, ICompanyUrlsRepository urls,
-                                  IAiExtractionCacheRepository cache, IConfigRepository config)
+                                  IAiExtractionCacheRepository cache, IConfigRepository config,
+                                  SelectorParser selectorParser, AiSelectorDeriver selectorDeriver,
+                                  ICompanyRepository companies)
     {
         _fetcher = fetcher;
         _ai = ai;
         _urls = urls;
         _cache = cache;
         _config = config;
+        _selectorParser = selectorParser;
+        _selectorDeriver = selectorDeriver;
+        _companies = companies;
     }
+
+    /// <summary>True when the selector-parser feature flag is on in config. Read each call so
+    /// the user can flip it from Settings without restarting.</summary>
+    private bool SelectorParserEnabled =>
+        string.Equals(_config.GetOrDefault("selector_parser_enabled", "true"), "true",
+                       StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Cache hit count for the most recent FetchForCompanyAsync call (across all AI
     /// extractions invoked). Exposed so callers like JobRefresher can surface this in run logs.</summary>
@@ -46,14 +61,24 @@ public sealed class AiExtractedJobSource : IAtsJobSource
     /// observed in the network log) to company_urls so future refreshes can skip rediscovery.</summary>
     public async Task<IReadOnlyList<RawJobPosting>> FetchForCompanyAsync(int companyId, string url, CancellationToken ct = default)
     {
-        var jobs = await FetchOnceAsync(companyId, url, ct);
-        if (jobs.Count > 0 || companyId <= 0) return jobs;
+        var company = companyId > 0 ? _companies.GetById(companyId) : null;
+        return await FetchForCompanyAsync(company, url, ct);
+    }
+
+    /// <summary>Company-aware overload that takes the full <see cref="Company"/> so we can read
+    /// (and write) its parser-strategy state without an extra DB round-trip. JobRefresher uses
+    /// this form; the CLI parse-page path still calls the int overload (with companyId=0 →
+    /// company=null for the no-persistence case).</summary>
+    public async Task<IReadOnlyList<RawJobPosting>> FetchForCompanyAsync(Company? company, string url, CancellationToken ct = default)
+    {
+        var jobs = await FetchOnceAsync(company, url, ct);
+        if (jobs.Count > 0 || company is null) return jobs;
 
         // The starting URL was probably a marketing landing page that lists categories instead
         // of postings (common on WordPress-style /about/careers pages). The anchor scan just
         // discovered the real job board — follow the freshest JobList URL once and re-extract.
         // Depth is capped at one extra hop; we never recurse into this branch again.
-        var followups = _urls.GetByCompany(companyId)
+        var followups = _urls.GetByCompany(company.Id)
             .Where(u => u.Kind == UrlKind.JobList
                      && !string.Equals(u.Url, url, StringComparison.OrdinalIgnoreCase)
                      && u.FailCount < 3)
@@ -67,28 +92,69 @@ public sealed class AiExtractedJobSource : IAtsJobSource
             ct.ThrowIfCancellationRequested();
             try
             {
-                var more = await FetchOnceAsync(companyId, fu.Url, ct);
+                var more = await FetchOnceAsync(company, fu.Url, ct);
                 if (more.Count > 0) return more;
-                _urls.RecordFailure(companyId, fu.Url);
+                _urls.RecordFailure(company.Id, fu.Url);
             }
             catch
             {
-                _urls.RecordFailure(companyId, fu.Url);
+                _urls.RecordFailure(company.Id, fu.Url);
             }
         }
         return jobs;
     }
 
     /// <summary>Single-shot fetch + extract, no follow-up logic. Persists discovered URLs and
-    /// marks the source URL as yielded when jobs come back.</summary>
-    private async Task<IReadOnlyList<RawJobPosting>> FetchOnceAsync(int companyId, string url, CancellationToken ct)
+    /// marks the source URL as yielded when jobs come back.
+    ///
+    /// Order of attempts (cheapest first):
+    ///   1. Cached selector profile (deterministic, no AI cost) — when company has one and
+    ///      the global flag is on.
+    ///   2. JSON-LD structured data extraction (free).
+    ///   3. AI extraction. If it yields jobs AND no selector profile is cached yet, derive one
+    ///      from the same HTML and persist it so the next refresh skips step 3 entirely.</summary>
+    private async Task<IReadOnlyList<RawJobPosting>> FetchOnceAsync(Company? company, string url, CancellationToken ct)
     {
+        var companyId = company?.Id ?? 0;
         var fetch = await _fetcher.FetchAsync(url, ct);
         PersistDiscoveredUrls(companyId, fetch);
 
         if (!fetch.Success || string.IsNullOrEmpty(fetch.Html))
             throw new InvalidOperationException(fetch.Error ?? "Playwright fetch failed");
 
+        // 1) Cached selector profile. Skip when globally disabled, per-company disabled, or no
+        //    profile cached yet.
+        if (company is not null
+            && SelectorParserEnabled
+            && !company.ParserStrategyDisabled
+            && !string.IsNullOrWhiteSpace(company.ParserStrategy))
+        {
+            try
+            {
+                var selectorJobs = _selectorParser.Parse(company.ParserStrategy!, fetch.Html, fetch.FinalUrl);
+                if (selectorJobs.Count > 0)
+                {
+                    _companies.SetParserStrategyResult(company.Id, "ok", DateTime.UtcNow, errorMessage: null);
+                    _urls.MarkYielded(company.Id, fetch.FinalUrl);
+                    return selectorJobs;
+                }
+
+                // 0 jobs from a previously-working profile = likely drift. Clear so the AI path
+                // below re-derives. Mark the result so the Parser Report screen surfaces it.
+                _companies.SetParserStrategyResult(company.Id, "drift", DateTime.UtcNow,
+                    errorMessage: "Cached selectors returned 0 jobs; re-deriving.");
+                _companies.ClearParserStrategy(company.Id);
+                company.ParserStrategy = null;   // keep the in-memory model consistent for the rest of this call
+            }
+            catch (SelectorParseException ex)
+            {
+                _companies.SetParserStrategyResult(company.Id, "error", DateTime.UtcNow, errorMessage: ex.Message);
+                _companies.ClearParserStrategy(company.Id);
+                company.ParserStrategy = null;
+            }
+        }
+
+        // 2) JSON-LD structured data (free, no AI cost).
         var jsonLd = JsonLdJobExtractor.Extract(fetch.Html, fetch.FinalUrl);
         if (jsonLd.Count > 0)
         {
@@ -99,9 +165,60 @@ public sealed class AiExtractedJobSource : IAtsJobSource
         if (!_ai.IsConfigured)
             throw new InvalidOperationException("Page has no JSON-LD job data and AI client not configured");
 
+        // 3) AI extraction (most expensive). On success, derive a selector profile so future
+        //    refreshes skip this step.
         var jobs = await ExtractViaAiAsync(fetch, ct);
         if (jobs.Count > 0 && companyId > 0) _urls.MarkYielded(companyId, fetch.FinalUrl);
+
+        if (jobs.Count > 0
+            && company is not null
+            && SelectorParserEnabled
+            && !company.ParserStrategyDisabled
+            && string.IsNullOrWhiteSpace(company.ParserStrategy)
+            && !IsInDeriveBackoff(company))
+        {
+            await TryDeriveAndPersistProfileAsync(company, fetch.Html, fetch.FinalUrl, ct);
+        }
         return jobs;
+    }
+
+    /// <summary>True when the last derivation attempt for this company errored within the backoff
+    /// window. Prevents a permanently-failing deriver (e.g. local LLama too small for the prompt)
+    /// from burning an AI call on every refresh.</summary>
+    private bool IsInDeriveBackoff(Company company)
+    {
+        if (company.ParserStrategyLastResult != "error") return false;
+        if (company.ParserStrategyLastResultAt is not { } lastAt) return false;
+
+        var hours = int.TryParse(_config.GetOrDefault("selector_deriver_backoff_hours", "24"), out var h) && h > 0
+                    ? h : 24;
+        return (DateTime.UtcNow - lastAt).TotalHours < hours;
+    }
+
+    /// <summary>Best-effort: ask the deriver for a selector profile from the same HTML the AI
+    /// just extracted from. Persist when the deriver passes its own sanity check. Failures are
+    /// recorded but never abort the refresh — we already have jobs from the AI pass.</summary>
+    private async Task TryDeriveAndPersistProfileAsync(Company company, string html, string baseUrl, CancellationToken ct)
+    {
+        try
+        {
+            var derived = await _selectorDeriver.DeriveAsync(html, baseUrl, ct);
+            if (derived.Success && derived.ProfileJson is not null)
+            {
+                _companies.SetParserStrategy(company.Id, derived.ProfileJson, DateTime.UtcNow);
+                company.ParserStrategy = derived.ProfileJson;
+                company.ParserStrategyDerivedAt = DateTime.UtcNow;
+            }
+            else
+            {
+                _companies.SetParserStrategyResult(company.Id, "error", DateTime.UtcNow,
+                    errorMessage: derived.Error ?? "Derivation produced no usable profile.");
+            }
+        }
+        catch (Exception ex)
+        {
+            _companies.SetParserStrategyResult(company.Id, "error", DateTime.UtcNow, errorMessage: ex.Message);
+        }
     }
 
     private void PersistDiscoveredUrls(int companyId, PlaywrightFetchResult fetch)
@@ -254,7 +371,7 @@ public sealed class AiExtractedJobSource : IAtsJobSource
 
     private static IReadOnlyList<RawJobPosting> ParseJobs(string responseText, string sourceUrl)
     {
-        var json = StripFences(responseText.Trim());
+        var json = Jobnet.Services.Ai.JsonExtractor.ExtractJsonObject(responseText);
         var results = new List<RawJobPosting>();
         try
         {
@@ -286,9 +403,17 @@ public sealed class AiExtractedJobSource : IAtsJobSource
                 });
             }
         }
-        catch
+        catch (Exception ex)
         {
-            // swallow parse error — caller treats empty list as no jobs found
+            // The caller treats an empty list as "no jobs found" — same as the model legitimately
+            // returning {"jobs":[]} — so we don't rethrow. But the silent swallow used to make
+            // parse failures invisible; now we log the offending text so post-mortems are possible.
+            Jobnet.Services.Ai.AiLogger.LogParseFailure(
+                taskTag: "extraction",
+                exception: ex,
+                rawResponse: responseText,
+                extractedJson: json,
+                extraContext: $"sourceUrl={sourceUrl}");
         }
         return results;
     }
@@ -301,17 +426,6 @@ public sealed class AiExtractedJobSource : IAtsJobSource
         using var sha = System.Security.Cryptography.SHA256.Create();
         var bytes = sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(s));
         return Convert.ToHexString(bytes).Substring(0, 16).ToLowerInvariant();
-    }
-
-    private static string StripFences(string s)
-    {
-        if (s.StartsWith("```"))
-        {
-            var firstNl = s.IndexOf('\n');
-            if (firstNl > 0) s = s[(firstNl + 1)..];
-            if (s.EndsWith("```")) s = s[..^3];
-        }
-        return s.Trim();
     }
 
     private static readonly Regex AnchorRe = new(

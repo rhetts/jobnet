@@ -396,12 +396,73 @@
                 </ScrollViewer>
             </TabItem>
 
+            <!-- AI routing tab — per-task provider override + optional local fallback. -->
+            <TabItem Header="AI routing">
+                <Grid Margin="14,10,14,10">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <TextBlock Grid.Row="0"
+                               Foreground="#666"
+                               TextWrapping="Wrap"
+                               Margin="0,0,0,10"
+                               Text="Pick a provider for each task. 'Default' inherits the global chain set on the AI tab. The 'Fall back to local' checkbox appends Llama to the chain so the call retries against the local model when the online provider runs out of quota."/>
+                    <DataGrid Grid.Row="1"
+                              ItemsSource="{Binding AiRoutingRows}"
+                              AutoGenerateColumns="False"
+                              HeadersVisibility="Column"
+                              CanUserAddRows="False"
+                              CanUserDeleteRows="False"
+                              GridLinesVisibility="Horizontal"
+                              HorizontalGridLinesBrush="#EEE"
+                              BorderBrush="#DDD" BorderThickness="1"
+                              Background="White"
+                              RowBackground="White"
+                              AlternatingRowBackground="#FAFAFA"
+                              RowHeight="36"
+                              FontSize="12">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Task" Binding="{Binding Label}" Width="*" IsReadOnly="True"/>
+                            <DataGridTemplateColumn Header="Provider" Width="140">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate DataType="{x:Type vm:AiRoutingRow}">
+                                        <ComboBox ItemsSource="{Binding ProviderOptions}"
+                                                  SelectedItem="{Binding Provider, UpdateSourceTrigger=PropertyChanged}"
+                                                  Padding="4,2"
+                                                  Margin="4,2"/>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTemplateColumn Header="Fall back to local Llama" Width="180">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate DataType="{x:Type vm:AiRoutingRow}">
+                                        <CheckBox IsChecked="{Binding FallbackToLocal}"
+                                                  IsEnabled="{Binding CanFallBack}"
+                                                  VerticalAlignment="Center"
+                                                  HorizontalAlignment="Center"/>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </Grid>
+            </TabItem>
+
             <!-- Scraping tab -->
             <TabItem Header="Scraping">
                 <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="14,10,14,10">
                     <StackPanel>
                         <TextBlock Style="{StaticResource FieldLabel}" Text="Scrape delay (ms between requests)"/>
                         <TextBox Text="{Binding ScrapeDelayMs, UpdateSourceTrigger=PropertyChanged}"/>
+
+                        <CheckBox Content="Use AI-derived selector parsers when available"
+                                  IsChecked="{Binding SelectorParserEnabled}"
+                                  Margin="0,16,0,0"
+                                  FontWeight="SemiBold"
+                                  Foreground="#333"/>
+                        <TextBlock Style="{StaticResource HintText}"
+                                   Text="When on, the first AI extraction of a company also derives a reusable CSS-selector profile. Future refreshes replay the profile instead of calling the AI — much faster. See the Parser Report screen to monitor health and override per company."/>
 
                         <TextBlock Style="{StaticResource FieldLabel}" Text="Extraction prompt (used by Phase 7 careers-page parser)"/>
                         <TextBox Text="{Binding ClaudeExtractionPrompt, UpdateSourceTrigger=PropertyChanged}"

@@ -238,7 +238,7 @@ public sealed class JobRefresher : IJobRefresher
                 var startUrl = company.CareersUrl ?? company.WebsiteUrl ?? $"https://{company.Domain}/careers";
                 try
                 {
-                    var jobs = await _aiSource.FetchForCompanyAsync(company.Id, startUrl, ct);
+                    var jobs = await _aiSource.FetchForCompanyAsync(company, startUrl, ct);
                     allRaw.AddRange(jobs);
                 }
                 catch (Exception ex)
@@ -253,7 +253,7 @@ public sealed class JobRefresher : IJobRefresher
                     ct.ThrowIfCancellationRequested();
                     try
                     {
-                        var jobs = await _aiSource.FetchForCompanyAsync(company.Id, u.Url, ct);
+                        var jobs = await _aiSource.FetchForCompanyAsync(company, u.Url, ct);
                         if (jobs.Count > 0)
                         {
                             allRaw.AddRange(jobs);

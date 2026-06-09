@@ -84,6 +84,10 @@ public partial class App : Application
                 services.AddTransient<Views.RunsWindow>();
                 services.AddSingleton<Func<Views.RunsWindow>>(sp => () => sp.GetRequiredService<Views.RunsWindow>());
 
+                services.AddTransient<ParserReportViewModel>();
+                services.AddTransient<Views.ParserReportWindow>();
+                services.AddSingleton<Func<Views.ParserReportWindow>>(sp => () => sp.GetRequiredService<Views.ParserReportWindow>());
+
                 services.AddTransient<CoverLetterViewModel>();
                 services.AddTransient<Views.CoverLetterWindow>();
                 services.AddSingleton<Func<Views.CoverLetterWindow>>(sp => () => sp.GetRequiredService<Views.CoverLetterWindow>());

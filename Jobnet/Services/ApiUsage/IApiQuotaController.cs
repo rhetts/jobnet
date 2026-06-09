@@ -36,6 +36,12 @@ public interface IApiQuotaController
     /// Lets the UI distinguish "quota exhausted" from "user cancelled" / "internal timeout"
     /// — important when the active provider is local llama, which never produces a quota event.</summary>
     bool WasCancelledByDailyQuota { get; }
+
+    /// <summary>The min-delay (in ms) to use for the next call to <paramref name="provider"/>,
+    /// combining the configured floor (<c>api_min_delay_ms.{provider}</c>) with any in-memory
+    /// adaptive bump produced by <see cref="OnPerMinuteLimit"/>. The bump is transient and
+    /// resets on process restart.</summary>
+    int GetEffectiveMinDelayMs(string provider);
 }
 
 public enum QuotaDecision { Continue, Cancel }

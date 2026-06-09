@@ -16,6 +16,7 @@ public sealed class ApiUsageTracker : IApiUsageTracker
     private readonly ConcurrentDictionary<string, bool> _warnedToday = new();
 
     public event EventHandler<ApiUsageWarningEventArgs>? SoftCapExceeded;
+    public event EventHandler<ApiCallRecordedEventArgs>? CallRecorded;
 
     public ApiUsageTracker(IDbConnectionFactory connections, IConfigRepository config)
     {
@@ -59,6 +60,14 @@ public sealed class ApiUsageTracker : IApiUsageTracker
                 });
             }
         }
+
+        // Notify live UI counters. Subscribers must marshal to UI thread themselves.
+        CallRecorded?.Invoke(this, new ApiCallRecordedEventArgs
+        {
+            Provider = provider,
+            CountToday = count,
+        });
+
         return count;
     }
 

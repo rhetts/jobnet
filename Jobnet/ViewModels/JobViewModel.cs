@@ -46,6 +46,10 @@ public partial class JobViewModel : ObservableObject
     /// Passes the new InterestLevel so the parent can persist + refresh sort.</summary>
     private Action<JobViewModel, InterestLevel>? _onInterestChanged;
 
+    /// <summary>Invoked when the user clicks Expired on an approved card — unapproves the job
+    /// AND marks it removed in the DB. Wired by MainWindowViewModel.</summary>
+    private Action<JobViewModel>? _onMarkExpired;
+
     /// <summary>Briefly flag the ID as copied so the UI can confirm. Auto-resets after ~1.5s.</summary>
     public async System.Threading.Tasks.Task FlashCopiedAsync()
     {
@@ -60,7 +64,8 @@ public partial class JobViewModel : ObservableObject
                          Action<JobViewModel, InterestLevel>? onInterestChanged = null,
                          IEnumerable<string>? technologyNames = null,
                          IEnumerable<int>? technologyIds = null,
-                         bool isAgency = false)
+                         bool isAgency = false,
+                         Action<JobViewModel>? onMarkExpired = null)
     {
         Job = job;
         CompanyName = companyName;
@@ -79,6 +84,7 @@ public partial class JobViewModel : ObservableObject
         _isApplied = job.DateApplied is not null;
         _onAppliedToggled = onAppliedToggled;
         _onInterestChanged = onInterestChanged;
+        _onMarkExpired = onMarkExpired;
     }
 
     partial void OnIsAppliedChanged(bool value)
@@ -136,6 +142,11 @@ public partial class JobViewModel : ObservableObject
     /// PropertyChanged for AppliedSortKey + AppliedLabel — no need to duplicate those here.</summary>
     [RelayCommand]
     private void ToggleApplied() => IsApplied = !IsApplied;
+
+    /// <summary>Tab 2 action: mark this approved job as expired. Unapproves it AND flags it
+    /// inactive/removed so it drops off the Approved view entirely.</summary>
+    [RelayCommand]
+    private void MarkExpired() => _onMarkExpired?.Invoke(this);
 
     public string Title => Job.Title;
     public string JobIdDisplay => $"#{Job.Id}";

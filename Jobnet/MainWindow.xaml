@@ -37,7 +37,7 @@
         <!-- Shared job-card template. Used by both the All-jobs and Approved-jobs ListBoxes.
              The action buttons at the bottom-right swap based on IsApproved: Tab 1 cards
              (IsApproved=false) show Approve+Downvote; Tab 2 cards (IsApproved=true) show
-             a single Applied toggle button. -->
+             Expired + Applied. -->
         <DataTemplate x:Key="JobCardTemplate" DataType="{x:Type vm:JobViewModel}">
             <Border Background="White"
                     BorderBrush="#E5E5E5"
@@ -249,34 +249,50 @@
                             </Button>
                         </StackPanel>
 
-                        <!-- TAB 2 action: Applied toggle (only visible when card is approved) -->
-                        <Button Command="{Binding ToggleAppliedCommand}"
-                                Content="{Binding AppliedLabel}"
-                                Padding="10,3"
-                                Margin="0,6,0,0"
-                                HorizontalAlignment="Right"
-                                Cursor="Hand"
-                                ToolTip="Toggle whether you've applied. Applied jobs sort to the bottom of this tab.">
-                            <Button.Style>
-                                <Style TargetType="Button">
+                        <!-- TAB 2 action row: Expired + Applied (only visible when card is approved) -->
+                        <StackPanel Orientation="Horizontal" Margin="0,6,0,0" HorizontalAlignment="Right">
+                            <StackPanel.Style>
+                                <Style TargetType="StackPanel">
                                     <Setter Property="Visibility" Value="Collapsed"/>
-                                    <Setter Property="Background" Value="White"/>
-                                    <Setter Property="BorderBrush" Value="#1976D2"/>
-                                    <Setter Property="Foreground" Value="#1976D2"/>
-                                    <Setter Property="FontWeight" Value="SemiBold"/>
                                     <Style.Triggers>
                                         <DataTrigger Binding="{Binding IsApproved}" Value="True">
                                             <Setter Property="Visibility" Value="Visible"/>
                                         </DataTrigger>
-                                        <DataTrigger Binding="{Binding IsApplied}" Value="True">
-                                            <Setter Property="Background" Value="#E8F5E9"/>
-                                            <Setter Property="BorderBrush" Value="#2A8F4F"/>
-                                            <Setter Property="Foreground" Value="#2A8F4F"/>
-                                        </DataTrigger>
                                     </Style.Triggers>
                                 </Style>
-                            </Button.Style>
-                        </Button>
+                            </StackPanel.Style>
+                            <Button Command="{Binding MarkExpiredCommand}"
+                                    Content="Expired"
+                                    Padding="10,3"
+                                    Margin="0,0,6,0"
+                                    Background="White"
+                                    BorderBrush="#C44"
+                                    Foreground="#C44"
+                                    FontWeight="SemiBold"
+                                    Cursor="Hand"
+                                    ToolTip="Mark this posting expired — unapproves and removes it from the list."/>
+                            <Button Command="{Binding ToggleAppliedCommand}"
+                                    Content="{Binding AppliedLabel}"
+                                    Padding="10,3"
+                                    Cursor="Hand"
+                                    ToolTip="Toggle whether you've applied. Applied jobs sort to the bottom of this tab.">
+                                <Button.Style>
+                                    <Style TargetType="Button">
+                                        <Setter Property="Background" Value="White"/>
+                                        <Setter Property="BorderBrush" Value="#1976D2"/>
+                                        <Setter Property="Foreground" Value="#1976D2"/>
+                                        <Setter Property="FontWeight" Value="SemiBold"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsApplied}" Value="True">
+                                                <Setter Property="Background" Value="#E8F5E9"/>
+                                                <Setter Property="BorderBrush" Value="#2A8F4F"/>
+                                                <Setter Property="Foreground" Value="#2A8F4F"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Button.Style>
+                            </Button>
+                        </StackPanel>
                     </StackPanel>
                     <Border Grid.Column="1" Grid.Row="1" Grid.ColumnSpan="2"
                             Margin="0,8,0,0"
@@ -361,6 +377,10 @@
                 <Button Content="Runs..."
                         Style="{StaticResource ToolbarButton}"
                         Command="{Binding OpenRunsCommand}"/>
+                <Button Content="Parsers..."
+                        Style="{StaticResource ToolbarButton}"
+                        Command="{Binding OpenParserReportCommand}"
+                        ToolTip="Shows which extraction system each company uses, plus health of cached selector profiles."/>
                 <Button Content="Settings"
                         Style="{StaticResource ToolbarButton}"
                         Command="{Binding OpenSettingsCommand}"

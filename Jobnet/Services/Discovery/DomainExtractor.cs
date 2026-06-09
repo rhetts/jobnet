@@ -24,6 +24,10 @@ public static class DomainExtractor
         // News
         "businessinsider.com", "techcrunch.com", "forbes.com", "bloomberg.com",
         "betakit.com", "biv.com", "globalnews.ca", "cbc.ca",
+        // BC/Canada tech news + blog directories — these surfaced as "companies" and produced
+        // misclassified "Founder"/"CTO" jobs extracted from article headlines.
+        "vantechjournal.com", "bcbusiness.ca", "techcouver.com", "cleanenergy.ca",
+        "beststartup.ca", "dailyhive.com", "bctechnology.com",
         // B2B review / firm-directory sites — they list services, not the actual companies we want
         "clutch.co", "goodfirms.co", "themanifest.com", "designrush.com", "sortlist.com",
         "g2.com", "capterra.com", "trustpilot.com",

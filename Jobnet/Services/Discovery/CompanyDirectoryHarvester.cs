@@ -345,7 +345,7 @@ public sealed class CompanyDirectoryHarvester : ICompanyDirectoryHarvester
     private static List<Candidate> ParseCandidates(string responseText)
     {
         var list = new List<Candidate>();
-        var json = StripFences(responseText.Trim());
+        var json = Jobnet.Services.Ai.JsonExtractor.ExtractJsonObject(responseText);
         try
         {
             using var doc = JsonDocument.Parse(json);
@@ -362,9 +362,13 @@ public sealed class CompanyDirectoryHarvester : ICompanyDirectoryHarvester
                 });
             }
         }
-        catch
+        catch (Exception ex)
         {
-            // ignore parse failure — caller sees CandidatesFound == 0
+            Jobnet.Services.Ai.AiLogger.LogParseFailure(
+                taskTag: "directory",
+                exception: ex,
+                rawResponse: responseText,
+                extractedJson: json);
         }
         return list;
     }
@@ -401,16 +405,6 @@ public sealed class CompanyDirectoryHarvester : ICompanyDirectoryHarvester
 
     private static string? StrOrNull(JsonElement obj, string name) =>
         obj.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
-
-    private static string StripFences(string s)
-    {
-        // Find the outermost JSON object — most permissive recovery for AI responses that
-        // wrap JSON in code fences, add explanatory prose, or both.
-        var first = s.IndexOf('{');
-        var last  = s.LastIndexOf('}');
-        if (first >= 0 && last > first) return s.Substring(first, last - first + 1);
-        return s.Trim();
-    }
 
     private static readonly System.Text.RegularExpressions.Regex AnchorRe = new(
         @"<a[^>]+href=[""'](?<href>[^""']+)[""'][^>]*>(?<text>.*?)</a>",

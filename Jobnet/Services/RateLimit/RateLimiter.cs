@@ -18,13 +18,15 @@ public sealed class RateLimiter : IRateLimiter
 {
     private readonly IConfigRepository _config;
     private readonly IApiUsageTracker _usage;
+    private readonly IApiQuotaController _quota;
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _gates = new();
     private readonly ConcurrentDictionary<string, DateTime> _lastCall = new();
 
-    public RateLimiter(IConfigRepository config, IApiUsageTracker usage)
+    public RateLimiter(IConfigRepository config, IApiUsageTracker usage, IApiQuotaController quota)
     {
         _config = config;
         _usage = usage;
+        _quota = quota;
     }
 
     public async Task WaitAsync(string provider, CancellationToken ct = default)
@@ -74,9 +76,11 @@ public sealed class RateLimiter : IRateLimiter
 
     private TimeSpan GetMinDelay(string provider)
     {
-        var raw = _config.GetOrDefault($"api_min_delay_ms.{provider}", "0");
-        if (!int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var ms) || ms < 0)
-            return TimeSpan.Zero;
+        // Consult the controller — gives us the configured floor combined with any in-memory
+        // adaptive bump from past 429s. The bump is transient (resets on restart) so we never
+        // permanently degrade throughput the way the old persisted-bump approach did.
+        var ms = _quota.GetEffectiveMinDelayMs(provider);
+        if (ms < 0) return TimeSpan.Zero;
         return TimeSpan.FromMilliseconds(ms);
     }
 }

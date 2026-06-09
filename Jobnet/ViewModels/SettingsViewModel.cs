@@ -48,6 +48,10 @@ public partial class SettingsViewModel : ObservableObject
     // Scraping tab
     [ObservableProperty] private int _scrapeDelayMs = 2000;
     [ObservableProperty] private string _claudeExtractionPrompt = string.Empty;
+    [ObservableProperty] private bool _selectorParserEnabled = true;
+
+    // AI routing tab — one row per known task. Bound to a DataGrid.
+    public ObservableCollection<AiRoutingRow> AiRoutingRows { get; } = new();
 
     // Data tab
     public string DatabasePath { get; }
@@ -110,6 +114,8 @@ public partial class SettingsViewModel : ObservableObject
         GroqApiKey              = _config.GetOrDefault("groq_api_key", "");
         GroqModel               = _config.GetOrDefault("groq_model", "llama-3.3-70b-versatile");
         ClaudeExtractionPrompt  = _config.GetOrDefault("claude_extraction_prompt", "");
+        SelectorParserEnabled   = string.Equals(_config.GetOrDefault("selector_parser_enabled", "true"),
+                                                  "true", StringComparison.OrdinalIgnoreCase);
 
         Aggregators.Clear();
         foreach (var a in _aggregators.GetAll())
@@ -126,6 +132,18 @@ public partial class SettingsViewModel : ObservableObject
         DiscoverySeeds.Clear();
         foreach (var s in _seeds.GetAll())
             DiscoverySeeds.Add(new DiscoverySeedItemViewModel(s.Id, s.Name, s.Url, s.Description, s.IsEnabled, s.MaxPages));
+
+        // AI routing rows — one per known task. Load whatever's in config; rows with no
+        // override default to "use global default".
+        AiRoutingRows.Clear();
+        var tasks = Services.Ai.RoutingAiClient.KnownTasks;
+        var labels = Services.Ai.RoutingAiClient.KnownTaskLabels;
+        for (var i = 0; i < tasks.Count; i++)
+        {
+            var row = new AiRoutingRow(tasks[i], i < labels.Count ? labels[i] : tasks[i]);
+            row.ApplyChainString(_config.GetOrDefault($"ai_provider.{tasks[i]}", ""));
+            AiRoutingRows.Add(row);
+        }
     }
 
     [RelayCommand]
@@ -156,6 +174,13 @@ public partial class SettingsViewModel : ObservableObject
         _config.Set("groq_api_key",              GroqApiKey ?? "");
         _config.Set("groq_model",                GroqModel ?? "llama-3.3-70b-versatile");
         _config.Set("claude_extraction_prompt",  ClaudeExtractionPrompt ?? "");
+        _config.Set("selector_parser_enabled",   SelectorParserEnabled ? "true" : "false");
+
+        // AI routing — for each row, persist the override chain (or empty string when the
+        // user picked "Default"). RoutingAiClient treats blank the same as missing, so an
+        // empty value falls through to the global ai_provider chain.
+        foreach (var row in AiRoutingRows)
+            _config.Set($"ai_provider.{row.TaskKey}", row.ToChainString());
 
         // Aggregators (Boards): delete-then-upsert in the same pattern as directory seeds.
         foreach (var id in _deletedAggregatorIds) _aggregators.Delete(id);

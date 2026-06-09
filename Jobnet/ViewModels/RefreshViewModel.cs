@@ -59,6 +59,28 @@ public partial class RefreshViewModel : ObservableObject
     [ObservableProperty]
     private string _lastReclassifyRunText = "";
 
+    /// <summary>Compact one-line summary of which AI provider chain each task is using right now.
+    /// Shown beneath the Status text in the refresh window so the user can see at a glance whether
+    /// extraction / derivation are about to hit Gemini, the local Llama, etc.</summary>
+    [ObservableProperty]
+    private string _activeAiRouting = "";
+
+    /// <summary>Per-session counter of AI calls grouped by provider. Updated live as RecordCall
+    /// events fire on the IApiUsageTracker. Resets at the start of each run via BeginSession.</summary>
+    [ObservableProperty]
+    private string _aiCallCounter = "AI calls — none yet.";
+
+    /// <summary>Per-provider call counts for the current session. Mutated from the
+    /// IApiUsageTracker.CallRecorded handler; reset in BeginSession. Locked for safety because
+    /// the handler fires on whatever thread RecordCall was called from (often a worker).</summary>
+    private readonly System.Collections.Generic.Dictionary<string, int> _sessionAiCalls =
+        new(System.StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Set of provider IDs we count as "AI" (vs. the misc http_fetch / playwright_fetch /
+    /// ats_* providers also recorded by the tracker). Kept in sync with the AI clients.</summary>
+    private static readonly System.Collections.Generic.HashSet<string> AiProviders =
+        new(System.StringComparer.OrdinalIgnoreCase) { "gemini", "claude", "groq", "llama" };
+
     [ObservableProperty]
     private string _lastPruneRunText = "";
 
@@ -137,7 +159,8 @@ public partial class RefreshViewModel : ObservableObject
                              IConfigRepository config,
                              ICompanyRepository companies,
                              Jobnet.Services.Profiling.ICompanyProfiler profiler,
-                             Jobnet.Services.ApiUsage.IApiQuotaController quota)
+                             Jobnet.Services.ApiUsage.IApiQuotaController quota,
+                             Jobnet.Services.ApiUsage.IApiUsageTracker usageTracker)
     {
         _discovery = discovery;
         _harvester = harvester;
@@ -153,6 +176,28 @@ public partial class RefreshViewModel : ObservableObject
         _companiesRepo = companies;
         _profiler = profiler;
         _quota = quota;
+
+        // Subscribe to live API-call events so we can render a per-provider counter on the
+        // refresh screen. The tracker fires on the recording thread (worker); marshal to the
+        // UI dispatcher before mutating the observable property.
+        usageTracker.CallRecorded += (_, e) =>
+        {
+            if (!AiProviders.Contains(e.Provider)) return;
+            void Apply()
+            {
+                lock (_sessionAiCalls)
+                {
+                    _sessionAiCalls.TryGetValue(e.Provider, out var n);
+                    _sessionAiCalls[e.Provider] = n + 1;
+                    RebuildAiCallCounter();
+                }
+            }
+            var dispatcher = System.Windows.Application.Current?.Dispatcher;
+            if (dispatcher is null || dispatcher.CheckAccess()) Apply();
+            else dispatcher.BeginInvoke(Apply);
+        };
+
+        RefreshAiRouting();
 
         // Restore previously-selected skip-days; default to "Crawl all pages" (0d).
         var saved = int.TryParse(_configRepo.GetOrDefault("discovery_skip_days_threshold", "0"), out var sd) ? sd : 0;
@@ -263,7 +308,31 @@ public partial class RefreshViewModel : ObservableObject
     private System.Threading.CancellationToken BeginSession()
     {
         if (!_runningMaintenance) _quota.ResetSession();
+        // Re-read the routing chain so a Settings change between runs shows up in the status bar.
+        RefreshAiRouting();
+        // Zero the per-session AI counter at the start of each new run (maintenance batches keep
+        // their counter rolling across the contained steps — _runningMaintenance gates that).
+        if (!_runningMaintenance)
+        {
+            lock (_sessionAiCalls) { _sessionAiCalls.Clear(); RebuildAiCallCounter(); }
+        }
         return _quota.SessionCancellationToken;
+    }
+
+    /// <summary>Recompute the AI-call counter display string from <see cref="_sessionAiCalls"/>.
+    /// Caller must hold the lock.</summary>
+    private void RebuildAiCallCounter()
+    {
+        if (_sessionAiCalls.Count == 0)
+        {
+            AiCallCounter = "AI calls — none yet.";
+            return;
+        }
+        var total = 0;
+        foreach (var v in _sessionAiCalls.Values) total += v;
+        var parts = _sessionAiCalls.OrderByDescending(kv => kv.Value)
+                                    .Select(kv => $"{kv.Key} {kv.Value}");
+        AiCallCounter = $"AI calls — total {total}  ·  {string.Join("  ·  ", parts)}";
     }
 
     /// <summary>Status text to show when a step finishes via OperationCanceledException. The
@@ -277,6 +346,29 @@ public partial class RefreshViewModel : ObservableObject
 
     /// <summary>True when at least one maintenance checkbox is selected.</summary>
     private bool CanRunMaintenance() => !IsBusy && (DoDiscoverJobs || DoRefreshExisting || DoRegenerateSummaries || DoReclassifyJobs || DoPruneOutOfArea);
+
+    /// <summary>Recompute the "Routing — extraction: X · selector_derive: Y" line from current
+    /// config. Called from the constructor and at the start of each run so a Settings change
+    /// shows up the next time the user kicks off work.</summary>
+    public void RefreshAiRouting()
+    {
+        var global = _configRepo.GetOrDefault("ai_provider", "gemini").Trim();
+        var extraction = ResolveTaskChain("extraction", global);
+        var derive = ResolveTaskChain("selector_derive", global);
+        ActiveAiRouting = $"Routing — extraction: {extraction}   ·   selector_derive: {derive}";
+    }
+
+    /// <summary>Lookup helper that mirrors <c>RoutingAiClient.ResolveChain</c>: per-task override
+    /// wins; an empty / unset override falls through to the global chain. Returns a display string
+    /// like "gemini → llama" so the user sees the actual fallback order, not just the head.</summary>
+    private string ResolveTaskChain(string task, string globalChain)
+    {
+        var raw = _configRepo.GetOrDefault($"ai_provider.{task}", "").Trim();
+        if (string.IsNullOrEmpty(raw)) raw = globalChain;
+        if (raw is "both" or "auto") raw = "gemini,groq";
+        var parts = raw.Replace("+", ",").Split(',', System.StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length == 0 ? "(unset)" : string.Join(" → ", parts.Select(p => p.Trim()));
+    }
 
     partial void OnDoDiscoverJobsChanged(bool value)
     {

@@ -28,6 +28,6 @@ public sealed class Job
     public DateTime? DateViewed { get; set; }
     public required DateTime DateFirstSeen { get; init; }
     public required DateTime DateLastSeen { get; init; }
-    public DateTime? DateRemoved { get; init; }
-    public bool IsActive { get; init; } = true;
+    public DateTime? DateRemoved { get; set; }
+    public bool IsActive { get; set; } = true;
 }

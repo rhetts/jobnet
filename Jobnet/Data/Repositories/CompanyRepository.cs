@@ -12,7 +12,10 @@ public sealed class CompanyRepository : ICompanyRepository
         SELECT id, name, domain, website_url, careers_url, ats_type, ats_slug,
                ats_department_filter,
                parser_strategy, industry_tags, city, interest_level, notes,
-               date_discovered, date_last_scan, is_active, is_agency
+               date_discovered, date_last_scan, is_active, is_agency,
+               parser_strategy_disabled, parser_strategy_derived_at,
+               parser_strategy_last_result, parser_strategy_last_result_at,
+               parser_strategy_last_error
         FROM companies";
 
     private readonly IDbConnectionFactory _connections;
@@ -166,7 +169,62 @@ public sealed class CompanyRepository : ICompanyRepository
         DateDiscovered = DateTime.Parse(r.DateDiscovered).ToUniversalTime(),
         DateLastScan = string.IsNullOrEmpty(r.DateLastScan) ? null : DateTime.Parse(r.DateLastScan).ToUniversalTime(),
         IsAgency = r.IsAgency != 0,
+        ParserStrategy = r.ParserStrategy,
+        ParserStrategyDisabled = r.ParserStrategyDisabled != 0,
+        ParserStrategyDerivedAt = ParseUtc(r.ParserStrategyDerivedAt),
+        ParserStrategyLastResult = r.ParserStrategyLastResult,
+        ParserStrategyLastResultAt = ParseUtc(r.ParserStrategyLastResultAt),
+        ParserStrategyLastError = r.ParserStrategyLastError,
     };
+
+    private static DateTime? ParseUtc(string? value)
+        => string.IsNullOrEmpty(value) ? null : DateTime.Parse(value).ToUniversalTime();
+
+    public void SetParserStrategy(int id, string profileJson, DateTime derivedAt)
+    {
+        using var conn = _connections.Open();
+        conn.Execute(@"
+            UPDATE companies SET
+                parser_strategy = @profileJson,
+                parser_strategy_derived_at = @when,
+                parser_strategy_last_result = NULL,
+                parser_strategy_last_result_at = NULL,
+                parser_strategy_last_error = NULL
+            WHERE id = @id",
+            new { id, profileJson, when = derivedAt.ToUniversalTime().ToString("o") });
+    }
+
+    public void SetParserStrategyResult(int id, string result, DateTime when, string? errorMessage)
+    {
+        using var conn = _connections.Open();
+        conn.Execute(@"
+            UPDATE companies SET
+                parser_strategy_last_result = @result,
+                parser_strategy_last_result_at = @when,
+                parser_strategy_last_error = @errorMessage
+            WHERE id = @id",
+            new { id, result, when = when.ToUniversalTime().ToString("o"), errorMessage });
+    }
+
+    public void ClearParserStrategy(int id)
+    {
+        using var conn = _connections.Open();
+        conn.Execute(@"
+            UPDATE companies SET
+                parser_strategy = NULL,
+                parser_strategy_derived_at = NULL,
+                parser_strategy_last_result = NULL,
+                parser_strategy_last_result_at = NULL,
+                parser_strategy_last_error = NULL
+            WHERE id = @id", new { id });
+    }
+
+    public void SetParserStrategyDisabled(int id, bool disabled)
+    {
+        using var conn = _connections.Open();
+        conn.Execute("UPDATE companies SET parser_strategy_disabled = @flag WHERE id = @id",
+            new { id, flag = disabled ? 1 : 0 });
+    }
 
     // Same caveat as JobRepository.ToDbText — DB CHECK forces 'interesting' on disk for the
     // Approved enum value. Parse accepts both spellings.
@@ -203,5 +261,10 @@ public sealed class CompanyRepository : ICompanyRepository
         public string? DateLastScan { get; set; }
         public int IsActive { get; set; }
         public int IsAgency { get; set; }
+        public int ParserStrategyDisabled { get; set; }
+        public string? ParserStrategyDerivedAt { get; set; }
+        public string? ParserStrategyLastResult { get; set; }
+        public string? ParserStrategyLastResultAt { get; set; }
+        public string? ParserStrategyLastError { get; set; }
     }
 }

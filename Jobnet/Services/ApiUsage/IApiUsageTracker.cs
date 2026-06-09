@@ -33,6 +33,17 @@ public interface IApiUsageTracker
 
     /// <summary>Raised once per (provider, day) the first time we cross the soft cap.</summary>
     event EventHandler<ApiUsageWarningEventArgs>? SoftCapExceeded;
+
+    /// <summary>Raised on every <see cref="RecordCall"/>. Lets the refresh screen render a live
+    /// per-provider call counter. Fires on the recording thread (often a worker), so subscribers
+    /// must marshal to the UI thread themselves before touching WPF bindings.</summary>
+    event EventHandler<ApiCallRecordedEventArgs>? CallRecorded;
+}
+
+public sealed class ApiCallRecordedEventArgs : EventArgs
+{
+    public required string Provider { get; init; }
+    public required int CountToday { get; init; }
 }
 
 public sealed class ApiUsageSnapshot

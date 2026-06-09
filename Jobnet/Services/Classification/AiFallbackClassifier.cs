@@ -73,7 +73,7 @@ public sealed class AiFallbackClassifier : IJobClassifier
         var levelByName = levels.ToDictionary(l => l.Name, l => l.Id, StringComparer.OrdinalIgnoreCase);
         var areaByName  = areas.ToDictionary(a => a.Name, a => a.Id, StringComparer.OrdinalIgnoreCase);
 
-        var json = StripFences(responseText.Trim());
+        var json = JsonExtractor.ExtractJsonObject(responseText);
 
         try
         {
@@ -106,6 +106,12 @@ public sealed class AiFallbackClassifier : IJobClassifier
         }
         catch (Exception ex)
         {
+            AiLogger.LogParseFailure(
+                taskTag: "classifier",
+                exception: ex,
+                rawResponse: responseText,
+                extractedJson: json,
+                extraContext: $"provider={providerId} tokens={tokIn}/{tokOut}");
             return new ClassificationResult
             {
                 LevelId = null, LevelName = null, Areas = Array.Empty<(int, string)>(),
@@ -113,17 +119,6 @@ public sealed class AiFallbackClassifier : IJobClassifier
                 Reason = $"Could not parse {providerId} response: {ex.Message}; raw: {Truncate(responseText, 120)}"
             };
         }
-    }
-
-    private static string StripFences(string s)
-    {
-        if (s.StartsWith("```"))
-        {
-            var firstNl = s.IndexOf('\n');
-            if (firstNl > 0) s = s[(firstNl + 1)..];
-            if (s.EndsWith("```")) s = s[..^3];
-        }
-        return s.Trim();
     }
 
     private static string Truncate(string s, int max) => s.Length <= max ? s : s.Substring(0, max) + "…";

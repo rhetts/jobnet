@@ -31,6 +31,7 @@ public partial class MainWindowViewModel : ObservableObject
     private readonly Func<ResumeWindow>? _resumeWindowFactory;
     private readonly Func<ServiceLimitsWindow>? _limitsWindowFactory;
     private readonly Func<RunsWindow>? _runsWindowFactory;
+    private readonly Func<ParserReportWindow>? _parserReportWindowFactory;
     private readonly Func<CoverLetterWindow>? _coverLetterWindowFactory;
     private List<JobViewModel> _allJobs = new();
 
@@ -160,7 +161,8 @@ public partial class MainWindowViewModel : ObservableObject
                                 Func<ServiceLimitsWindow>? limitsWindowFactory = null,
                                 Func<RunsWindow>? runsWindowFactory = null,
                                 Func<CoverLetterWindow>? coverLetterWindowFactory = null,
-                                ITechnologyRepository? techsRepo = null)
+                                ITechnologyRepository? techsRepo = null,
+                                Func<ParserReportWindow>? parserReportWindowFactory = null)
     {
         _data = data;
         _jobsRepo = jobsRepo;
@@ -179,6 +181,7 @@ public partial class MainWindowViewModel : ObservableObject
         _runsWindowFactory = runsWindowFactory;
         _coverLetterWindowFactory = coverLetterWindowFactory;
         _techsRepo = techsRepo;
+        _parserReportWindowFactory = parserReportWindowFactory;
 
         CompaniesView = CollectionViewSource.GetDefaultView(Companies);
         CompaniesView.Filter = FilterCompany;
@@ -393,7 +396,8 @@ public partial class MainWindowViewModel : ObservableObject
                 var company = companyById[j.CompanyId];
                 return new JobViewModel(j, company.Name, company.City, _data.ScoreJob(j),
                                          levelName, areaNames, OnAppliedToggled, OnInterestChanged,
-                                         techNames, techIdsForJob, isAgency: company.IsAgency);
+                                         techNames, techIdsForJob, isAgency: company.IsAgency,
+                                         onMarkExpired: OnMarkExpired);
             })
             .ToList();
 
@@ -732,6 +736,15 @@ public partial class MainWindowViewModel : ObservableObject
     }
 
     [RelayCommand]
+    private void OpenParserReport()
+    {
+        if (_parserReportWindowFactory is null) return;
+        var window = _parserReportWindowFactory();
+        window.Owner = Application.Current.MainWindow;
+        window.ShowDialog();
+    }
+
+    [RelayCommand]
     private void OpenRuns()
     {
         if (_runsWindowFactory is null) return;
@@ -977,6 +990,27 @@ public partial class MainWindowViewModel : ObservableObject
         catch (Exception ex) { StatusBarText = $"Apply toggle failed: {ex.Message}"; }
     }
 
+    /// <summary>Wired into every JobViewModel; "Expired" on an approved card unapproves the job
+    /// AND marks it removed (is_active=0, date_removed=now). The ApprovedJobsView filter is
+    /// IsApproved &amp;&amp; IsActive, so flipping either alone would still leave the row visible
+    /// after refresh — we flip both.</summary>
+    private void OnMarkExpired(JobViewModel jvm)
+    {
+        if (_jobsRepo is null) return;
+        try
+        {
+            var now = DateTime.UtcNow;
+            _jobsRepo.MarkRemoved(jvm.Job.Id, now);
+            _jobsRepo.SetInterestLevel(jvm.Job.Id, Models.InterestLevel.Neutral);
+            jvm.Job.IsActive = false;
+            jvm.Job.DateRemoved = now;
+            jvm.Job.InterestLevel = Models.InterestLevel.Neutral;
+            StatusBarText = $"Marked '{jvm.Job.Title}' expired.";
+            RefreshJobsView();
+        }
+        catch (Exception ex) { StatusBarText = $"Expire failed: {ex.Message}"; }
+    }
+
     /// <summary>Wired into every JobViewModel; persists the vote (Interesting/NotInteresting/Neutral)
     /// to the DB and re-runs the sort so upvotes float to the top and downvotes sink to the bottom.</summary>
     private void OnInterestChanged(JobViewModel jvm, Models.InterestLevel level)
@@ -1010,7 +1044,8 @@ public partial class MainWindowViewModel : ObservableObject
                                               levelName: job.LevelName == "Unclassified" ? null : job.LevelName,
                                               areaNames: job.AreasDisplay == "—" ? null : job.AreasDisplay.Split(", ", StringSplitOptions.RemoveEmptyEntries),
                                               onAppliedToggled: OnAppliedToggled,
-                                              onInterestChanged: OnInterestChanged);
+                                              onInterestChanged: OnInterestChanged,
+                                              onMarkExpired: OnMarkExpired);
             Jobs.Insert(idx, refreshed);
         }
         // Keep _allJobs in sync too
@@ -1019,7 +1054,8 @@ public partial class MainWindowViewModel : ObservableObject
                                               levelName: job.LevelName == "Unclassified" ? null : job.LevelName,
                                               areaNames: job.AreasDisplay == "—" ? null : job.AreasDisplay.Split(", ", StringSplitOptions.RemoveEmptyEntries),
                                               onAppliedToggled: OnAppliedToggled,
-                                              onInterestChanged: OnInterestChanged);
+                                              onInterestChanged: OnInterestChanged,
+                                              onMarkExpired: OnMarkExpired);
         StatusBarText = $"Marked '{job.Job.Title}' as {level.ToString().ToLowerInvariant()}";
     }
 }

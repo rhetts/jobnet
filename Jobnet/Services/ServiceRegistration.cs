@@ -122,6 +122,8 @@ internal static class ServiceRegistration
             client.Timeout = TimeSpan.FromSeconds(15);
             client.DefaultRequestHeaders.UserAgent.ParseAdd("Jobnet/0.5");
         });
+        services.AddSingleton<Parsing.SelectorParser>();
+        services.AddSingleton<Parsing.AiSelectorDeriver>();
         services.AddSingleton<AtsAdapters.AiExtractedJobSource>();
         services.AddSingleton<AtsAdapters.IAtsJobSource>(sp => sp.GetRequiredService<AtsAdapters.GreenhouseJobSource>());
         services.AddSingleton<AtsAdapters.IAtsJobSource>(sp => sp.GetRequiredService<AtsAdapters.LeverJobSource>());
