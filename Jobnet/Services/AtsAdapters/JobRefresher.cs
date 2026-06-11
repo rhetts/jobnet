@@ -121,6 +121,17 @@ public sealed class JobRefresher : IJobRefresher
             : all.ToList();
         skippedRecent = all.Count - eligible.Count;
 
+        // Order productive companies first. A long refresh may be cancelled before completing —
+        // the user is better served by hitting companies that historically have many active jobs
+        // (so the refresh re-confirms / surfaces additions there) before grinding through the
+        // tail of marketing pages and news sites that yield nothing. Companies with no active
+        // jobs yet still get visited last; alphabetical falls out of the StableSort.
+        var activeCounts = _jobs.GetActiveCountsByCompany();
+        eligible = eligible
+            .OrderByDescending(c => activeCounts.TryGetValue(c.Id, out var n) ? n : 0)
+            .ThenBy(c => c.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
         var total = eligible.Count;
         var idx = 0;
         foreach (var c in eligible)

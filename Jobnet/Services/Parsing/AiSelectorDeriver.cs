@@ -45,6 +45,17 @@ public sealed class AiSelectorDeriver
         int.TryParse(_config.GetOrDefault("selector_deriver_max_html_chars", DefaultMaxHtmlChars.ToString()),
                       out var n) && n > 0 ? n : DefaultMaxHtmlChars;
 
+    /// <summary>Forgiving deserializer options. The AI occasionally trails the object with a
+    /// stray comma, includes a JS-style comment, or differs in casing — none of those should
+    /// kill an otherwise-usable profile. Real syntactic errors (e.g. unescaped inner quotes)
+    /// still fail and get logged via <see cref="Ai.AiLogger"/>.</summary>
+    private static readonly JsonSerializerOptions LenientJsonOptions = new()
+    {
+        AllowTrailingCommas = true,
+        ReadCommentHandling = JsonCommentHandling.Skip,
+        PropertyNameCaseInsensitive = true,
+    };
+
     public async Task<SelectorDeriveResult> DeriveAsync(string html, string baseUrl, CancellationToken ct = default)
     {
         if (!_ai.IsConfigured)
@@ -61,7 +72,9 @@ public sealed class AiSelectorDeriver
             $"Trimmed page HTML (noise stripped, capped at {maxChars} chars):\n" +
             "```html\n" + trimmedHtml + "\n```";
 
-        var resp = await _ai.CompleteAsync(user, system, maxTokens: 1024, ct, task: "selector_derive");
+        // 2048 absorbs Tailwind-style class chains (>100 chars) and the model's occasional whitespace
+        // padding without truncating mid-selector — we saw truncation at 1024 on LoginRadius and Rise People.
+        var resp = await _ai.CompleteAsync(user, system, maxTokens: 2048, ct, task: "selector_derive");
 
         var profileJson = JsonExtractor.ExtractJsonObject(resp.Text);
         if (string.IsNullOrWhiteSpace(profileJson))
@@ -69,7 +82,7 @@ public sealed class AiSelectorDeriver
 
         // Validate the JSON and required fields before persisting.
         SelectorProfile? profile;
-        try { profile = JsonSerializer.Deserialize<SelectorProfile>(profileJson); }
+        try { profile = JsonSerializer.Deserialize<SelectorProfile>(profileJson, LenientJsonOptions); }
         catch (JsonException ex)
         {
             // Persist the raw + extracted text so we can see exactly what the model emitted —
@@ -93,7 +106,9 @@ public sealed class AiSelectorDeriver
         catch (Exception ex) { return SelectorDeriveResult.Fail($"Selector replay threw: {ex.Message}"); }
 
         if (sanityJobs.Count == 0)
-            return SelectorDeriveResult.Fail("Derived selectors produced 0 jobs against the source page.");
+            return SelectorDeriveResult.Fail(
+                "Derived selectors produced 0 jobs against the source page.",
+                proposedProfileJson: profileJson);
 
         // Normalize the persisted JSON so we don't store the AI's whitespace/key ordering.
         var normalized = JsonSerializer.Serialize(profile);
@@ -115,7 +130,15 @@ public sealed class AiSelectorDeriver
         "  \"department\": null\n" +
         "}\n" +
         "\n" +
-        "Rules:\n" +
+        "JSON syntax rules — read carefully, this is the #1 cause of broken responses:\n" +
+        "- Every selector value is a JSON string, so it must be enclosed in DOUBLE quotes.\n" +
+        "- Inside that string, any CSS attribute selector that needs quotes around a value MUST use\n" +
+        "  SINGLE quotes — e.g. 'a[data-test=\\'apply-link\\']@href' or '[role=\\'button\\']'.\n" +
+        "  Double quotes inside the string would terminate it early and break the JSON.\n" +
+        "- No trailing comma after the last field. No comments. No code fences.\n" +
+        "- Backslash-escape any literal '\\' or '\"' that genuinely needs to appear in a selector.\n" +
+        "\n" +
+        "Selector rules:\n" +
         "- Prefer stable, semantic class names over generated/utility ones (e.g. '.job-listing' over '.css-1abc23').\n" +
         "- The 'card' selector must match exactly one element per posting. Use a class that wraps the whole row.\n" +
         "- For URLs, ALWAYS use the '@attr' suffix to read an attribute: e.g. 'a.apply-link@href' or 'a@href'.\n" +
@@ -157,9 +180,14 @@ public sealed class SelectorDeriveResult
     public IReadOnlyList<RawJobPosting> Jobs { get; init; } = Array.Empty<RawJobPosting>();
     public string? Error { get; init; }
 
+    /// <summary>On failure paths where the AI did produce parseable JSON but it failed downstream
+    /// validation (e.g. selectors matched 0 jobs), this carries the rejected profile so callers
+    /// (CLI / debug tooling) can inspect what the model emitted.</summary>
+    public string? ProposedProfileJson { get; init; }
+
     public static SelectorDeriveResult Ok(string profileJson, IReadOnlyList<RawJobPosting> jobs)
         => new() { Success = true, ProfileJson = profileJson, Jobs = jobs };
 
-    public static SelectorDeriveResult Fail(string error)
-        => new() { Success = false, Error = error };
+    public static SelectorDeriveResult Fail(string error, string? proposedProfileJson = null)
+        => new() { Success = false, Error = error, ProposedProfileJson = proposedProfileJson };
 }

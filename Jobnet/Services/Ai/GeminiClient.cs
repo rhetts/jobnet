@@ -82,10 +82,13 @@ public sealed class GeminiClient : IAiClient
             var isDailyLimit = waitSec > 120
                             || (snapshot.RpdCap > 0 && snapshot.Rpd >= snapshot.RpdCap)
                             || body.Contains("per_day", StringComparison.OrdinalIgnoreCase)
-                            || body.Contains("requests_per_day", StringComparison.OrdinalIgnoreCase);
+                            || body.Contains("requests_per_day", StringComparison.OrdinalIgnoreCase)
+                            || body.Contains("PerDay", StringComparison.OrdinalIgnoreCase);
             var label = isDailyLimit ? "daily" : "per-minute";
+            // Truncate at 800 chars so the diagnostic includes Google's "violations" array
+            // (the part that tells us *which* quota dimension was hit) without flooding logs.
             throw new AiUnavailableException(
-                $"Gemini API HTTP 429 ({label}) — retry-after {waitSec}s. {Truncate(body, 200)}");
+                $"Gemini API HTTP 429 ({label}) — retry-after {waitSec}s. {Truncate(body, 800)}");
         }
 
         if (!response.IsSuccessStatusCode)

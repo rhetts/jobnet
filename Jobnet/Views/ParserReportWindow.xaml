@@ -1,0 +1,126 @@
+<Window x:Class="Jobnet.Views.ParserReportWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="clr-namespace:Jobnet.ViewModels"
+        Title="Jobnet — Parser Report"
+        Width="1100" Height="680"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        Background="#FAFAFA">
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVis"/>
+    </Window.Resources>
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <TextBlock Grid.Row="0" Text="Parser report" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,10"/>
+
+        <Grid Grid.Row="1" Margin="0,0,0,10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="System:" VerticalAlignment="Center" Margin="0,0,6,0"/>
+            <ComboBox  Grid.Column="1" Width="140" Padding="6,2"
+                       ItemsSource="{Binding SystemFilters}"
+                       SelectedItem="{Binding SelectedSystem}"/>
+            <TextBlock Grid.Column="2" Text="Status:" VerticalAlignment="Center" Margin="14,0,6,0"/>
+            <ComboBox  Grid.Column="3" Width="140" Padding="6,2"
+                       ItemsSource="{Binding StatusFilters}"
+                       SelectedItem="{Binding SelectedStatus}"/>
+            <TextBlock Grid.Column="4" Text="{Binding Summary}" VerticalAlignment="Center" Margin="14,0,0,0" Foreground="#666"/>
+            <Button    Grid.Column="5" Content="Refresh" Padding="14,4" Command="{Binding RefreshCommand}"/>
+        </Grid>
+
+        <DataGrid Grid.Row="2"
+                  ItemsSource="{Binding Rows}"
+                  AutoGenerateColumns="False"
+                  HeadersVisibility="Column"
+                  CanUserAddRows="False"
+                  CanUserDeleteRows="False"
+                  IsReadOnly="True"
+                  GridLinesVisibility="Horizontal"
+                  HorizontalGridLinesBrush="#EEE"
+                  BorderBrush="#DDD" BorderThickness="1"
+                  Background="White"
+                  RowBackground="White"
+                  AlternatingRowBackground="#FAFAFA"
+                  RowHeight="36"
+                  FontSize="12">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="Company" Binding="{Binding Name}" Width="200"/>
+                <DataGridTextColumn Header="Domain"  Binding="{Binding Domain}" Width="180" FontFamily="Consolas"/>
+                <DataGridTextColumn Header="System"  Binding="{Binding ParserSystem}" Width="100" FontWeight="SemiBold"/>
+                <DataGridTemplateColumn Header="Status" Width="140">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate DataType="{x:Type vm:ParserReportRow}">
+                            <Border Background="{Binding StatusBrush}"
+                                    CornerRadius="3"
+                                    Padding="6,2"
+                                    HorizontalAlignment="Left"
+                                    VerticalAlignment="Center">
+                                <TextBlock Text="{Binding StatusBadge}"
+                                           Foreground="White"
+                                           FontSize="11"
+                                           FontWeight="SemiBold"/>
+                            </Border>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTextColumn Header="Derived"     Binding="{Binding DerivedDisplay}" Width="140"/>
+                <DataGridTextColumn Header="Last result" Binding="{Binding LastResultDisplay}" Width="180"/>
+                <DataGridTemplateColumn Header="Error" Width="*">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate DataType="{x:Type vm:ParserReportRow}">
+                            <Grid>
+                                <TextBlock Text="{Binding LastError}"
+                                           Foreground="#888"
+                                           TextTrimming="CharacterEllipsis"
+                                           VerticalAlignment="Center"
+                                           Visibility="{Binding NotIsBusy, Converter={StaticResource BoolToVis}}"/>
+                                <TextBlock Text="{Binding BusyText}"
+                                           Foreground="#1976D2"
+                                           FontWeight="SemiBold"
+                                           VerticalAlignment="Center"
+                                           Visibility="{Binding IsBusy, Converter={StaticResource BoolToVis}}"/>
+                            </Grid>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTemplateColumn Header="Actions" Width="170">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate DataType="{x:Type vm:ParserReportRow}">
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <Button Content="Re-derive"
+                                        Padding="6,2" Margin="0,0,4,0"
+                                        IsEnabled="{Binding NotIsBusy}"
+                                        Command="{Binding DataContext.ReDeriveCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                        CommandParameter="{Binding}"
+                                        ToolTip="Clear the cached profile and immediately re-scan this company (Playwright fetch + AI extract + selector derivation). Takes 30–120s."/>
+                                <Button Content="{Binding DisabledToggleLabel}"
+                                        Padding="6,2"
+                                        IsEnabled="{Binding NotIsBusy}"
+                                        Command="{Binding DataContext.ToggleDisabledCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                        CommandParameter="{Binding}"
+                                        ToolTip="When disabled, this company always uses AI extraction (slower) regardless of cached selectors."/>
+                            </StackPanel>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+            </DataGrid.Columns>
+        </DataGrid>
+
+        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
+            <Button Content="Close" Padding="14,4" Click="Close_Click"/>
+        </StackPanel>
+    </Grid>
+</Window>
