@@ -2,7 +2,7 @@ using System;
 using System.Text.RegularExpressions;
 using Jobnet.Models;
 
-namespace Jobnet.Services.AtsAdapters;
+namespace Jobnet.Services.JobSources;
 
 /// <summary>Classifies a URL by purpose based on path and query patterns commonly seen on careers pages.</summary>
 internal static class UrlClassifier

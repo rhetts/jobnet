@@ -370,10 +370,12 @@
                         <TextBlock Style="{StaticResource FieldLabel}" Text="Gemini API key"/>
                         <TextBox Text="{Binding GeminiApiKey, UpdateSourceTrigger=PropertyChanged}"/>
                         <TextBlock Style="{StaticResource HintText}"
-                                   Text="Free key at https://aistudio.google.com/apikey — typical free tier: 10 RPM, ~250 RPD for gemini-2.5-flash."/>
+                                   Text="Free key at https://aistudio.google.com/apikey. Free-tier RPD is account-specific — observed as low as 20/day on flash-lite. Flash is a separate quota bucket."/>
 
                         <TextBlock Style="{StaticResource FieldLabel}" Text="Gemini model"/>
-                        <TextBox Text="{Binding GeminiModel, UpdateSourceTrigger=PropertyChanged}"/>
+                        <ComboBox IsEditable="True"
+                                  ItemsSource="{Binding GeminiModels}"
+                                  Text="{Binding GeminiModel, UpdateSourceTrigger=PropertyChanged}"/>
 
                         <TextBlock Style="{StaticResource FieldLabel}" Text="Groq API key"/>
                         <TextBox Text="{Binding GroqApiKey, UpdateSourceTrigger=PropertyChanged}"/>

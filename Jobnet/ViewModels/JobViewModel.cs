@@ -172,7 +172,7 @@ public partial class JobViewModel : ObservableObject
         {
             if (!string.IsNullOrWhiteSpace(Job.Summary)) return Job.Summary!;
             if (!string.IsNullOrWhiteSpace(Job.DescriptionSnippet))
-                return Jobnet.Services.AtsAdapters.SnippetCleaner.Clean(Job.DescriptionSnippet, maxChars: 600)
+                return Jobnet.Services.JobSources.SnippetCleaner.Clean(Job.DescriptionSnippet, maxChars: 600)
                        ?? "(no summary available — try 'Generate summaries' from Refresh)";
             return "(no summary available — try 'Generate summaries' from Refresh)";
         }

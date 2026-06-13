@@ -8,9 +8,9 @@ using System.Threading.Tasks;
 using Jobnet.Services.ApiUsage;
 using Jobnet.Services.RateLimit;
 
-namespace Jobnet.Services.AtsAdapters;
+namespace Jobnet.Services.JobSources;
 
-public sealed class AshbyJobSource : IAtsJobSource
+public sealed class AshbyJobSource : IJobSource
 {
     public const string Provider = "ats_ashby";
     public string AtsType => "ashby";

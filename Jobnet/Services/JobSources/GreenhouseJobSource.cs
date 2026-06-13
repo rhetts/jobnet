@@ -10,9 +10,9 @@ using System.Threading.Tasks;
 using Jobnet.Services.ApiUsage;
 using Jobnet.Services.RateLimit;
 
-namespace Jobnet.Services.AtsAdapters;
+namespace Jobnet.Services.JobSources;
 
-public sealed class GreenhouseJobSource : IAtsJobSource
+public sealed class GreenhouseJobSource : IJobSource
 {
     public const string Provider = "ats_greenhouse";
     public string AtsType => "greenhouse";

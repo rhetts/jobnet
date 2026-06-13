@@ -6,7 +6,7 @@ using Jobnet.Data.Repositories;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
-using Jobnet.Services.AtsAdapters;
+using Jobnet.Services.JobSources;
 using Jobnet.Services.Classification;
 using Jobnet.Services.Discovery;
 using Jobnet.Services.Discovery.Strategies;
@@ -603,6 +603,15 @@ public partial class RefreshViewModel : ObservableObject
             ? $"Pulling jobs from companies not scanned in the last {skipDays} day(s)..."
             : "Pulling jobs from known companies (ATS endpoints + careers pages)...";
         var runId = _runs.StartRun("refresh_jobs", scope);
+        // Track running totals so that if the user cancels (or an exception escapes) we can
+        // still record what was accomplished before unwinding. Declared OUTSIDE the try so the
+        // catch blocks can read them — without this, every cancelled refresh writes 0/0/0/0
+        // to run_log and the Run History page looks like nothing happened even when dozens of
+        // companies were already processed.
+        var prevAdded = 0;
+        var prevUpdated = 0;
+        var prevErrors = 0;
+        var examinedSoFar = 0;
         try
         {
             // Progress<T> captures the current SynchronizationContext (the UI dispatcher), so the
@@ -611,10 +620,7 @@ public partial class RefreshViewModel : ObservableObject
             // (per-company breakdown of what added/updated/errored). Deltas come from the SoFar
             // cumulative counters: prev values are captured in this closure.
             long currentStepId = 0;
-            var prevAdded = 0;
-            var prevUpdated = 0;
-            var prevErrors = 0;
-            var progress = new Progress<Jobnet.Services.AtsAdapters.JobRefreshProgress>(p =>
+            var progress = new Progress<Jobnet.Services.JobSources.JobRefreshProgress>(p =>
             {
                 var verb = p.Stage == "starting" ? "scanning" : "done";
                 StatusText = $"[{p.Current}/{p.Total}] {verb} {p.CompanyName} ({p.CompanyDomain}) — "
@@ -633,15 +639,20 @@ public partial class RefreshViewModel : ObservableObject
                     prevAdded   = p.JobsAddedSoFar;
                     prevUpdated = p.JobsUpdatedSoFar;
                     prevErrors  = p.ErrorsSoFar;
+                    examinedSoFar++;
 
                     var status = errorsDelta > 0 ? "partial" : "completed";
+                    // Pass the refresher's per-company classification through so `runs show <id>`
+                    // surfaces *which kind* of failure each company had — not just status=partial.
                     _runs.FinishStep(currentStepId,
                         status: status,
-                        added: addedDelta, updated: updatedDelta, failed: errorsDelta);
+                        added: addedDelta, updated: updatedDelta, failed: errorsDelta,
+                        errorMessage: p.ErrorMessage,
+                        outcomeKind: p.OutcomeKind);
                     currentStepId = 0;
                 }
             });
-            var r = await Task.Run(() => _refresher.RefreshAllAsync(minDaysSinceLastScan: skipDays, progress: progress, ct: ct), ct).ConfigureAwait(true);
+            var r = await Task.Run(() => _refresher.RefreshAllAsync(minDaysSinceLastScan: skipDays, progress: progress, ct: ct, runId: runId), ct).ConfigureAwait(true);
             StatusText = $"Refresh: {r.CompaniesProcessed} companies, " +
                          (r.CompaniesSkippedRecent > 0 ? $"{r.CompaniesSkippedRecent} skipped (recent), " : "") +
                          $"{r.JobsAdded} added, {r.JobsUpdated} updated, {r.JobsRemoved} marked removed."
@@ -656,12 +667,17 @@ public partial class RefreshViewModel : ObservableObject
         catch (OperationCanceledException)
         {
             StatusText = CancelledStatusText();
-            _runs.FinishRun(runId, "cancelled");
+            // Preserve partial progress on cancel — the cumulative counters tracked through the
+            // progress callback are the best snapshot we have of work completed up to the cancel.
+            _runs.FinishRun(runId, "cancelled",
+                examined: examinedSoFar, added: prevAdded, updated: prevUpdated, errorCount: prevErrors);
         }
         catch (Exception ex)
         {
             StatusText = $"Failed: {ex.GetType().Name}: {ex.Message}";
-            _runs.FinishRun(runId, "failed", notes: $"{ex.GetType().Name}: {ex.Message}");
+            _runs.FinishRun(runId, "failed",
+                examined: examinedSoFar, added: prevAdded, updated: prevUpdated, errorCount: prevErrors,
+                notes: $"{ex.GetType().Name}: {ex.Message}");
         }
         finally { if (!_runningMaintenance) IsBusy = false; }
     }

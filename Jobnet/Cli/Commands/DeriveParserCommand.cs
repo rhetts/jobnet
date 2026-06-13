@@ -2,7 +2,7 @@ using System;
 using System.Linq;
 using System.Threading;
 using Jobnet.Data.Repositories;
-using Jobnet.Services.AtsAdapters;
+using Jobnet.Services.JobSources;
 using Jobnet.Services.Parsing;
 using Jobnet.Services.Playwright;
 using Microsoft.Extensions.DependencyInjection;
@@ -13,7 +13,7 @@ namespace Jobnet.Cli.Commands;
 /// Diagnostic CLI that exercises the selector-derivation pipeline end-to-end on one company,
 /// printing each stage so we can see exactly where it breaks. Mirrors what the Re-derive
 /// button does, but with full visibility into the Playwright fetch, the AI response, the
-/// extracted JSON, the parsed profile, and the SelectorParser sanity check.
+/// extracted JSON, the parsed profile, and the SelectorProfileReplayer sanity check.
 ///
 /// Usage:
 ///   Jobnet.exe derive-parser --company shopify.com
@@ -51,7 +51,7 @@ public sealed class DeriveParserCommand : ICliCommand
 
         var companies = services.GetRequiredService<ICompanyRepository>();
         var fetcher   = services.GetRequiredService<IPlaywrightFetcher>();
-        var parser    = services.GetRequiredService<SelectorParser>();
+        var parser    = services.GetRequiredService<SelectorProfileReplayer>();
         var deriver   = services.GetRequiredService<AiSelectorDeriver>();
 
         var company = companies.GetByDomain(domain);

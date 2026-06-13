@@ -34,9 +34,20 @@ public partial class SettingsViewModel : ObservableObject
     // AI tab — single dropdown toggles the global provider mode.
     public System.Collections.Generic.IReadOnlyList<string> AiModes { get; } = new[] { "Online", "Local" };
 
+    /// <summary>Common Gemini models shown in the model dropdown. The ComboBox is editable so a
+    /// user can still type a model name we haven't enumerated. Flash-Lite has the highest published
+    /// quota; full Flash is a separate quota bucket per Google, so it's useful as a parallel option
+    /// when Flash-Lite's daily limit is exhausted.</summary>
+    public System.Collections.Generic.IReadOnlyList<string> GeminiModels { get; } = new[]
+    {
+        "gemini-2.5-flash",
+        "gemini-2.5-flash-lite",
+        "gemini-2.5-pro",
+    };
+
     [ObservableProperty] private string _aiMode = "Online";
     [ObservableProperty] private string _geminiApiKey = string.Empty;
-    [ObservableProperty] private string _geminiModel = "gemini-2.5-flash-lite";
+    [ObservableProperty] private string _geminiModel = "gemini-2.5-flash";
     [ObservableProperty] private string _claudeApiKey = string.Empty;
     [ObservableProperty] private string _claudeModel = "claude-haiku-4-5";
     [ObservableProperty] private string _groqApiKey = string.Empty;
@@ -108,7 +119,7 @@ public partial class SettingsViewModel : ObservableObject
         LlamaGpuLayers = _config.GetOrDefault("llama_gpu_layers", "0");
         LlamaContextSize = _config.GetOrDefault("llama_context_size", "4096");
         GeminiApiKey            = _config.GetOrDefault("gemini_api_key", "");
-        GeminiModel             = _config.GetOrDefault("gemini_model", "gemini-2.5-flash-lite");
+        GeminiModel             = _config.GetOrDefault("gemini_model", "gemini-2.5-flash");
         ClaudeApiKey            = _config.GetOrDefault("claude_api_key", "");
         ClaudeModel             = _config.GetOrDefault("claude_model", "claude-haiku-4-5");
         GroqApiKey              = _config.GetOrDefault("groq_api_key", "");
@@ -168,7 +179,7 @@ public partial class SettingsViewModel : ObservableObject
         if (int.TryParse(LlamaContextSize, out var cs) && cs > 0)
             _config.Set("llama_context_size",    cs.ToString(System.Globalization.CultureInfo.InvariantCulture));
         _config.Set("gemini_api_key",            GeminiApiKey ?? "");
-        _config.Set("gemini_model",              GeminiModel ?? "gemini-2.5-flash-lite");
+        _config.Set("gemini_model",              GeminiModel ?? "gemini-2.5-flash");
         _config.Set("claude_api_key",            ClaudeApiKey ?? "");
         _config.Set("claude_model",              ClaudeModel ?? "claude-haiku-4-5");
         _config.Set("groq_api_key",              GroqApiKey ?? "");

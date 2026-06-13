@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net.Http;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -13,12 +14,12 @@ using Jobnet.Services.Location;
 using Jobnet.Services.Profile;
 using Jobnet.Services.Technology;
 
-namespace Jobnet.Services.AtsAdapters;
+namespace Jobnet.Services.JobSources;
 
 public sealed class JobRefresher : IJobRefresher
 {
-    private readonly Dictionary<string, IAtsJobSource> _sources;
-    private readonly AiExtractedJobSource _aiSource;
+    private readonly Dictionary<string, IJobSource> _sources;
+    private readonly AiFallbackJobSource _aiSource;
     private readonly ICompanyRepository _companies;
     private readonly ICompanyUrlsRepository _urls;
     private readonly IJobRepository _jobs;
@@ -29,15 +30,17 @@ public sealed class JobRefresher : IJobRefresher
     private readonly IConfigRepository _config;
     private readonly ITechnologyMatcher _techMatcher;
     private readonly ITechnologyRepository _techs;
+    private readonly Jobnet.Services.Logging.IRunLogger _runs;
 
-    public JobRefresher(IEnumerable<IAtsJobSource> sources, AiExtractedJobSource aiSource,
+    public JobRefresher(IEnumerable<IJobSource> sources, AiFallbackJobSource aiSource,
                          ICompanyRepository companies, ICompanyUrlsRepository urls,
                          IJobRepository jobs, IAreaRepository areas,
                          IJobClassifier classifier, IDbConnectionFactory connections,
                          Jobnet.Services.AtsDetection.IAtsDetector atsDetector,
                          IConfigRepository config,
                          ITechnologyMatcher techMatcher,
-                         ITechnologyRepository techs)
+                         ITechnologyRepository techs,
+                         Jobnet.Services.Logging.IRunLogger runs)
     {
         _sources = sources.ToDictionary(s => s.AtsType, StringComparer.OrdinalIgnoreCase);
         _aiSource = aiSource;
@@ -51,7 +54,14 @@ public sealed class JobRefresher : IJobRefresher
         _config = config;
         _techMatcher = techMatcher;
         _techs = techs;
+        _runs = runs;
     }
+
+    /// <summary>Threshold of consecutive empty/failed refreshes before we auto-clear a company's
+    /// ats_slug. Two is enough to recover from a stale slug without thrashing — a single empty
+    /// day is normal, two in a row almost always means the slug is wrong (Alida moved off Lever,
+    /// 9 Mothers was a bogus detection).</summary>
+    private const int StaleSlugThreshold = 2;
 
     /// <summary>Greylist tokens compiled once at the start of a batch run and cached across all
     /// companies / jobs in that pass. Stored per-instance because JobRefresher is a singleton.</summary>
@@ -63,7 +73,7 @@ public sealed class JobRefresher : IJobRefresher
         _greylistTokens = GreylistMatcher.Parse(_config.GetOrDefault("profile_greylist_keywords", ""));
     }
 
-    public async Task<JobRefreshReport> RefreshAsync(Company company, CancellationToken ct = default)
+    public async Task<JobRefreshReport> RefreshAsync(Company company, CancellationToken ct = default, long? runId = null)
     {
         var scanId = StartScanLog(company.Domain);
         var errors = new List<string>();
@@ -73,7 +83,7 @@ public sealed class JobRefresher : IJobRefresher
 
         try
         {
-            (added, updated, removed) = await RefreshOneAsync(company, errors, ct);
+            (added, updated, removed, _) = await RefreshOneAsync(company, errors, ct, runId);
             processed = 1;
         }
         catch (NoAdapterException)
@@ -97,7 +107,7 @@ public sealed class JobRefresher : IJobRefresher
         };
     }
 
-    public async Task<JobRefreshReport> RefreshAllAsync(int minDaysSinceLastScan = 0, IProgress<JobRefreshProgress>? progress = null, CancellationToken ct = default)
+    public async Task<JobRefreshReport> RefreshAllAsync(int minDaysSinceLastScan = 0, IProgress<JobRefreshProgress>? progress = null, CancellationToken ct = default, long? runId = null)
     {
         var scanId = StartScanLog("global");
         var errors = new List<string>();
@@ -116,19 +126,29 @@ public sealed class JobRefresher : IJobRefresher
 
         var all = _companies.GetAll();
         // Pre-filter to the eligible list so the progress Total reflects what we'll actually visit.
+        // Inactive companies are dropped entirely — they're acquired / defunct / wrong-domain entries
+        // we keep around only so their historical jobs survive. They never count against the
+        // skipped-recent tally because the user has explicitly retired them.
+        var active = all.Where(c => c.IsActive).ToList();
         var eligible = cutoff.HasValue
-            ? all.Where(c => !c.DateLastScan.HasValue || c.DateLastScan.Value <= cutoff.Value).ToList()
-            : all.ToList();
-        skippedRecent = all.Count - eligible.Count;
+            ? active.Where(c => !c.DateLastScan.HasValue || c.DateLastScan.Value <= cutoff.Value).ToList()
+            : active.ToList();
+        skippedRecent = active.Count - eligible.Count;
 
-        // Order productive companies first. A long refresh may be cancelled before completing —
-        // the user is better served by hitting companies that historically have many active jobs
-        // (so the refresh re-confirms / surfaces additions there) before grinding through the
-        // tail of marketing pages and news sites that yield nothing. Companies with no active
-        // jobs yet still get visited last; alphabetical falls out of the StableSort.
+        // Order: native-ATS companies first, then by active-job count, then alphabetically.
+        //
+        // A long refresh can be cancelled before completing — and native adapters are 10–100x
+        // cheaper than the Playwright + AI fallback (no JS render, no AI tokens, one HTTP call).
+        // Front-loading them means: (a) the highest-confidence sources are covered first; (b) a
+        // cancelled run still produces a useful job list; (c) AI quota burns get pushed to the
+        // tail, where they're easier to defer or split across runs.
+        //
+        // Within each group, productive companies still come first so historical contributors
+        // re-confirm before low-yield marketing pages.
         var activeCounts = _jobs.GetActiveCountsByCompany();
         eligible = eligible
-            .OrderByDescending(c => activeCounts.TryGetValue(c.Id, out var n) ? n : 0)
+            .OrderByDescending(c => !string.IsNullOrEmpty(c.AtsType) && !string.IsNullOrEmpty(c.AtsSlug))
+            .ThenByDescending(c => activeCounts.TryGetValue(c.Id, out var n) ? n : 0)
             .ThenBy(c => c.Name, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
@@ -150,19 +170,32 @@ public sealed class JobRefresher : IJobRefresher
                 JobsAddedSoFar = added, JobsUpdatedSoFar = updated, ErrorsSoFar = errors.Count,
             });
 
+            string? outcomeKind = null;
+            string? errorMessage = null;
             try
             {
-                var (a, u, r) = await RefreshOneAsync(c, errors, ct);
+                var (a, u, r, ok) = await RefreshOneAsync(c, errors, ct, runId);
                 added += a; updated += u; removed += r;
+                outcomeKind = ok;
                 processed++;
             }
             catch (NoAdapterException)
             {
                 skipped++;
+                outcomeKind = Logging.OutcomeKind.NoAdapter;
+            }
+            catch (OperationCanceledException)
+            {
+                outcomeKind = Logging.OutcomeKind.CancelledUser;
+                throw;
             }
             catch (Exception ex)
             {
                 errors.Add($"[{c.Domain}] {ex.Message}");
+                errorMessage = $"{ex.GetType().Name}: {ex.Message}";
+                // Classify the exception so the step row gets a useful outcome_kind even though
+                // the refresher itself didn't reach the per-stage classification path.
+                outcomeKind = ClassifyException(ex);
                 failed++;
             }
 
@@ -172,6 +205,8 @@ public sealed class JobRefresher : IJobRefresher
                 CompanyName = c.Name, CompanyDomain = c.Domain,
                 Stage = "done",
                 JobsAddedSoFar = added, JobsUpdatedSoFar = updated, ErrorsSoFar = errors.Count,
+                OutcomeKind = outcomeKind,
+                ErrorMessage = errorMessage,
             });
         }
 
@@ -187,73 +222,156 @@ public sealed class JobRefresher : IJobRefresher
         };
     }
 
-    private async Task<(int Added, int Updated, int Removed)> RefreshOneAsync(Company company, List<string> errors, CancellationToken ct)
+    private async Task<(int Added, int Updated, int Removed, string? OutcomeKind)> RefreshOneAsync(Company company, List<string> errors, CancellationToken ct, long? runId)
     {
+        // Stamp the AsyncLocal scope so any api_call_log / refresh_attempt rows written deeper
+        // in the pipeline automatically pick up the current run + company.
+        using var _scope = Logging.RefreshContext.BeginScope(runId, company.Id);
+
         var allRaw = new List<RawJobPosting>();
-        string sourceType;
+        string sourceType;      // ats_type-style key used in the job hash
+        string sourceStage;     // refresh_attempt.stage value — finer-grained for telemetry
+        var stageHadFailure = false;
+        var lastStageResult = Logging.AttemptResult.Success;
+        var lastStageHttp = (int?)null;
 
         // ── Decision tree ────────────────────────────────────────────────────
         // 1) Native ATS adapter when we have ats_type + ats_slug
         if (!string.IsNullOrEmpty(company.AtsType) && !string.IsNullOrEmpty(company.AtsSlug)
             && _sources.TryGetValue(company.AtsType, out var native))
         {
-            allRaw.AddRange(await native.FetchAsync(company.AtsSlug, ct));
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            sourceStage = $"ats_{native.AtsType}";
+            try
+            {
+                var jobs = await native.FetchAsync(company.AtsSlug, ct);
+                sw.Stop();
+                allRaw.AddRange(jobs);
+                lastStageResult = jobs.Count == 0 ? Logging.AttemptResult.Empty : Logging.AttemptResult.Success;
+                _runs.LogAttempt(runId, company.Id, Logging.AttemptStage.AtsApi, native.AtsType,
+                                  lastStageResult, null, jobs.Count, sw.ElapsedMilliseconds, null);
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (HttpRequestException hex)
+            {
+                sw.Stop();
+                stageHadFailure = true;
+                var code = (int?)hex.StatusCode;
+                lastStageHttp = code;
+                lastStageResult = (code is >= 400 and < 500) ? Logging.AttemptResult.Http4xx
+                                : (code is >= 500 and < 600) ? Logging.AttemptResult.Http5xx
+                                : Logging.AttemptResult.ParseException;
+                _runs.LogAttempt(runId, company.Id, Logging.AttemptStage.AtsApi, native.AtsType,
+                                  lastStageResult, code, 0, sw.ElapsedMilliseconds, hex.Message);
+                errors.Add($"[{company.Domain}] {hex.Message}");
+            }
+            catch (Exception ex)
+            {
+                sw.Stop();
+                stageHadFailure = true;
+                lastStageResult = Logging.AttemptResult.ParseException;
+                _runs.LogAttempt(runId, company.Id, Logging.AttemptStage.AtsApi, native.AtsType,
+                                  lastStageResult, null, 0, sw.ElapsedMilliseconds,
+                                  $"{ex.GetType().Name}: {ex.Message}");
+                errors.Add($"[{company.Domain}] {ex.Message}");
+            }
             sourceType = native.AtsType;
         }
         else
         {
             // 1b) Cheap HTTP-only ATS probe before falling back to Playwright + AI extraction.
-            // Catches static iframe embeds and redirect-based ATS hosting (most Greenhouse / Lever /
-            // Ashby customers). On a hit we persist the result and use the native adapter, saving
-            // ~3K AI tokens per company. On a miss we proceed to AI as today.
-            IAtsJobSource? detectedNative = null;
+            IJobSource? detectedNative = null;
             string? detectedSlug = null;
+            var detectSw = System.Diagnostics.Stopwatch.StartNew();
             try
             {
                 var det = await _atsDetector.DetectViaHttpAsync(company, ct);
+                detectSw.Stop();
                 if (det.AtsType is not null && det.AtsSlug is not null
                     && _sources.TryGetValue(det.AtsType, out var maybeNative))
                 {
                     _companies.SetAtsInfo(company.Id, det.AtsType, det.AtsSlug, det.ResolvedCareersUrl);
                     detectedNative = maybeNative;
                     detectedSlug = det.AtsSlug;
+                    _runs.LogAttempt(runId, company.Id, Logging.AttemptStage.DetectAts, det.Source,
+                                      Logging.AttemptResult.Success, null, 0, detectSw.ElapsedMilliseconds, null);
+                }
+                else
+                {
+                    _runs.LogAttempt(runId, company.Id, Logging.AttemptStage.DetectAts, det.Source,
+                                      Logging.AttemptResult.Empty, null, 0, detectSw.ElapsedMilliseconds, det.Notes);
                 }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                // Detection failures are non-fatal — fall through to AI extraction.
+                detectSw.Stop();
+                _runs.LogAttempt(runId, company.Id, Logging.AttemptStage.DetectAts, null,
+                                  Logging.AttemptResult.ParseException, null, 0, detectSw.ElapsedMilliseconds,
+                                  $"{ex.GetType().Name}: {ex.Message}");
                 errors.Add($"[{company.Domain}] ats-detect: {ex.GetType().Name}: {ex.Message}");
             }
 
             if (detectedNative is not null && detectedSlug is not null)
             {
-                allRaw.AddRange(await detectedNative.FetchAsync(detectedSlug, ct));
+                var sw2 = System.Diagnostics.Stopwatch.StartNew();
+                sourceStage = $"ats_{detectedNative.AtsType}";
+                try
+                {
+                    var jobs = await detectedNative.FetchAsync(detectedSlug, ct);
+                    sw2.Stop();
+                    allRaw.AddRange(jobs);
+                    _runs.LogAttempt(runId, company.Id, Logging.AttemptStage.AtsApi, detectedNative.AtsType,
+                                      jobs.Count == 0 ? Logging.AttemptResult.Empty : Logging.AttemptResult.Success,
+                                      null, jobs.Count, sw2.ElapsedMilliseconds, null);
+                }
+                catch (Exception ex)
+                {
+                    sw2.Stop();
+                    stageHadFailure = true;
+                    _runs.LogAttempt(runId, company.Id, Logging.AttemptStage.AtsApi, detectedNative.AtsType,
+                                      Logging.AttemptResult.ParseException, null, 0, sw2.ElapsedMilliseconds,
+                                      $"{ex.GetType().Name}: {ex.Message}");
+                    errors.Add($"[{company.Domain}] {ex.Message}");
+                }
                 sourceType = detectedNative.AtsType;
             }
             else
             {
             sourceType = _aiSource.AtsType;
+            sourceStage = Logging.AttemptStage.AiExtract;
             var cachedUrls = _urls.GetByCompany(company.Id);
 
-            // 2) Cached job_list URLs — usually the actual jobs page
             var jobListUrls = cachedUrls.Where(u => u.Kind == UrlKind.JobList).Take(3).ToList();
-            // 3) Cached department URLs — one-level-deep recursive crawl
             var departmentUrls = cachedUrls.Where(u => u.Kind == UrlKind.Department).Take(10).ToList();
-            // 4) Cached careers_root URLs (fallback within cache)
             var rootUrls = cachedUrls.Where(u => u.Kind == UrlKind.CareersRoot).Take(2).ToList();
 
             var urlsToTry = jobListUrls.Concat(departmentUrls).Concat(rootUrls).ToList();
             if (urlsToTry.Count == 0)
             {
-                // 5) Full rediscovery — no cache yet, hit the default careers URL
                 var startUrl = company.CareersUrl ?? company.WebsiteUrl ?? $"https://{company.Domain}/careers";
+                var sw3 = System.Diagnostics.Stopwatch.StartNew();
                 try
                 {
                     var jobs = await _aiSource.FetchForCompanyAsync(company, startUrl, ct);
+                    sw3.Stop();
                     allRaw.AddRange(jobs);
+                    // AiFallbackJobSource exposes the actual stage that produced the result —
+                    // could be hand_written, jsonld, selectors, or ai_extract. Use it for
+                    // source_stage so parser-stats can distinguish.
+                    sourceStage = !string.IsNullOrEmpty(_aiSource.LastParserUsed)
+                        ? $"hand_written:{_aiSource.LastParserUsed}"
+                        : Logging.AttemptStage.AiExtract;
+                    _runs.LogAttempt(runId, company.Id, sourceStage, startUrl,
+                                      jobs.Count == 0 ? Logging.AttemptResult.Empty : Logging.AttemptResult.Success,
+                                      null, jobs.Count, sw3.ElapsedMilliseconds, null);
                 }
-                catch (Exception ex)
+                catch (Exception ex) when (ex is not OperationCanceledException)
                 {
+                    sw3.Stop();
+                    stageHadFailure = true;
+                    _runs.LogAttempt(runId, company.Id, Logging.AttemptStage.AiExtract, startUrl,
+                                      Logging.AttemptResult.ParseException, null, 0, sw3.ElapsedMilliseconds,
+                                      $"{ex.GetType().Name}: {ex.Message}");
                     errors.Add($"[{company.Domain}] {ex.Message}");
                 }
             }
@@ -262,29 +380,39 @@ public sealed class JobRefresher : IJobRefresher
                 foreach (var u in urlsToTry)
                 {
                     ct.ThrowIfCancellationRequested();
+                    var sw4 = System.Diagnostics.Stopwatch.StartNew();
                     try
                     {
                         var jobs = await _aiSource.FetchForCompanyAsync(company, u.Url, ct);
+                        sw4.Stop();
                         if (jobs.Count > 0)
                         {
                             allRaw.AddRange(jobs);
-                            // marked yielded inside FetchForCompanyAsync
+                            sourceStage = !string.IsNullOrEmpty(_aiSource.LastParserUsed)
+                                ? $"hand_written:{_aiSource.LastParserUsed}"
+                                : Logging.AttemptStage.AiExtract;
+                            _runs.LogAttempt(runId, company.Id, Logging.AttemptStage.CachedUrl, u.Kind.ToString(),
+                                              Logging.AttemptResult.Success, null, jobs.Count, sw4.ElapsedMilliseconds, null);
                         }
                         else
                         {
                             _urls.RecordFailure(company.Id, u.Url);
+                            _runs.LogAttempt(runId, company.Id, Logging.AttemptStage.CachedUrl, u.Kind.ToString(),
+                                              Logging.AttemptResult.Empty, null, 0, sw4.ElapsedMilliseconds, null);
                         }
                     }
-                    catch (Exception ex)
+                    catch (Exception ex) when (ex is not OperationCanceledException)
                     {
+                        sw4.Stop();
                         _urls.RecordFailure(company.Id, u.Url);
+                        _runs.LogAttempt(runId, company.Id, Logging.AttemptStage.CachedUrl, u.Kind.ToString(),
+                                          Logging.AttemptResult.ParseException, null, 0, sw4.ElapsedMilliseconds,
+                                          $"{ex.GetType().Name}: {ex.Message}");
                         errors.Add($"[{company.Domain} via cached {u.Kind}] {ex.Message}");
                     }
                 }
             }
 
-            // Free upgrade: if the network listener saw an ATS API call we recognize, persist it on
-            // the company so subsequent refreshes use the native adapter (faster, no rate limit).
             UpgradeCompanyAtsIfDetected(company);
             }
         }
@@ -341,6 +469,7 @@ public sealed class JobRefresher : IJobRefresher
                 DateFirstSeen = DateTime.UtcNow,
                 DateLastSeen = DateTime.UtcNow,
                 IsActive = true,
+                SourceStage = sourceStage,
             };
 
             var (id, wasNew) = _jobs.Upsert(job, hashKey, hashTier: 1);
@@ -381,7 +510,81 @@ public sealed class JobRefresher : IJobRefresher
         }
 
         _companies.SetLastScan(company.Id, DateTime.UtcNow);
-        return (added, updated, removedCount);
+
+        // Persist refresh health rollup: jobs found, success/fail streak. Drives auto-clear of
+        // stale slugs and 0-yield drift detection in the next refresh.
+        var totalSeen = added + updated;
+        _companies.RecordRefreshResult(company.Id, totalSeen, stageHadFailure);
+
+        // Auto-clear stale slug at threshold. ConsecutiveFailures was just incremented if this
+        // refresh was empty/failed, so the threshold check uses the *new* expected value (+1).
+        var projectedFailures = (totalSeen == 0 || stageHadFailure)
+            ? company.ConsecutiveFailures + 1 : 0;
+        if (projectedFailures >= StaleSlugThreshold
+            && !string.IsNullOrEmpty(company.AtsSlug)
+            && lastStageResult == Logging.AttemptResult.Http4xx)
+        {
+            _companies.ClearAtsSlug(company.Id,
+                $"{projectedFailures} consecutive 4xx (last HTTP {lastStageHttp})");
+            errors.Add($"[{company.Domain}] cleared stale {company.AtsType} slug '{company.AtsSlug}' after {projectedFailures} 4xx failures");
+        }
+
+        // 0-yield drift: previously productive, now empty (and not a network failure). Likely the
+        // company moved to a different page or ATS shape. Clear the slug so detect-ats re-runs.
+        if (totalSeen == 0
+            && company.LastRefreshJobsCount is > 0
+            && !stageHadFailure
+            && !string.IsNullOrEmpty(company.AtsSlug))
+        {
+            _companies.ClearAtsSlug(company.Id,
+                $"0-yield drift: was {company.LastRefreshJobsCount}, now 0");
+            errors.Add($"[{company.Domain}] 0-yield drift: was producing {company.LastRefreshJobsCount} jobs, now 0 — re-detect queued");
+        }
+
+        // Classify the company-level outcome_kind for the run_step_log row.
+        var outcome = ClassifyOutcome(totalSeen, allRaw.Count, stageHadFailure,
+                                       lastStageResult, lastStageHttp);
+        return (added, updated, removedCount, outcome);
+    }
+
+    /// <summary>Map the per-company refresh result into a step-level outcome_kind. Distinguishes
+    /// "API returned jobs but all got filtered" from "API returned nothing" from "fetch failed",
+    /// since those need different remediation.</summary>
+    private static string ClassifyOutcome(int seen, int rawCount, bool hadFailure,
+                                           string lastStageResult, int? lastHttp)
+    {
+        if (seen > 0) return Logging.OutcomeKind.Success;
+        if (hadFailure)
+        {
+            return lastStageResult switch
+            {
+                Logging.AttemptResult.Http4xx     => Logging.OutcomeKind.Fetch4xx,
+                Logging.AttemptResult.Http5xx     => Logging.OutcomeKind.Fetch5xx,
+                Logging.AttemptResult.Timeout     => Logging.OutcomeKind.FetchTimeout,
+                _                                 => Logging.OutcomeKind.ParseException,
+            };
+        }
+        // No failure, no jobs persisted. Either the API returned nothing or location/dept filters
+        // dropped everything. The raw count before filtering tells us which.
+        if (rawCount > 0) return Logging.OutcomeKind.AllJobsLocationFiltered;
+        return Logging.OutcomeKind.ApiReturnedEmpty;
+    }
+
+    /// <summary>Fallback classifier for exceptions that escape RefreshOneAsync entirely. Coarser
+    /// than the per-stage classifier because we don't have the structured stage state at this
+    /// point — just the exception type/message.</summary>
+    private static string ClassifyException(Exception ex)
+    {
+        var msg = (ex.Message ?? "").ToLowerInvariant();
+        if (ex is HttpRequestException hre)
+        {
+            var c = (int?)hre.StatusCode;
+            if (c is >= 400 and < 500) return Logging.OutcomeKind.Fetch4xx;
+            if (c is >= 500 and < 600) return Logging.OutcomeKind.Fetch5xx;
+        }
+        if (ex is TaskCanceledException || msg.Contains("timeout")) return Logging.OutcomeKind.FetchTimeout;
+        if (msg.Contains("403") || msg.Contains("forbidden")) return Logging.OutcomeKind.FetchBlocked;
+        return Logging.OutcomeKind.ParseException;
     }
 
     private static readonly System.Text.RegularExpressions.Regex AtsApiUrlRe = new(

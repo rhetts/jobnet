@@ -2,9 +2,9 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace Jobnet.Services.AtsAdapters;
+namespace Jobnet.Services.JobSources;
 
-public interface IAtsJobSource
+public interface IJobSource
 {
     /// <summary>The ats_type value this source handles (e.g. "greenhouse").</summary>
     string AtsType { get; }

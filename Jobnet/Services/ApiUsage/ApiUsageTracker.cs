@@ -38,11 +38,15 @@ public sealed class ApiUsageTracker : IApiUsageTracker
                 SET count = count + 1, last_call = excluded.last_call",
             new { provider, date, now });
 
-        // Per-call log row for RPM/TPM analytics.
+        // Per-call log row for RPM/TPM analytics. Stamp the current run + company from the
+        // AsyncLocal context — lets us correlate API calls with the refresh that issued them.
+        // (Null when called outside a refresh, e.g. settings-page test buttons or one-shot CLIs.)
+        var ctx = Logging.RefreshContext.Current;
         conn.Execute(@"
-            INSERT INTO api_call_log (provider, called_at, input_tokens, output_tokens)
-            VALUES (@provider, @now, @inputTokens, @outputTokens)",
-            new { provider, now, inputTokens, outputTokens });
+            INSERT INTO api_call_log (provider, called_at, input_tokens, output_tokens, run_id, company_id)
+            VALUES (@provider, @now, @inputTokens, @outputTokens, @runId, @companyId)",
+            new { provider, now, inputTokens, outputTokens,
+                  runId = ctx?.RunId, companyId = ctx?.CompanyId });
 
         var count = conn.ExecuteScalar<int>(
             "SELECT count FROM api_usage WHERE provider = @provider AND date = @date",

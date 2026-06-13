@@ -30,4 +30,11 @@ public sealed class Job
     public required DateTime DateLastSeen { get; init; }
     public DateTime? DateRemoved { get; set; }
     public bool IsActive { get; set; } = true;
+
+    /// <summary>Which extraction path produced this job on the most recent upsert. One of the
+    /// <c>AttemptStage</c>/source-stage strings: <c>ats_greenhouse</c>, <c>ats_lever</c>,
+    /// <c>ai_extract</c>, <c>jsonld</c>, <c>hand_written:lever_shortcode</c>, etc. Persisted
+    /// to <c>jobs.source_stage</c>. Drives <c>parser-stats --candidates</c>: AI-extract jobs
+    /// that show up consistently are hand-written-parser candidates.</summary>
+    public string? SourceStage { get; set; }
 }

@@ -192,14 +192,14 @@ public sealed class TestCommand : ICliCommand
 
     private void AssertKind(string url, string expectedKind)
     {
-        var k = Jobnet.Services.AtsAdapters.UrlClassifier.Classify(url);
+        var k = Jobnet.Services.JobSources.UrlClassifier.Classify(url);
         if (k == expectedKind) Pass($"{url} → {k}");
         else                   Fail($"{url} → {k ?? "(null)"} (expected {expectedKind})");
     }
 
     private void AssertKindNull(string url)
     {
-        var k = Jobnet.Services.AtsAdapters.UrlClassifier.Classify(url);
+        var k = Jobnet.Services.JobSources.UrlClassifier.Classify(url);
         if (k is null) Pass($"{url} → (skipped)");
         else           Fail($"{url} → {k} (expected null)");
     }

@@ -5,6 +5,8 @@ VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Jobnet", "Jobnet\Jobnet.csproj", "{E573A42C-7675-486F-B55C-D662A1968225}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Jobnet.Tests", "Jobnet.Tests\Jobnet.Tests.csproj", "{47FAAB1B-D197-4F97-B39B-D5DE6856F927}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -27,6 +29,18 @@ Global
 		{E573A42C-7675-486F-B55C-D662A1968225}.Release|x64.Build.0 = Release|Any CPU
 		{E573A42C-7675-486F-B55C-D662A1968225}.Release|x86.ActiveCfg = Release|Any CPU
 		{E573A42C-7675-486F-B55C-D662A1968225}.Release|x86.Build.0 = Release|Any CPU
+		{47FAAB1B-D197-4F97-B39B-D5DE6856F927}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{47FAAB1B-D197-4F97-B39B-D5DE6856F927}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{47FAAB1B-D197-4F97-B39B-D5DE6856F927}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{47FAAB1B-D197-4F97-B39B-D5DE6856F927}.Debug|x64.Build.0 = Debug|Any CPU
+		{47FAAB1B-D197-4F97-B39B-D5DE6856F927}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{47FAAB1B-D197-4F97-B39B-D5DE6856F927}.Debug|x86.Build.0 = Debug|Any CPU
+		{47FAAB1B-D197-4F97-B39B-D5DE6856F927}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{47FAAB1B-D197-4F97-B39B-D5DE6856F927}.Release|Any CPU.Build.0 = Release|Any CPU
+		{47FAAB1B-D197-4F97-B39B-D5DE6856F927}.Release|x64.ActiveCfg = Release|Any CPU
+		{47FAAB1B-D197-4F97-B39B-D5DE6856F927}.Release|x64.Build.0 = Release|Any CPU
+		{47FAAB1B-D197-4F97-B39B-D5DE6856F927}.Release|x86.ActiveCfg = Release|Any CPU
+		{47FAAB1B-D197-4F97-B39B-D5DE6856F927}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

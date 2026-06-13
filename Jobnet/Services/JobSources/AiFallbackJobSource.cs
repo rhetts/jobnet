@@ -12,14 +12,14 @@ using Jobnet.Services.Parsing;
 using Jobnet.Services.Playwright;
 using Jobnet.Services.Profiling;
 
-namespace Jobnet.Services.AtsAdapters;
+namespace Jobnet.Services.JobSources;
 
 /// <summary>
 /// Fallback job source for companies that don't use a known ATS. Renders the careers page with
 /// Playwright, sends the text + visible anchor links to the AI client, and parses a strict-JSON
 /// job list out of the response. Also persists discovered URLs to the company_urls cache.
 /// </summary>
-public sealed class AiExtractedJobSource : IAtsJobSource
+public sealed class AiFallbackJobSource : IJobSource
 {
     public string AtsType => "ai_extract";
 
@@ -28,14 +28,18 @@ public sealed class AiExtractedJobSource : IAtsJobSource
     private readonly ICompanyUrlsRepository _urls;
     private readonly IAiExtractionCacheRepository _cache;
     private readonly IConfigRepository _config;
-    private readonly SelectorParser _selectorParser;
+    private readonly SelectorProfileReplayer _selectorParser;
     private readonly AiSelectorDeriver _selectorDeriver;
     private readonly ICompanyRepository _companies;
+    private readonly Parsing.HtmlPatternParsers.HtmlPatternRegistry _companyParsers;
+    private readonly Jobnet.Services.Logging.IRunLogger _runs;
 
-    public AiExtractedJobSource(IPlaywrightFetcher fetcher, IAiClient ai, ICompanyUrlsRepository urls,
+    public AiFallbackJobSource(IPlaywrightFetcher fetcher, IAiClient ai, ICompanyUrlsRepository urls,
                                   IAiExtractionCacheRepository cache, IConfigRepository config,
-                                  SelectorParser selectorParser, AiSelectorDeriver selectorDeriver,
-                                  ICompanyRepository companies)
+                                  SelectorProfileReplayer selectorParser, AiSelectorDeriver selectorDeriver,
+                                  ICompanyRepository companies,
+                                  Parsing.HtmlPatternParsers.HtmlPatternRegistry companyParsers,
+                                  Jobnet.Services.Logging.IRunLogger runs)
     {
         _fetcher = fetcher;
         _ai = ai;
@@ -45,7 +49,14 @@ public sealed class AiExtractedJobSource : IAtsJobSource
         _selectorParser = selectorParser;
         _selectorDeriver = selectorDeriver;
         _companies = companies;
+        _companyParsers = companyParsers;
+        _runs = runs;
     }
+
+    /// <summary>Name of the hand-written parser that handled the most recent fetch, or null when
+    /// the path went through cached selectors / JSON-LD / AI extract instead. Exposed for
+    /// JobRefresher's per-step logging so the user can see which pattern matched on each company.</summary>
+    public string? LastParserUsed { get; private set; }
 
     /// <summary>True when the selector-parser feature flag is on in config. Read each call so
     /// the user can flip it from Settings without restarting.</summary>
@@ -111,11 +122,14 @@ public sealed class AiExtractedJobSource : IAtsJobSource
     ///   1. Cached selector profile (deterministic, no AI cost) — when company has one and
     ///      the global flag is on.
     ///   2. JSON-LD structured data extraction (free).
-    ///   3. AI extraction. If it yields jobs AND no selector profile is cached yet, derive one
-    ///      from the same HTML and persist it so the next refresh skips step 3 entirely.</summary>
+    ///   3. Hand-written company parsers (HtmlPatternRegistry) — pattern-specific extractors
+    ///      that handle known shapes (Lever shortcode, direct Greenhouse links, etc.).
+    ///   4. AI extraction. If it yields jobs AND no selector profile is cached yet, derive one
+    ///      from the same HTML and persist it so the next refresh skips step 4 entirely.</summary>
     private async Task<IReadOnlyList<RawJobPosting>> FetchOnceAsync(Company? company, string url, CancellationToken ct)
     {
         var companyId = company?.Id ?? 0;
+        LastParserUsed = null;
         var fetch = await _fetcher.FetchAsync(url, ct);
         PersistDiscoveredUrls(companyId, fetch);
 
@@ -146,7 +160,7 @@ public sealed class AiExtractedJobSource : IAtsJobSource
                 _companies.ClearParserStrategy(company.Id);
                 company.ParserStrategy = null;   // keep the in-memory model consistent for the rest of this call
             }
-            catch (SelectorParseException ex)
+            catch (SelectorReplayException ex)
             {
                 _companies.SetParserStrategyResult(company.Id, "error", DateTime.UtcNow, errorMessage: ex.Message);
                 _companies.ClearParserStrategy(company.Id);
@@ -160,6 +174,40 @@ public sealed class AiExtractedJobSource : IAtsJobSource
         {
             if (companyId > 0) _urls.MarkYielded(companyId, fetch.FinalUrl);
             return jsonLd;
+        }
+
+        // 3) Hand-written company parsers. Probe the registry; any positive match runs that
+        //    parser and we skip the AI call. Hard failures inside Parse are caught here so a
+        //    buggy parser doesn't poison the refresh — we just fall through to AI extraction.
+        var handParser = _companyParsers.ResolveFor(fetch.FinalUrl, fetch.Html);
+        if (handParser is not null)
+        {
+            try
+            {
+                var parsed = handParser.Parse(fetch.Html, fetch.FinalUrl);
+                if (parsed.Count > 0)
+                {
+                    LastParserUsed = handParser.Name;
+                    if (companyId > 0)
+                    {
+                        _urls.MarkYielded(companyId, fetch.FinalUrl);
+                        _companies.SetLastCompanyParser(companyId, handParser.Name);
+                        if (company is not null) company.LastCompanyParser = handParser.Name;
+                    }
+                    return parsed;
+                }
+                // 0 jobs from a positive CanHandle is suspicious but not fatal — fall through
+                // to AI extraction. Could indicate the page genuinely has no openings today.
+            }
+            catch (Exception ex)
+            {
+                Jobnet.Services.Ai.AiLogger.LogParseFailure(
+                    taskTag: $"company_parser:{handParser.Name}",
+                    exception: ex,
+                    rawResponse: fetch.Html.Length > 4000 ? fetch.Html[..4000] : fetch.Html,
+                    extraContext: $"url={fetch.FinalUrl}");
+                // Fall through to AI extract.
+            }
         }
 
         if (!_ai.IsConfigured)
@@ -287,7 +335,7 @@ public sealed class AiExtractedJobSource : IAtsJobSource
             "You extract ACTUAL job postings from a company's careers page. Output STRICT JSON only — no prose, no markdown.\n" +
             "Schema:\n" +
             "{ \"jobs\": [\n" +
-            "  { \"title\": \"...\", \"url\": \"<absolute URL or null>\", \"location\": \"...\", \"remote_type\": \"on-site|hybrid|remote|unknown\", \"employment_type\": \"full-time|part-time|contract|unknown\", \"department\": \"...\" }\n" +
+            "  { \"title\": \"...\", \"url\": \"<absolute URL or null>\", \"location\": \"...\", \"remote_type\": \"on-site|hybrid|remote|unknown\", \"employment_type\": \"full-time|part-time|contract|unknown\", \"department\": \"...\", \"source_span\": \"<verbatim ≤120-char snippet from the input where this title appears>\" }\n" +
             "] }\n" +
             "\n" +
             "Rules:\n" +
@@ -296,6 +344,7 @@ public sealed class AiExtractedJobSource : IAtsJobSource
             "- REJECT navigation items, team pages, locations, or 'view all jobs' links.\n" +
             "- A real job title usually has both a seniority/level word AND a discipline word, or names a specific position.\n" +
             "- Use only the anchor list for URLs — never invent. Skip non-job anchors (privacy, about, blog, etc.).\n" +
+            "- source_span MUST be copied VERBATIM from the input — same casing, same spelling, same punctuation. It is how we verify the title is real. If you can't find the title in the input, omit the row.\n" +
             "- If the page only shows department/category filters with no individual postings visible, output {\"jobs\": []}.";
 
         // Two-pass extraction. First pass sends ONLY the anchor list — for the typical careers
@@ -324,14 +373,40 @@ public sealed class AiExtractedJobSource : IAtsJobSource
             jobs = ParseJobs(secondResp.Text, fetch.FinalUrl);
         }
 
-        // Hallucination guard. Local llama in particular tends to invent generic office-job titles
-        // when given a non-listing page (homepage, about page, portfolio listing). The signature is:
-        // every "job" has the source URL because none of them came from a real per-job anchor.
-        // Real careers boards have distinct per-job URLs; only tiny custom sites might have ≤4 jobs
-        // sharing a URL, so we only reject the batch above that threshold.
-        if (jobs.Count >= 5 && jobs.All(j => string.Equals(j.Url, fetch.FinalUrl, StringComparison.OrdinalIgnoreCase)))
+        // Citation verification: every job title must appear verbatim in the source we fed the
+        // model (the rendered text + anchor labels). This is a hard guard against hallucination.
+        // Local llama produced 33+ fabricated companies during the Vanedge harvest with names
+        // that fit the vibe but weren't on the page. Citation check kills that pattern cold.
+        var rawCount = jobs.Count;
+        var verified = VerifyCitations(jobs, fullContentToAi, out var rejected);
+        var citationCount = verified.Count;
+
+        // Legacy heuristic (shared-URL hallucination): still applied AFTER citation check as a
+        // safety net for pages where the model copy-pasted plausible-looking text out of nav.
+        var hadSharedUrl = verified.Count >= 5 &&
+            verified.All(j => string.Equals(j.Url, fetch.FinalUrl, StringComparison.OrdinalIgnoreCase));
+        if (hadSharedUrl)
         {
-            System.Diagnostics.Debug.WriteLine($"[ai_extraction] rejecting {jobs.Count} jobs from {fetch.FinalUrl} — all share source URL (likely hallucination)");
+            System.Diagnostics.Debug.WriteLine($"[ai_extraction] rejecting {verified.Count} jobs from {fetch.FinalUrl} — all share source URL (likely hallucination)");
+            rejected.AddRange(verified.Select(j => j.Title));
+            verified = System.Array.Empty<RawJobPosting>();
+        }
+
+        var suspectedHallucination = rejected.Count > 0 || hadSharedUrl;
+        var ctx = Logging.RefreshContext.Current;
+        var rejectedJson = rejected.Count > 0
+            ? JsonSerializer.Serialize(rejected.Take(50).ToList())
+            : null;
+        _runs.LogAiDecision(ctx?.RunId, ctx?.CompanyId, fetch.FinalUrl, _ai.ProviderId,
+                            rawJobsCount: rawCount, acceptedCount: verified.Count,
+                            citationVerifiedCount: citationCount,
+                            rejectedTitlesJson: rejectedJson,
+                            suspectedHallucination: suspectedHallucination);
+        jobs = verified;
+        if (jobs.Count == 0 && rawCount > 0)
+        {
+            // We had AI output but rejected every row. Skip the cache write so the next refresh
+            // doesn't return a stale empty list — better to retry the AI than freeze a bad day.
             return System.Array.Empty<RawJobPosting>();
         }
 
@@ -352,6 +427,52 @@ public sealed class AiExtractedJobSource : IAtsJobSource
             }
         }
         return jobs;
+    }
+
+    /// <summary>Reject any extracted job whose title doesn't appear in the source content the
+    /// model received. <paramref name="rejected"/> collects the discarded titles so they land in
+    /// <c>ai_extraction_decisions.rejected_titles</c> for forensic inspection.
+    ///
+    /// Match is case-insensitive and tolerant of internal whitespace runs (Playwright sometimes
+    /// renders titles with non-breaking spaces). We deliberately do NOT require the source_span
+    /// to be present — older provider responses won't have it, and we'd reject everything from
+    /// the legacy cache. The title-in-source check is the strict gate; source_span is just a
+    /// hint the model has to compute (which discourages fabrication).</summary>
+    private static IReadOnlyList<RawJobPosting> VerifyCitations(IReadOnlyList<RawJobPosting> jobs,
+                                                                 string sourceContent,
+                                                                 out List<string> rejected)
+    {
+        rejected = new List<string>();
+        if (jobs.Count == 0) return jobs;
+        var normalizedSource = NormalizeForMatch(sourceContent);
+        var kept = new List<RawJobPosting>(jobs.Count);
+        foreach (var j in jobs)
+        {
+            var titleNorm = NormalizeForMatch(j.Title);
+            if (titleNorm.Length < 3)
+            {
+                rejected.Add(j.Title);
+                continue;
+            }
+            if (normalizedSource.Contains(titleNorm, StringComparison.OrdinalIgnoreCase))
+            {
+                kept.Add(j);
+            }
+            else
+            {
+                rejected.Add(j.Title);
+            }
+        }
+        return kept;
+    }
+
+    private static string NormalizeForMatch(string s)
+    {
+        if (string.IsNullOrEmpty(s)) return "";
+        // Collapse internal whitespace runs and replace non-breaking / weird unicode spaces with
+        // ASCII space, so "Senior Engineer" matches "Senior Engineer".
+        var t = System.Text.RegularExpressions.Regex.Replace(s, @"\s+", " ").Trim();
+        return t;
     }
 
     private static IReadOnlyList<RawJobPosting> DeserializeCached(string jobsJson)

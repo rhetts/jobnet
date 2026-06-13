@@ -2,8 +2,11 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Dapper;
+using Jobnet.Data;
 using Jobnet.Data.Repositories;
 using Jobnet.Services.ApiUsage;
 
@@ -37,6 +40,7 @@ public sealed class RateLimiter : IRateLimiter
     private readonly IConfigRepository _config;
     private readonly IApiUsageTracker _usage;
     private readonly IApiQuotaController _quota;
+    private readonly IDbConnectionFactory _connections;
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _gates = new();
     private readonly ConcurrentDictionary<string, DateTime> _lastCall = new();
 
@@ -45,11 +49,49 @@ public sealed class RateLimiter : IRateLimiter
     /// per-provider semaphore is held.</summary>
     private readonly ConcurrentDictionary<string, Queue<DateTime>> _recentCalls = new();
 
-    public RateLimiter(IConfigRepository config, IApiUsageTracker usage, IApiQuotaController quota)
+    /// <summary>Per-provider flag: have we already seeded the in-memory window from
+    /// <c>api_call_log</c> for this provider? Done lazily on first WaitAsync rather than at
+    /// startup, so providers we never use don't pay the query cost.</summary>
+    private readonly ConcurrentDictionary<string, bool> _seeded = new();
+
+    public RateLimiter(IConfigRepository config, IApiUsageTracker usage, IApiQuotaController quota,
+                        IDbConnectionFactory connections)
     {
         _config = config;
         _usage = usage;
         _quota = quota;
+        _connections = connections;
+    }
+
+    /// <summary>Seed <c>_recentCalls[provider]</c> from <c>api_call_log</c> rows in the last 60
+    /// seconds. Closes the cross-restart bypass — without this, every process launch starts the
+    /// sliding window from zero, so two ~6-call bursts straddling a restart can land 12+ calls in
+    /// Google's rolling 60s window. We seed lazily on first WaitAsync per provider rather than
+    /// at startup because the JobnetCore service collection is built before the DB is open in
+    /// some test paths; the lazy approach avoids that ordering coupling.</summary>
+    private void SeedWindowFromDb(string provider, Queue<DateTime> window)
+    {
+        if (!_seeded.TryAdd(provider, true)) return;
+        try
+        {
+            using var conn = _connections.Open();
+            var cutoff = DateTime.UtcNow.AddSeconds(-Window.TotalSeconds).ToString("o");
+            var rows = conn.Query<string>(@"
+                SELECT called_at FROM api_call_log
+                WHERE provider = @provider AND called_at >= @cutoff
+                ORDER BY called_at",
+                new { provider, cutoff }).ToList();
+            foreach (var iso in rows)
+            {
+                if (DateTime.TryParse(iso, out var t))
+                    window.Enqueue(t.ToUniversalTime());
+            }
+        }
+        catch
+        {
+            // Seeding is best-effort. A locked DB or missing column is not worth breaking the
+            // rate limiter over — we'll just behave as before (empty window after restart).
+        }
     }
 
     public async Task WaitAsync(string provider, CancellationToken ct = default)
@@ -82,6 +124,9 @@ public sealed class RateLimiter : IRateLimiter
             if (rpmCap > 0)
             {
                 var window = _recentCalls.GetOrAdd(provider, _ => new Queue<DateTime>());
+                // First touch for this provider in this process: backfill the window from the
+                // persistent call log so we honour Google's rolling 60s counter across restarts.
+                SeedWindowFromDb(provider, window);
                 while (true)
                 {
                     PruneWindow(window);

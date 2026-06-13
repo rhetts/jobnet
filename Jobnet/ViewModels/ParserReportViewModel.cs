@@ -2,36 +2,34 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
-using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Jobnet.Data.Repositories;
 using Jobnet.Models;
-using Jobnet.Services.AtsAdapters;
+using Jobnet.Services.Parsing.HtmlPatternParsers;
 
 namespace Jobnet.ViewModels;
 
 /// <summary>
-/// Backs the Parser Report screen. Lists every company with which extraction system is in use
-/// (native ATS / cached selectors / AI extract / unknown), the health of the cached selector
-/// profile, and lets the user force a re-derive or disable the selector path per company.
+/// Backs the Parser Report screen. Lists every company with the extraction system actually in
+/// use (native ATS / hand-written parser / cached selectors / AI extract / unknown), plus the
+/// health of any cached selector profile and a per-row disable toggle.
 /// </summary>
 public partial class ParserReportViewModel : ObservableObject
 {
     private readonly ICompanyRepository _companies;
-    private readonly IJobRefresher _refresher;
-
-    /// <summary>Company IDs with an in-flight Re-derive. Used so a full-list <see cref="Refresh"/>
-    /// doesn't wipe the per-row busy spinner — the new row instance picks up the busy flag from
-    /// here when it's reconstructed.</summary>
-    private readonly HashSet<int> _busyIds = new();
+    private readonly HtmlPatternRegistry _parserRegistry;
 
     public ObservableCollection<ParserReportRow> AllRows { get; } = new();
     public ObservableCollection<ParserReportRow> Rows { get; } = new();
 
     /// <summary>Filter chip — "(any)" shows everything, the rest match ParserSystem strings.</summary>
     public IReadOnlyList<string> SystemFilters { get; } =
-        new[] { "(any)", "native ATS", "selectors", "AI extract", "unknown" };
+        new[] { "(any)", "native ATS", "hand-written", "selectors", "AI extract", "unknown" };
+
+    /// <summary>Comma-separated list of hand-written parsers registered in DI. Surfaced in the
+    /// window header so the user can see what patterns are wired in without digging into code.</summary>
+    public string RegisteredParsersDisplay { get; }
 
     public IReadOnlyList<string> StatusFilters { get; } =
         new[] { "(any)", "ok", "drift", "error", "no profile" };
@@ -40,10 +38,13 @@ public partial class ParserReportViewModel : ObservableObject
     [ObservableProperty] private string _selectedStatus = "(any)";
     [ObservableProperty] private string _summary = "";
 
-    public ParserReportViewModel(ICompanyRepository companies, IJobRefresher refresher)
+    public ParserReportViewModel(ICompanyRepository companies, HtmlPatternRegistry parserRegistry)
     {
         _companies = companies;
-        _refresher = refresher;
+        _parserRegistry = parserRegistry;
+        RegisteredParsersDisplay = _parserRegistry.Names.Count == 0
+            ? "(none registered)"
+            : string.Join(", ", _parserRegistry.Names);
         Refresh();
     }
 
@@ -52,12 +53,7 @@ public partial class ParserReportViewModel : ObservableObject
     {
         AllRows.Clear();
         foreach (var c in _companies.GetAll())
-        {
-            var row = new ParserReportRow(c);
-            // Carry over in-flight busy state so a full reload doesn't drop the spinner.
-            if (_busyIds.Contains(c.Id)) row.IsBusy = true;
-            AllRows.Add(row);
-        }
+            AllRows.Add(new ParserReportRow(c));
 
         ApplyFilters();
     }
@@ -81,53 +77,6 @@ public partial class ParserReportViewModel : ObservableObject
     partial void OnSelectedSystemChanged(string value) => ApplyFilters();
     partial void OnSelectedStatusChanged(string value) => ApplyFilters();
 
-    /// <summary>Clear the cached profile and immediately re-scan this single company. The scan
-    /// goes through the normal JobRefresher.RefreshAsync path, so it will hit native ATS first
-    /// if applicable, then JSON-LD, then attempt AI extraction + selector derivation. The row
-    /// shows a spinner while in flight and updates in-place when the scan completes.</summary>
-    [RelayCommand]
-    private async Task ReDeriveAsync(ParserReportRow? row)
-    {
-        if (row is null || row.IsBusy) return;
-        var company = _companies.GetById(row.Id);
-        if (company is null) return;
-
-        row.IsBusy = true;
-        row.BusyText = "Re-deriving...";
-        _busyIds.Add(row.Id);
-        try
-        {
-            // Clear so the AI-extraction path treats this as a fresh derivation.
-            _companies.ClearParserStrategy(row.Id);
-            // Refetch the company so the in-memory model reflects the cleared profile.
-            company = _companies.GetById(row.Id);
-            if (company is null) return;
-
-            await Task.Run(() => _refresher.RefreshAsync(company)).ConfigureAwait(true);
-
-            // Pull the freshly-updated row from the DB and swap it in place.
-            var updated = _companies.GetById(row.Id);
-            if (updated is not null)
-            {
-                var idx = AllRows.IndexOf(row);
-                if (idx >= 0) AllRows[idx] = new ParserReportRow(updated);
-                ApplyFilters();
-            }
-        }
-        catch (Exception ex)
-        {
-            // Surface the error in the row's busy text — the user otherwise sees nothing happen.
-            row.IsBusy = false;
-            row.BusyText = $"Failed: {ex.Message}";
-        }
-        finally
-        {
-            _busyIds.Remove(row.Id);
-            // If we already replaced the row above, row.IsBusy on the old instance is irrelevant.
-            // If we hit the catch branch, IsBusy is already false. No further cleanup needed.
-        }
-    }
-
     [RelayCommand]
     private void ToggleDisabled(ParserReportRow? row)
     {
@@ -137,10 +86,9 @@ public partial class ParserReportViewModel : ObservableObject
     }
 }
 
-/// <summary>One row on the Parser Report. Most fields are computed once from a Company snapshot;
-/// <see cref="IsBusy"/> and <see cref="BusyText"/> are observable so the row can show progress
-/// while a per-company Re-derive is in flight.</summary>
-public partial class ParserReportRow : ObservableObject
+/// <summary>One row on the Parser Report. All fields are computed once from a Company snapshot;
+/// the row is replaced wholesale on Refresh rather than mutated in place.</summary>
+public sealed class ParserReportRow
 {
     public int Id { get; }
     public string Name { get; }
@@ -160,16 +108,6 @@ public partial class ParserReportRow : ObservableObject
     public bool IsDisabled { get; }
     public string DisabledToggleLabel { get; }
 
-    /// <summary>True while a Re-derive is running for this company. Buttons in the row bind
-    /// IsEnabled to <see cref="NotIsBusy"/>; the row also shows <see cref="BusyText"/> as a
-    /// status string.</summary>
-    [ObservableProperty] private bool _isBusy;
-
-    [ObservableProperty] private string? _busyText;
-
-    public bool NotIsBusy => !IsBusy;
-    partial void OnIsBusyChanged(bool value) => OnPropertyChanged(nameof(NotIsBusy));
-
     public ParserReportRow(Company c)
     {
         Id = c.Id;
@@ -184,6 +122,15 @@ public partial class ParserReportRow : ObservableObject
             ParserSystem = "native ATS";
             StatusBadge = c.AtsType!;
             StatusBrush = "#2A8F4F";
+        }
+        // Hand-written parser attribution takes precedence over selector profiles / AI extract,
+        // since a positive parser match on the last refresh means the company is *actually*
+        // being served by a hand-coded pattern right now, not whatever profile was cached earlier.
+        else if (!string.IsNullOrWhiteSpace(c.LastCompanyParser))
+        {
+            ParserSystem = "hand-written";
+            StatusBadge = c.LastCompanyParser!;
+            StatusBrush = "#1f9d55";   // green — these are the cheapest, most reliable matches
         }
         else if (c.ParserStrategyDisabled)
         {

@@ -18,7 +18,13 @@
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <TextBlock Grid.Row="0" Text="Parser report" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,10"/>
+        <StackPanel Grid.Row="0" Margin="0,0,0,10">
+            <TextBlock Text="Parser report" FontSize="16" FontWeight="SemiBold"/>
+            <TextBlock Foreground="#666" FontSize="11" FontFamily="Consolas" Margin="0,2,0,0">
+                <Run Text="Registered hand-written parsers: "/>
+                <Run Text="{Binding RegisteredParsersDisplay, Mode=OneWay}" FontWeight="SemiBold"/>
+            </TextBlock>
+        </StackPanel>
 
         <Grid Grid.Row="1" Margin="0,0,0,10">
             <Grid.ColumnDefinitions>
@@ -60,7 +66,9 @@
                 <DataGridTextColumn Header="Company" Binding="{Binding Name}" Width="200"/>
                 <DataGridTextColumn Header="Domain"  Binding="{Binding Domain}" Width="180" FontFamily="Consolas"/>
                 <DataGridTextColumn Header="System"  Binding="{Binding ParserSystem}" Width="100" FontWeight="SemiBold"/>
-                <DataGridTemplateColumn Header="Status" Width="140">
+                <!-- SortMemberPath tells DataGrid which property to sort by when the user clicks
+                     the header — without it the templated column is non-sortable. -->
+                <DataGridTemplateColumn Header="Status" Width="140" SortMemberPath="StatusBadge">
                     <DataGridTemplateColumn.CellTemplate>
                         <DataTemplate DataType="{x:Type vm:ParserReportRow}">
                             <Border Background="{Binding StatusBrush}"
@@ -78,41 +86,16 @@
                 </DataGridTemplateColumn>
                 <DataGridTextColumn Header="Derived"     Binding="{Binding DerivedDisplay}" Width="140"/>
                 <DataGridTextColumn Header="Last result" Binding="{Binding LastResultDisplay}" Width="180"/>
-                <DataGridTemplateColumn Header="Error" Width="*">
+                <DataGridTextColumn Header="Error" Binding="{Binding LastError}" Width="*"/>
+                <DataGridTemplateColumn Header="Actions" Width="100">
                     <DataGridTemplateColumn.CellTemplate>
                         <DataTemplate DataType="{x:Type vm:ParserReportRow}">
-                            <Grid>
-                                <TextBlock Text="{Binding LastError}"
-                                           Foreground="#888"
-                                           TextTrimming="CharacterEllipsis"
-                                           VerticalAlignment="Center"
-                                           Visibility="{Binding NotIsBusy, Converter={StaticResource BoolToVis}}"/>
-                                <TextBlock Text="{Binding BusyText}"
-                                           Foreground="#1976D2"
-                                           FontWeight="SemiBold"
-                                           VerticalAlignment="Center"
-                                           Visibility="{Binding IsBusy, Converter={StaticResource BoolToVis}}"/>
-                            </Grid>
-                        </DataTemplate>
-                    </DataGridTemplateColumn.CellTemplate>
-                </DataGridTemplateColumn>
-                <DataGridTemplateColumn Header="Actions" Width="170">
-                    <DataGridTemplateColumn.CellTemplate>
-                        <DataTemplate DataType="{x:Type vm:ParserReportRow}">
-                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                <Button Content="Re-derive"
-                                        Padding="6,2" Margin="0,0,4,0"
-                                        IsEnabled="{Binding NotIsBusy}"
-                                        Command="{Binding DataContext.ReDeriveCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                                        CommandParameter="{Binding}"
-                                        ToolTip="Clear the cached profile and immediately re-scan this company (Playwright fetch + AI extract + selector derivation). Takes 30–120s."/>
-                                <Button Content="{Binding DisabledToggleLabel}"
-                                        Padding="6,2"
-                                        IsEnabled="{Binding NotIsBusy}"
-                                        Command="{Binding DataContext.ToggleDisabledCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                                        CommandParameter="{Binding}"
-                                        ToolTip="When disabled, this company always uses AI extraction (slower) regardless of cached selectors."/>
-                            </StackPanel>
+                            <Button Content="{Binding DisabledToggleLabel}"
+                                    Padding="6,2"
+                                    VerticalAlignment="Center"
+                                    Command="{Binding DataContext.ToggleDisabledCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                    CommandParameter="{Binding}"
+                                    ToolTip="When disabled, this company always uses AI extraction (slower) regardless of cached selectors."/>
                         </DataTemplate>
                     </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>

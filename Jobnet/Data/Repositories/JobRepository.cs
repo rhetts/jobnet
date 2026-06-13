@@ -116,13 +116,13 @@ public sealed class JobRepository : IJobRepository
                                   remote_type, employment_type, level_id,
                                   description_snippet, salary_range,
                                   salary_min, salary_max, salary_currency, salary_period,
-                                  source, interest_level,
+                                  source, source_stage, interest_level,
                                   date_first_seen, date_last_seen, is_active)
                 VALUES (@CompanyId, @HashKey, @HashTier, @Title, @Url, @Location,
                         @RemoteType, @EmploymentType, @LevelId,
                         @DescriptionSnippet, @SalaryRange,
                         @SalaryMin, @SalaryMax, @SalaryCurrency, @SalaryPeriod,
-                        @Source, @InterestLevelText,
+                        @Source, @SourceStage, @InterestLevelText,
                         @DateFirstSeenText, @DateLastSeenText, 1);
                 SELECT last_insert_rowid();",
                 new
@@ -132,6 +132,7 @@ public sealed class JobRepository : IJobRepository
                     job.LevelId, job.DescriptionSnippet, job.SalaryRange,
                     job.SalaryMin, job.SalaryMax, job.SalaryCurrency, job.SalaryPeriod,
                     Source = "ats-refresh",
+                    SourceStage = job.SourceStage,
                     InterestLevelText = ToDbText(job.InterestLevel),
                     DateFirstSeenText = job.DateFirstSeen.ToUniversalTime().ToString("o"),
                     DateLastSeenText = job.DateLastSeen.ToUniversalTime().ToString("o"),
@@ -141,7 +142,10 @@ public sealed class JobRepository : IJobRepository
             return (newId, true);
         }
 
-        // Existing: bump last_seen, reactivate if removed, refresh salary if newly available
+        // Existing: bump last_seen, reactivate if removed, refresh salary if newly available.
+        // source_stage is overwritten on every upsert so it always reflects the *most recent*
+        // path that served the job — handy when a company moves from AI extract to a native
+        // ATS adapter; the column ticks over without manual cleanup.
         conn.Execute(@"
             UPDATE jobs SET
                 date_last_seen = @LastSeen,
@@ -156,6 +160,7 @@ public sealed class JobRepository : IJobRepository
                 salary_currency = COALESCE(@SalaryCurrency, salary_currency),
                 salary_period   = COALESCE(@SalaryPeriod, salary_period),
                 url = COALESCE(@Url, url),
+                source_stage = COALESCE(@SourceStage, source_stage),
                 is_active = 1,
                 date_removed = NULL
             WHERE id = @Id",
@@ -166,6 +171,7 @@ public sealed class JobRepository : IJobRepository
                 job.Title, job.Location, job.RemoteType, job.EmploymentType,
                 job.LevelId, Description = job.DescriptionSnippet, job.Url,
                 job.SalaryMin, job.SalaryMax, job.SalaryCurrency, job.SalaryPeriod,
+                SourceStage = job.SourceStage,
             });
         if (job.AreaIds.Count > 0) _areas.SetAreasForJob(existingId.Value, job.AreaIds);
         return (existingId.Value, false);

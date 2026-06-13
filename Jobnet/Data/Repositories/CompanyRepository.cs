@@ -15,7 +15,9 @@ public sealed class CompanyRepository : ICompanyRepository
                date_discovered, date_last_scan, is_active, is_agency,
                parser_strategy_disabled, parser_strategy_derived_at,
                parser_strategy_last_result, parser_strategy_last_result_at,
-               parser_strategy_last_error
+               parser_strategy_last_error,
+               last_company_parser,
+               consecutive_failures, last_success_at, last_refresh_jobs_count
         FROM companies";
 
     private readonly IDbConnectionFactory _connections;
@@ -111,6 +113,13 @@ public sealed class CompanyRepository : ICompanyRepository
             new { id, when = when.ToUniversalTime().ToString("o") });
     }
 
+    public void SetActive(int id, bool active)
+    {
+        using var conn = _connections.Open();
+        conn.Execute("UPDATE companies SET is_active = @flag WHERE id = @id",
+            new { id, flag = active ? 1 : 0 });
+    }
+
     public void SetAtsInfo(int id, string? atsType, string? atsSlug, string? careersUrl)
     {
         using var conn = _connections.Open();
@@ -168,6 +177,7 @@ public sealed class CompanyRepository : ICompanyRepository
         InterestLevel = ParseInterest(r.InterestLevel),
         DateDiscovered = DateTime.Parse(r.DateDiscovered).ToUniversalTime(),
         DateLastScan = string.IsNullOrEmpty(r.DateLastScan) ? null : DateTime.Parse(r.DateLastScan).ToUniversalTime(),
+        IsActive = r.IsActive != 0,
         IsAgency = r.IsAgency != 0,
         ParserStrategy = r.ParserStrategy,
         ParserStrategyDisabled = r.ParserStrategyDisabled != 0,
@@ -175,6 +185,10 @@ public sealed class CompanyRepository : ICompanyRepository
         ParserStrategyLastResult = r.ParserStrategyLastResult,
         ParserStrategyLastResultAt = ParseUtc(r.ParserStrategyLastResultAt),
         ParserStrategyLastError = r.ParserStrategyLastError,
+        LastCompanyParser = r.LastCompanyParser,
+        ConsecutiveFailures = r.ConsecutiveFailures,
+        LastSuccessAt = ParseUtc(r.LastSuccessAt),
+        LastRefreshJobsCount = r.LastRefreshJobsCount,
     };
 
     private static DateTime? ParseUtc(string? value)
@@ -226,6 +240,56 @@ public sealed class CompanyRepository : ICompanyRepository
             new { id, flag = disabled ? 1 : 0 });
     }
 
+    public void SetLastCompanyParser(int id, string? parserName)
+    {
+        using var conn = _connections.Open();
+        conn.Execute("UPDATE companies SET last_company_parser = @name WHERE id = @id",
+            new { id, name = parserName });
+    }
+
+    public void RecordRefreshResult(int id, int jobsCount, bool hadFailure)
+    {
+        // Persist the per-refresh health rollup. Three columns updated atomically:
+        //   - last_refresh_jobs_count: raw count for 0-yield drift detection
+        //   - consecutive_failures: reset on any ≥1-job refresh, otherwise incremented
+        //   - last_success_at: stamped only when jobsCount > 0
+        // Failure (hadFailure=true) is treated like an empty result for consecutive_failures
+        // purposes — both signal "this company didn't produce".
+        using var conn = _connections.Open();
+        var noJobs = jobsCount <= 0;
+        conn.Execute(@"
+            UPDATE companies SET
+                last_refresh_jobs_count = @jobsCount,
+                consecutive_failures = CASE WHEN @noJobs OR @hadFailure
+                                            THEN consecutive_failures + 1
+                                            ELSE 0 END,
+                last_success_at = CASE WHEN @jobsCount > 0 THEN @now ELSE last_success_at END
+            WHERE id = @id",
+            new {
+                id, jobsCount,
+                noJobs = noJobs ? 1 : 0,
+                hadFailure = hadFailure ? 1 : 0,
+                now = DateTime.UtcNow.ToString("o")
+            });
+    }
+
+    public void ClearAtsSlug(int id, string reason)
+    {
+        // Reset ats_slug so the next refresh re-runs detect-ats. ats_type is preserved as a hint
+        // for which adapter to try first — usually the migration is to a *different* slug under
+        // the same ATS (e.g. company changed brand). When the ATS itself changed too, detect-ats
+        // will overwrite ats_type as part of its persistence.
+        using var conn = _connections.Open();
+        conn.Execute(@"
+            UPDATE companies SET ats_slug = NULL,
+                                 notes = COALESCE(notes || ' | ', '') || @entry
+            WHERE id = @id",
+            new {
+                id,
+                entry = $"[{DateTime.UtcNow:yyyy-MM-dd}] auto-cleared ats_slug: {reason}"
+            });
+    }
+
     // Same caveat as JobRepository.ToDbText — DB CHECK forces 'interesting' on disk for the
     // Approved enum value. Parse accepts both spellings.
     private static string? ToDbText(InterestLevel level) => level switch
@@ -266,5 +330,9 @@ public sealed class CompanyRepository : ICompanyRepository
         public string? ParserStrategyLastResult { get; set; }
         public string? ParserStrategyLastResultAt { get; set; }
         public string? ParserStrategyLastError { get; set; }
+        public string? LastCompanyParser { get; set; }
+        public int ConsecutiveFailures { get; set; }
+        public string? LastSuccessAt { get; set; }
+        public int? LastRefreshJobsCount { get; set; }
     }
 }

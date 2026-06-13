@@ -68,7 +68,18 @@ public sealed class GeminiClient : IAiClient
         await _rateLimiter.WaitAsync(Provider, ct);
         _usage.RecordCall(Provider);
 
-        var response = await _http.SendAsync(req, ct);
+        HttpResponseMessage response;
+        try
+        {
+            response = await _http.SendAsync(req, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Network-level failure (DNS, TLS, timeout): no HTTP status to record, but the
+            // outcome row tells the diagnostic CLI "this call attempted but never reached Google".
+            _usage.RecordCallOutcome(Provider, 0, $"{ex.GetType().Name}: {ex.Message}");
+            throw;
+        }
 
         // 429: classify and throw — RoutingAiClient decides whether to fall back to another
         // provider or escalate to the user dialog.
@@ -85,8 +96,10 @@ public sealed class GeminiClient : IAiClient
                             || body.Contains("requests_per_day", StringComparison.OrdinalIgnoreCase)
                             || body.Contains("PerDay", StringComparison.OrdinalIgnoreCase);
             var label = isDailyLimit ? "daily" : "per-minute";
-            // Truncate at 800 chars so the diagnostic includes Google's "violations" array
-            // (the part that tells us *which* quota dimension was hit) without flooding logs.
+            // Persist the verdict so post-mortems can tell daily-vs-RPM apart without re-running.
+            // Truncate at 800 chars to capture Google's "violations" array (which quota dimension
+            // was hit) without flooding the log table.
+            _usage.RecordCallOutcome(Provider, 429, $"({label}) retry-after {waitSec}s {Truncate(body, 800)}");
             throw new AiUnavailableException(
                 $"Gemini API HTTP 429 ({label}) — retry-after {waitSec}s. {Truncate(body, 800)}");
         }
@@ -96,6 +109,7 @@ public sealed class GeminiClient : IAiClient
             using var _ = response;
             var body = await response.Content.ReadAsStringAsync(ct);
             var msg = ExtractErrorMessage(body) ?? Truncate(body, 300);
+            _usage.RecordCallOutcome(Provider, (int)response.StatusCode, Truncate(body, 400));
             throw new AiUnavailableException($"Gemini API HTTP {(int)response.StatusCode} — {msg}");
         }
         using var _ok = response;
@@ -113,6 +127,7 @@ public sealed class GeminiClient : IAiClient
         var inTok  = parsed.UsageMetadata?.PromptTokenCount ?? 0;
         var outTok = parsed.UsageMetadata?.CandidatesTokenCount ?? 0;
         _usage.UpdateLastCallTokens(Provider, inTok, outTok);
+        _usage.RecordCallOutcome(Provider, 200);
 
         return new AiResponse
         {

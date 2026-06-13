@@ -10,10 +10,31 @@ public interface IRunLogger
     /// <summary>Open a new step within a run. Returns the step id.</summary>
     long StartStep(long runId, string stepName);
 
-    /// <summary>Close a step. Counts default to 0.</summary>
+    /// <summary>Close a step. Counts default to 0.
+    /// <paramref name="outcomeKind"/> is the finer-grained classification from
+    /// <see cref="OutcomeKind"/> — pass it whenever the caller knows *why* the step ended
+    /// the way it did (e.g. "fetch_4xx", "ai_hallucination_rejected"). Status remains the
+    /// coarse run-level rollup; outcome_kind is what `runs show` and dashboards filter on.</summary>
     void FinishStep(long stepId, string status,
                      int examined = 0, int added = 0, int updated = 0,
-                     int skipped = 0, int failed = 0, string? errorMessage = null);
+                     int skipped = 0, int failed = 0, string? errorMessage = null,
+                     string? outcomeKind = null);
+
+    /// <summary>Record one stage attempt within a company refresh. Multiple attempts per company
+    /// are expected — the JobRefresher cascades through ats_api → cached_url → ai_extract. Use
+    /// <see cref="Logging.AttemptStage"/> + <see cref="Logging.AttemptResult"/> for stage / result
+    /// values so spellings stay consistent across the codebase.</summary>
+    void LogAttempt(long? runId, int? companyId, string stage, string? stageDetail,
+                    string result, int? httpStatus, int jobsYielded, long durationMs,
+                    string? errorMessage);
+
+    /// <summary>Record an AI extraction decision after the model returned. <paramref name="rawJobsCount"/>
+    /// is what the model said; <paramref name="acceptedCount"/> is what survived our filters
+    /// (citation check, location, dedup). The diff is what we rejected — and is the hallucination
+    /// signal.</summary>
+    void LogAiDecision(long? runId, int? companyId, string? sourceUrl, string provider,
+                       int rawJobsCount, int acceptedCount, int citationVerifiedCount,
+                       string? rejectedTitlesJson, bool suspectedHallucination);
 
     /// <summary>Close a run. Aggregates may come from caller; we also recompute from steps for safety.</summary>
     void FinishRun(long runId, string status,

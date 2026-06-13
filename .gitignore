@@ -27,3 +27,6 @@ Thumbs.db
 *.gguf
 Jobnet/AI/
 
+# Debug HTML snapshots from one-off scrapes — large, not source
+audit/
+

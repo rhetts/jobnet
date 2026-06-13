@@ -37,7 +37,8 @@ public sealed class RunLogger : IRunLogger
 
     public void FinishStep(long stepId, string status,
                             int examined = 0, int added = 0, int updated = 0,
-                            int skipped = 0, int failed = 0, string? errorMessage = null)
+                            int skipped = 0, int failed = 0, string? errorMessage = null,
+                            string? outcomeKind = null)
     {
         using var conn = _connections.Open();
         var startedAtIso = conn.ExecuteScalar<string>(
@@ -51,10 +52,66 @@ public sealed class RunLogger : IRunLogger
             SET finished_at = @finishedAt, duration_ms = @durationMs, status = @status,
                 items_examined = @examined, items_added = @added, items_updated = @updated,
                 items_skipped = @skipped, items_failed = @failed,
-                error_message = @errorMessage
+                error_message = @errorMessage, outcome_kind = @outcomeKind
             WHERE id = @stepId",
             new { stepId, finishedAt = finishedAt.ToString("o"), durationMs, status,
-                  examined, added, updated, skipped, failed, errorMessage });
+                  examined, added, updated, skipped, failed, errorMessage, outcomeKind });
+    }
+
+    public void LogAttempt(long? runId, int? companyId, string stage, string? stageDetail,
+                            string result, int? httpStatus, int jobsYielded, long durationMs,
+                            string? errorMessage)
+    {
+        // Fail-safe: telemetry inserts should never break the refresh pipeline. A locked DB,
+        // a constraint surprise, anything — swallow and keep going. The cost of a missing row
+        // is one diagnostic gap; the cost of bringing down a refresh is a wasted hour.
+        try
+        {
+            using var conn = _connections.Open();
+            conn.Execute(@"
+                INSERT INTO refresh_attempt
+                    (run_id, company_id, stage, stage_detail, started_at, duration_ms, result,
+                     http_status, jobs_yielded, error_message)
+                VALUES
+                    (@runId, @companyId, @stage, @stageDetail, @startedAt, @durationMs, @result,
+                     @httpStatus, @jobsYielded, @errorMessage)",
+                new {
+                    runId, companyId, stage, stageDetail,
+                    startedAt = DateTime.UtcNow.AddMilliseconds(-durationMs).ToString("o"),
+                    durationMs = (int)durationMs, result, httpStatus, jobsYielded, errorMessage
+                });
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[refresh_attempt] insert failed: {ex.Message}");
+        }
+    }
+
+    public void LogAiDecision(long? runId, int? companyId, string? sourceUrl, string provider,
+                               int rawJobsCount, int acceptedCount, int citationVerifiedCount,
+                               string? rejectedTitlesJson, bool suspectedHallucination)
+    {
+        try
+        {
+            using var conn = _connections.Open();
+            conn.Execute(@"
+                INSERT INTO ai_extraction_decisions
+                    (run_id, company_id, source_url, provider, raw_jobs_count, accepted_count,
+                     citation_verified_count, rejected_titles, suspected_hallucination, decided_at)
+                VALUES
+                    (@runId, @companyId, @sourceUrl, @provider, @rawJobsCount, @acceptedCount,
+                     @citationVerifiedCount, @rejectedTitlesJson, @hallucination, @decidedAt)",
+                new {
+                    runId, companyId, sourceUrl, provider, rawJobsCount, acceptedCount,
+                    citationVerifiedCount, rejectedTitlesJson,
+                    hallucination = suspectedHallucination ? 1 : 0,
+                    decidedAt = DateTime.UtcNow.ToString("o")
+                });
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[ai_extraction_decisions] insert failed: {ex.Message}");
+        }
     }
 
     public void FinishRun(long runId, string status,

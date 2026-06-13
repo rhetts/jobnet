@@ -4,7 +4,7 @@ namespace Jobnet.Services.Parsing;
 
 /// <summary>
 /// AI-derived "how to find jobs on this site" profile. Stored as JSON in
-/// companies.parser_strategy and replayed deterministically by <see cref="SelectorParser"/>
+/// companies.parser_strategy and replayed deterministically by <see cref="SelectorProfileReplayer"/>
 /// in place of the per-refresh AI extraction call.
 ///
 /// Selector syntax: CSS selector for the element, with an optional <c>@attr</c> suffix

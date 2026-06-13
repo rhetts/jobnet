@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Net.Http;
+using System.Net.Http.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
@@ -44,6 +45,28 @@ public sealed class AtsDetector : IAtsDetector
         (new Regex(@"^https?://(?<slug>[a-z0-9-]+)\.workable\.com",                                                                 RegexOptions.IgnoreCase), "workable"),
         (new Regex(@"^https?://careers\.smartrecruiters\.com/(?<slug>[a-zA-Z0-9-]+)",                                               RegexOptions.IgnoreCase), "smartrecruiters"),
         (new Regex(@"^https?://(?<slug>[a-z0-9-]+)\.recruitee\.com",                                                                RegexOptions.IgnoreCase), "recruitee"),
+        // BambooHR — subdomain is the slug. Matches both root and /careers/* paths.
+        (new Regex(@"^https?://(?<slug>[a-z0-9-]+)\.bamboohr\.com",                                                                 RegexOptions.IgnoreCase), "bamboohr"),
+        // Pinpoint — UK ATS hosted at {slug}.pinpointhq.com. Public API at /postings.json
+        // returns the full job list with no auth.
+        (new Regex(@"^https?://(?<slug>[a-z0-9-]+)\.pinpointhq\.com",                                                                RegexOptions.IgnoreCase), "pinpoint"),
+        // Workday — slug is host + first path segment (e.g. aritzia.wd3.myworkdayjobs.com/External).
+        // We capture both via separate groups, then assemble in CombineWorkdaySlug below.
+        (new Regex(@"^https?://(?<wdhost>[a-z0-9-]+\.wd\d+\.myworkdayjobs\.com)/(?<wdsite>[a-zA-Z0-9_-]+)",                          RegexOptions.IgnoreCase), "workday"),
+
+        // TODO Rise People — Canadian HRIS hosted at careers.risepeople.com/{slug}/en. Two
+        // confirmed customers in the DB so far (PainWorth, Foresight Canada) and likely more
+        // as we add Canadian small-mid companies. NOT wired in here yet because:
+        //   - The page is a pure Angular SPA (1.2 KB shell + a 2.4 MB JS bundle).
+        //   - The API gateway at https://gateway.risepeople.com/api/v2/... returns 401 to
+        //     anonymous requests; the bundle constructs an `Authorization: Basic ...` header
+        //     at runtime via btoa(user+":"+pass). The user/pass values aren't string literals
+        //     — they're derived in code, which would take real reverse-engineering to crack.
+        //   - Until then, Rise People companies fall through to the AI-extract path (Playwright
+        //     renders the SPA, AI extracts jobs from the rendered DOM). That works fine, just
+        //     costs an AI call per refresh instead of a free API hit.
+        // When implementing: probe Network panel for the actual Authorization header value while
+        // the SPA is live, see if it's a static "public" credential or per-session-issued.
     };
 
     // HTML fingerprints — found in the page body when a company embeds a third-party board.
@@ -59,6 +82,9 @@ public sealed class AtsDetector : IAtsDetector
         (new Regex(@"(?:src|href)=[""']https?://apply\.workable\.com/(?<slug>[a-z0-9-]+)",                                                  RegexOptions.IgnoreCase), "workable"),
         (new Regex(@"(?:src|href)=[""']https?://careers\.smartrecruiters\.com/(?<slug>[a-zA-Z0-9-]+)",                                      RegexOptions.IgnoreCase), "smartrecruiters"),
         (new Regex(@"(?:src|href)=[""']https?://(?<slug>[a-z0-9-]+)\.recruitee\.com",                                                       RegexOptions.IgnoreCase), "recruitee"),
+        (new Regex(@"(?:src|href)=[""']https?://(?<slug>[a-z0-9-]+)\.bamboohr\.com",                                                        RegexOptions.IgnoreCase), "bamboohr"),
+        (new Regex(@"(?:src|href)=[""']https?://(?<slug>[a-z0-9-]+)\.pinpointhq\.com",                                                       RegexOptions.IgnoreCase), "pinpoint"),
+        (new Regex(@"(?:src|href)=[""']https?://(?<wdhost>[a-z0-9-]+\.wd\d+\.myworkdayjobs\.com)/(?<wdsite>[a-zA-Z0-9_-]+)",                 RegexOptions.IgnoreCase), "workday"),
     };
 
     // Markerless fingerprints — page hints at an ATS but no URL+slug is in the static HTML.
@@ -85,6 +111,9 @@ public sealed class AtsDetector : IAtsDetector
         (new Regex(@"https?://apply\.workable\.com/(?<slug>[a-z0-9][a-z0-9-]{1,60})",                 RegexOptions.IgnoreCase), "workable"),
         (new Regex(@"https?://careers\.smartrecruiters\.com/(?<slug>[a-zA-Z0-9][a-zA-Z0-9-]{1,60})",  RegexOptions.IgnoreCase), "smartrecruiters"),
         (new Regex(@"https?://(?<slug>[a-z0-9][a-z0-9-]{1,60})\.recruitee\.com",                      RegexOptions.IgnoreCase), "recruitee"),
+        (new Regex(@"https?://(?<slug>[a-z0-9][a-z0-9-]{1,60})\.bamboohr\.com",                       RegexOptions.IgnoreCase), "bamboohr"),
+        (new Regex(@"https?://(?<slug>[a-z0-9][a-z0-9-]{1,60})\.pinpointhq\.com",                      RegexOptions.IgnoreCase), "pinpoint"),
+        (new Regex(@"https?://(?<wdhost>[a-z0-9-]+\.wd\d+\.myworkdayjobs\.com)/(?<wdsite>[a-zA-Z0-9_-]+)",  RegexOptions.IgnoreCase), "workday"),
     };
 
     // Layer 2: anchor text patterns that suggest the link points to the real jobs page.
@@ -238,7 +267,7 @@ public sealed class AtsDetector : IAtsDetector
                         return new AtsDetectionResult
                         {
                             AtsType = ats,
-                            AtsSlug = m.Groups["slug"].Value.ToLowerInvariant(),
+                            AtsSlug = SlugFromMatch(m, ats),
                             ResolvedCareersUrl = rendered.FinalUrl,
                             Source = "playwright_network",
                             Notes = $"caught via observed XHR to {req.Url}"
@@ -276,7 +305,7 @@ public sealed class AtsDetector : IAtsDetector
                     return new AtsDetectionResult
                     {
                         AtsType = ats,
-                        AtsSlug = m.Groups["slug"].Value.ToLowerInvariant(),
+                        AtsSlug = SlugFromMatch(m, ats),
                         ResolvedCareersUrl = rendered.FinalUrl,
                         Source = "playwright_redirect",
                     };
@@ -292,7 +321,7 @@ public sealed class AtsDetector : IAtsDetector
                     return new AtsDetectionResult
                     {
                         AtsType = ats,
-                        AtsSlug = m.Groups["slug"].Value.ToLowerInvariant(),
+                        AtsSlug = SlugFromMatch(m, ats),
                         ResolvedCareersUrl = rendered.FinalUrl,
                         Source = "playwright_html",
                     };
@@ -328,6 +357,13 @@ public sealed class AtsDetector : IAtsDetector
 
     private async Task<bool> VerifySlugAsync(string ats, string slug, CancellationToken ct)
     {
+        // BambooHR and Workday don't fit the simple "GET an endpoint" pattern of the others.
+        // Workday in particular requires a POST. Handle them on their own paths first.
+        if (ats == "bamboohr")
+            return await VerifyBambooHRAsync(slug, ct);
+        if (ats == "workday")
+            return await VerifyWorkdayAsync(slug, ct);
+
         var verifyUrl = ats switch
         {
             "greenhouse"      => $"https://boards-api.greenhouse.io/v1/boards/{slug}/jobs",
@@ -335,6 +371,7 @@ public sealed class AtsDetector : IAtsDetector
             "ashby"           => $"https://api.ashbyhq.com/posting-api/job-board/{slug}",
             "workable"        => $"https://{slug}.workable.com/api/v3/jobs",
             "smartrecruiters" => $"https://api.smartrecruiters.com/v1/companies/{slug}/postings?limit=1",
+            "pinpoint"        => $"https://{slug}.pinpointhq.com/postings.json",
             _                 => null,
         };
         if (verifyUrl is null) return false;
@@ -346,13 +383,68 @@ public sealed class AtsDetector : IAtsDetector
             using var resp = await _http.GetAsync(verifyUrl, ct);
             if (!resp.IsSuccessStatusCode) return false;
             var body = await resp.Content.ReadAsStringAsync(ct);
-            // Lenient: any 200 with non-empty body is a strong signal. (Empty arrays for inactive boards are still valid.)
             return body.Length > 10;
         }
         catch
         {
             return false;
         }
+    }
+
+    private async Task<bool> VerifyBambooHRAsync(string slug, CancellationToken ct)
+    {
+        await _rateLimiter.WaitAsync(Provider, ct);
+        _usage.RecordCall(Provider);
+        try
+        {
+            using var resp = await _http.GetAsync($"https://{slug}.bamboohr.com/careers/list", ct);
+            if (!resp.IsSuccessStatusCode) return false;
+            var body = await resp.Content.ReadAsStringAsync(ct);
+            return body.Contains("\"result\"", StringComparison.Ordinal);
+        }
+        catch { return false; }
+    }
+
+    private async Task<bool> VerifyWorkdayAsync(string slug, CancellationToken ct)
+    {
+        // Slug format: host/site. Issue a 1-result POST to confirm the endpoint responds.
+        var sep = slug.IndexOf('/');
+        if (sep <= 0 || sep == slug.Length - 1) return false;
+        var host = slug[..sep];
+        var site = slug[(sep + 1)..];
+        var tenantDot = host.IndexOf('.');
+        if (tenantDot <= 0) return false;
+        var tenant = host[..tenantDot];
+
+        await _rateLimiter.WaitAsync(Provider, ct);
+        _usage.RecordCall(Provider);
+        try
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Post, $"https://{host}/wday/cxs/{tenant}/{site}/jobs")
+            {
+                Content = JsonContent.Create(new { appliedFacets = new { }, limit = 1, offset = 0, searchText = "" })
+            };
+            req.Headers.Add("Accept", "application/json");
+            using var resp = await _http.SendAsync(req, ct);
+            if (!resp.IsSuccessStatusCode) return false;
+            var body = await resp.Content.ReadAsStringAsync(ct);
+            return body.Contains("\"jobPostings\"", StringComparison.Ordinal);
+        }
+        catch { return false; }
+    }
+
+    /// <summary>Pulls the ATS slug from a regex match. For most ATSes this is the literal
+    /// <c>slug</c> capture; Workday is special-cased because it has two captures (<c>wdhost</c>
+    /// + <c>wdsite</c>) that combine into the opaque slug stored on the company.</summary>
+    private static string SlugFromMatch(Match m, string ats)
+    {
+        if (ats == "workday")
+        {
+            var host = m.Groups["wdhost"].Value.ToLowerInvariant();
+            var site = m.Groups["wdsite"].Value;   // case-sensitive — Workday paths can be CamelCase
+            return $"{host}/{site}";
+        }
+        return m.Groups["slug"].Value.ToLowerInvariant();
     }
 
     /// <summary>Plausible slug candidates from the company domain — most common ATS slug patterns.</summary>
@@ -402,7 +494,7 @@ public sealed class AtsDetector : IAtsDetector
                 return new AtsDetectionResult
                 {
                     AtsType = ats,
-                    AtsSlug = m.Groups["slug"].Value.ToLowerInvariant(),
+                    AtsSlug = SlugFromMatch(m, ats),
                     ResolvedCareersUrl = finalUrl,
                     Source = "redirect",
                 };
@@ -431,7 +523,7 @@ public sealed class AtsDetector : IAtsDetector
                 return new AtsDetectionResult
                 {
                     AtsType = ats,
-                    AtsSlug = m.Groups["slug"].Value.ToLowerInvariant(),
+                    AtsSlug = SlugFromMatch(m, ats),
                     ResolvedCareersUrl = finalUrl,
                     Source = "html_fingerprint",
                 };
@@ -446,7 +538,7 @@ public sealed class AtsDetector : IAtsDetector
         {
             var m = pattern.Match(body);
             if (!m.Success) continue;
-            var slug = m.Groups["slug"].Value.ToLowerInvariant();
+            var slug = SlugFromMatch(m, ats);
             if (string.IsNullOrEmpty(slug)) continue;
             if (await VerifySlugAsync(ats, slug, ct))
             {

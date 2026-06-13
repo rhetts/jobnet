@@ -8,16 +8,16 @@ using AngleSharp.Dom;
 using AngleSharp.Html.Parser;
 using Jobnet.Data.Repositories;
 using Jobnet.Services.Ai;
-using Jobnet.Services.AtsAdapters;
+using Jobnet.Services.JobSources;
 
 namespace Jobnet.Services.Parsing;
 
 /// <summary>
 /// One-shot AI pass that turns a careers-page HTML into a reusable <see cref="SelectorProfile"/>.
 /// Called the first time we encounter a non-native-ATS company (and on drift) — every subsequent
-/// refresh replays the cached profile via <see cref="SelectorParser"/> with no AI involvement.
+/// refresh replays the cached profile via <see cref="SelectorProfileReplayer"/> with no AI involvement.
 ///
-/// The deriver sanity-checks the AI's output by running the profile through SelectorParser
+/// The deriver sanity-checks the AI's output by running the profile through SelectorProfileReplayer
 /// before returning. A profile that produces zero jobs against the very HTML it was derived
 /// from is discarded — the caller treats that as a derivation failure and either falls back to
 /// AI extraction for this refresh or surfaces it on the Parser Report screen.
@@ -25,7 +25,7 @@ namespace Jobnet.Services.Parsing;
 public sealed class AiSelectorDeriver
 {
     private readonly IAiClient _ai;
-    private readonly SelectorParser _parser;
+    private readonly SelectorProfileReplayer _parser;
     private readonly IConfigRepository _config;
 
     /// <summary>Conservative default sized to fit in a 4K-context local model alongside the
@@ -34,7 +34,7 @@ public sealed class AiSelectorDeriver
     /// the <c>selector_deriver_max_html_chars</c> config key.</summary>
     private const int DefaultMaxHtmlChars = 8_000;
 
-    public AiSelectorDeriver(IAiClient ai, SelectorParser parser, IConfigRepository config)
+    public AiSelectorDeriver(IAiClient ai, SelectorProfileReplayer parser, IConfigRepository config)
     {
         _ai = ai;
         _parser = parser;

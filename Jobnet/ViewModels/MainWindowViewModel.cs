@@ -11,7 +11,7 @@ using CommunityToolkit.Mvvm.Input;
 using Jobnet.Models;
 using Jobnet.Data.Repositories;
 using Jobnet.Services;
-using Jobnet.Services.AtsAdapters;
+using Jobnet.Services.JobSources;
 using Jobnet.Services.Discovery;
 using Jobnet.Views;
 

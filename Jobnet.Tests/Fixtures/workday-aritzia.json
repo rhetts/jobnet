@@ -1,0 +1,28 @@
+{
+  "total": 457,
+  "jobPostings": [
+    {
+      "title": "Digital - Senior Manager/Manager, Customer",
+      "externalPath": "/job/Support-Office-Seattle/Digital---Manager--Customer-Enablement_R0022014",
+      "locationsText": "Support Office (Seattle)",
+      "postedOn": "Posted Today",
+      "bulletFields": ["Seattle (Market/Region)", "R0022014"]
+    },
+    {
+      "title": "Style Advisor — Vancouver",
+      "externalPath": "/job/Vancouver-Pacific-Centre/Style-Advisor_R0021800",
+      "locationsText": "Pacific Centre, Vancouver, BC",
+      "postedOn": "Posted 3 Days Ago",
+      "bulletFields": ["Vancouver (Market/Region)", "R0021800"]
+    },
+    {
+      "title": "Remote Software Engineer",
+      "externalPath": "/job/Remote/Software-Engineer_R0021990",
+      "locationsText": "Remote (Canada)",
+      "postedOn": "Posted Yesterday",
+      "bulletFields": ["R0021990"]
+    }
+  ],
+  "facets": [],
+  "userAuthenticated": false
+}

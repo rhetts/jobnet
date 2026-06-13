@@ -4,17 +4,22 @@ using System.Threading;
 using System.Threading.Tasks;
 using Jobnet.Models;
 
-namespace Jobnet.Services.AtsAdapters;
+namespace Jobnet.Services.JobSources;
 
 public interface IJobRefresher
 {
-    Task<JobRefreshReport> RefreshAsync(Company company, CancellationToken ct = default);
+    /// <summary><paramref name="runId"/> is the parent <c>run_log.id</c> — when supplied, the
+    /// refresher writes per-stage attempts into <c>refresh_attempt</c> tied to this run, and
+    /// API calls made during the refresh are stamped with run + company in api_call_log. Pass
+    /// null only when called outside a tracked run (one-off CLI parse-page etc.).</summary>
+    Task<JobRefreshReport> RefreshAsync(Company company, CancellationToken ct = default, long? runId = null);
     /// <summary>Refresh every known company. If <paramref name="minDaysSinceLastScan"/> &gt; 0,
     /// companies whose <c>DateLastScan</c> is within that window are skipped (their counts go into
     /// <see cref="JobRefreshReport.CompaniesSkippedRecent"/>). If <paramref name="progress"/> is
     /// supplied, the refresher reports a tick after each company finishes processing — useful for
-    /// driving a live status bar in the UI since this method can run for hours on a full sweep.</summary>
-    Task<JobRefreshReport> RefreshAllAsync(int minDaysSinceLastScan = 0, IProgress<JobRefreshProgress>? progress = null, CancellationToken ct = default);
+    /// driving a live status bar in the UI since this method can run for hours on a full sweep.
+    /// <paramref name="runId"/> threads through to refresh_attempt/api_call_log telemetry.</summary>
+    Task<JobRefreshReport> RefreshAllAsync(int minDaysSinceLastScan = 0, IProgress<JobRefreshProgress>? progress = null, CancellationToken ct = default, long? runId = null);
 }
 
 public sealed class JobRefreshProgress
@@ -27,6 +32,16 @@ public sealed class JobRefreshProgress
     public required int JobsAddedSoFar { get; init; }
     public required int JobsUpdatedSoFar { get; init; }
     public required int ErrorsSoFar { get; init; }
+
+    /// <summary>Set only on the "done" tick. Per-company outcome classification (one of the
+    /// <see cref="Logging.OutcomeKind"/> constants). The ViewModel passes this into FinishStep
+    /// so the run history can be sliced by outcome later.</summary>
+    public string? OutcomeKind { get; init; }
+
+    /// <summary>Set only on the "done" tick when this company errored. The actual exception
+    /// message — gets persisted as <c>run_step_log.error_message</c> so <c>runs show</c> can
+    /// surface it without joining anything.</summary>
+    public string? ErrorMessage { get; init; }
 }
 
 public sealed class JobRefreshReport

@@ -9,19 +9,23 @@ namespace Jobnet.Cli.Commands;
 public sealed class CompaniesListCommand : ICliCommand
 {
     public string Name => "companies-list";
-    public string Description => "List companies in the database.  Flags: --ats <type>, --limit <n>";
+    public string Description => "List companies in the database.  Flags: --ats <type>, --limit <n>, --include-inactive";
 
     public int Run(string[] args, IServiceProvider services)
     {
         var atsFilter = ParseArg(args, "--ats");
         var limit = int.TryParse(ParseArg(args, "--limit") ?? "0", out var n) ? n : 0;
+        var includeInactive = args.Contains("--include-inactive");
 
         var repo = services.GetRequiredService<ICompanyRepository>();
         var jobs = services.GetRequiredService<IJobRepository>();
         var counts = jobs.GetActiveCountsByCompany();
 
         var all = repo.GetAll();
-        var filtered = atsFilter is null ? all : all.Where(c => c.AtsType == atsFilter);
+        // Default to hiding inactive — they're retired entries and would otherwise pollute the
+        // top-level summary. The user can opt back in to see them with --include-inactive.
+        var filtered = includeInactive ? all.AsEnumerable() : all.Where(c => c.IsActive);
+        if (atsFilter is not null) filtered = filtered.Where(c => c.AtsType == atsFilter);
         if (limit > 0) filtered = filtered.Take(limit);
         var list = filtered.ToList();
 
@@ -42,7 +46,10 @@ public sealed class CompaniesListCommand : ICliCommand
                 InterestLevel.NotInteresting => "-",
                 _ => " "
             };
-            Console.WriteLine($"{c.Id,-4}  {Trunc(c.Name, 22),-22}  {Trunc(c.Domain, 22),-22}  {Trunc(c.City ?? "", 12),-12}  {Trunc(c.AtsType ?? "", 10),-10}  {interest,-3}  {jobCount}");
+            // Suffix the name with " (inactive)" so a user passing --include-inactive can spot
+            // retired entries without reading the trailing flags column.
+            var displayName = c.IsActive ? c.Name : c.Name + " (inactive)";
+            Console.WriteLine($"{c.Id,-4}  {Trunc(displayName, 22),-22}  {Trunc(c.Domain, 22),-22}  {Trunc(c.City ?? "", 12),-12}  {Trunc(c.AtsType ?? "", 10),-10}  {interest,-3}  {jobCount}");
         }
         Console.WriteLine();
         Console.WriteLine($"{list.Count} compan{(list.Count == 1 ? "y" : "ies")} shown.");

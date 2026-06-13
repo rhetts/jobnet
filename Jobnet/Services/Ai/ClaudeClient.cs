@@ -66,7 +66,21 @@ public sealed class ClaudeClient : IAiClient
         await _rateLimiter.WaitAsync(Provider, ct);
         _usage.RecordCall(Provider);
 
-        using var response = await _http.SendAsync(req, ct);
+        HttpResponseMessage response;
+        try
+        {
+            response = await _http.SendAsync(req, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Network-level failure (DNS, TLS, timeout): no HTTP status, but log the attempt so
+            // the post-mortem CLI can tell "call started but never reached Anthropic" apart from
+            // "call never started".
+            _usage.RecordCallOutcome(Provider, 0, $"{ex.GetType().Name}: {ex.Message}");
+            throw;
+        }
+
+        using var _disposeResponse = response;
         if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
         {
             var body = await response.Content.ReadAsStringAsync(ct);
@@ -75,12 +89,14 @@ public sealed class ClaudeClient : IAiClient
                        || body.Contains("daily", StringComparison.OrdinalIgnoreCase)
                        || (snapshot.RpdCap > 0 && snapshot.Rpd >= snapshot.RpdCap);
             var label = isDaily ? "daily" : "per-minute";
+            _usage.RecordCallOutcome(Provider, 429, $"({label}) {Truncate(body, 400)}");
             throw new AiUnavailableException($"Claude API HTTP 429 ({label}) — {Truncate(body, 300)}");
         }
         if (!response.IsSuccessStatusCode)
         {
             var body = await response.Content.ReadAsStringAsync(ct);
             var msg = ExtractErrorMessage(body) ?? Truncate(body, 300);
+            _usage.RecordCallOutcome(Provider, (int)response.StatusCode, Truncate(body, 400));
             throw new AiUnavailableException($"Claude API HTTP {(int)response.StatusCode} — {msg}");
         }
 
@@ -91,6 +107,7 @@ public sealed class ClaudeClient : IAiClient
         var inTok  = parsed.Usage?.InputTokens ?? 0;
         var outTok = parsed.Usage?.OutputTokens ?? 0;
         _usage.UpdateLastCallTokens(Provider, inTok, outTok);
+        _usage.RecordCallOutcome(Provider, 200);
 
         return new AiResponse
         {

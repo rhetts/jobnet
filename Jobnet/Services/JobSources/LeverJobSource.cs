@@ -8,9 +8,9 @@ using System.Threading.Tasks;
 using Jobnet.Services.ApiUsage;
 using Jobnet.Services.RateLimit;
 
-namespace Jobnet.Services.AtsAdapters;
+namespace Jobnet.Services.JobSources;
 
-public sealed class LeverJobSource : IAtsJobSource
+public sealed class LeverJobSource : IJobSource
 {
     public const string Provider = "ats_lever";
     public string AtsType => "lever";

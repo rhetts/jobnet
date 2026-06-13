@@ -1,0 +1,39 @@
+{
+  "meta": {
+    "fieldLabels": {
+      "department": "Department",
+      "location": "Location"
+    }
+  },
+  "result": [
+    {
+      "id": "18",
+      "jobOpeningName": "Business Development Representative",
+      "departmentId": "18445",
+      "departmentLabel": "Sales",
+      "employmentStatusLabel": "Full-Time",
+      "location": { "city": "Vancouver", "state": "British Columbia" },
+      "atsLocation": { "country": null, "state": null, "province": null, "city": null },
+      "isRemote": null,
+      "locationType": "2"
+    },
+    {
+      "id": "21",
+      "jobOpeningName": "Senior Cloud Architect",
+      "departmentLabel": "Engineering",
+      "employmentStatusLabel": "Full-Time",
+      "location": { "city": "Vancouver", "state": "British Columbia" },
+      "isRemote": true,
+      "locationType": "3"
+    },
+    {
+      "id": "33",
+      "jobOpeningName": "Marketing Coordinator (Part-time)",
+      "departmentLabel": "Marketing",
+      "employmentStatusLabel": "Part-Time",
+      "location": { "city": "Burnaby", "state": "British Columbia" },
+      "isRemote": false,
+      "locationType": "4"
+    }
+  ]
+}

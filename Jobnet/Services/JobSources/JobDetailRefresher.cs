@@ -9,7 +9,7 @@ using Jobnet.Data.Repositories;
 using Jobnet.Services.ApiUsage;
 using Jobnet.Services.RateLimit;
 
-namespace Jobnet.Services.AtsAdapters;
+namespace Jobnet.Services.JobSources;
 
 public interface IJobDetailRefresher
 {

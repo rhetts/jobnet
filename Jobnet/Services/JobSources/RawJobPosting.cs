@@ -1,4 +1,4 @@
-namespace Jobnet.Services.AtsAdapters;
+namespace Jobnet.Services.JobSources;
 
 /// <summary>Normalized job posting as returned by an ATS adapter. All fields optional except Title + NativeId.</summary>
 public sealed class RawJobPosting

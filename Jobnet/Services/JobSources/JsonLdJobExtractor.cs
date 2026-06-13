@@ -4,7 +4,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
-namespace Jobnet.Services.AtsAdapters;
+namespace Jobnet.Services.JobSources;
 
 /// <summary>
 /// Extract JobPosting entries from JSON-LD &lt;script type="application/ld+json"&gt; blocks.

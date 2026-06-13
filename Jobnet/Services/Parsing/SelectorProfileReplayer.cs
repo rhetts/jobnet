@@ -4,7 +4,7 @@ using System.Linq;
 using System.Text.Json;
 using AngleSharp.Dom;
 using AngleSharp.Html.Parser;
-using Jobnet.Services.AtsAdapters;
+using Jobnet.Services.JobSources;
 
 namespace Jobnet.Services.Parsing;
 
@@ -13,7 +13,7 @@ namespace Jobnet.Services.Parsing;
 /// into a list of jobs. Replaces the per-refresh AI call for companies on the AI-extract
 /// path once their profile has been derived. Pure CPU + DOM walk, no network, no LLM.
 /// </summary>
-public sealed class SelectorParser
+public sealed class SelectorProfileReplayer
 {
     /// <summary>Parse the given HTML with the given profile JSON. Returns an empty list if
     /// the profile is invalid or no cards match (caller treats either case as a drift signal
@@ -22,7 +22,7 @@ public sealed class SelectorParser
     {
         var profile = TryDeserializeProfile(profileJson);
         if (profile is null || !profile.IsValid())
-            throw new SelectorParseException("Profile JSON is missing required fields or has an unsupported version.");
+            throw new SelectorReplayException("Profile JSON is missing required fields or has an unsupported version.");
 
         var parser = new HtmlParser();
         var doc = parser.ParseDocument(html);
@@ -115,7 +115,7 @@ public sealed class SelectorParser
     }
 }
 
-public sealed class SelectorParseException : Exception
+public sealed class SelectorReplayException : Exception
 {
-    public SelectorParseException(string message) : base(message) { }
+    public SelectorReplayException(string message) : base(message) { }
 }

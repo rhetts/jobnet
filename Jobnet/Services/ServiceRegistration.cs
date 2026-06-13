@@ -107,30 +107,75 @@ internal static class ServiceRegistration
             client.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (compatible; Jobnet/0.6; +https://github.com/jobnet)");
         });
 
-        services.AddHttpClient<AtsAdapters.GreenhouseJobSource>(client =>
+        services.AddHttpClient<JobSources.GreenhouseJobSource>(client =>
         {
             client.Timeout = TimeSpan.FromSeconds(15);
             client.DefaultRequestHeaders.UserAgent.ParseAdd("Jobnet/0.5");
         });
-        services.AddHttpClient<AtsAdapters.LeverJobSource>(client =>
+        services.AddHttpClient<JobSources.LeverJobSource>(client =>
         {
             client.Timeout = TimeSpan.FromSeconds(15);
             client.DefaultRequestHeaders.UserAgent.ParseAdd("Jobnet/0.5");
         });
-        services.AddHttpClient<AtsAdapters.AshbyJobSource>(client =>
+        services.AddHttpClient<JobSources.AshbyJobSource>(client =>
         {
             client.Timeout = TimeSpan.FromSeconds(15);
             client.DefaultRequestHeaders.UserAgent.ParseAdd("Jobnet/0.5");
         });
-        services.AddSingleton<Parsing.SelectorParser>();
+        services.AddHttpClient<JobSources.BambooHRJobSource>(client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(15);
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("Jobnet/0.8");
+        });
+        services.AddHttpClient<JobSources.WorkdayJobSource>(client =>
+        {
+            // Workday tenants can be slow on first hit (cold cache) — bump the timeout.
+            client.Timeout = TimeSpan.FromSeconds(30);
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("Jobnet/0.8");
+        });
+        services.AddHttpClient<JobSources.WorkableJobSource>(client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(15);
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("Jobnet/0.8");
+        });
+        services.AddHttpClient<JobSources.SmartRecruitersJobSource>(client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(15);
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("Jobnet/0.8");
+        });
+        services.AddHttpClient<JobSources.PinpointJobSource>(client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(15);
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("Jobnet/0.9");
+        });
+        services.AddHttpClient<JobSources.AmazonJobSource>(client =>
+        {
+            // Amazon's search.json can be slow under load — give it room. Two pages of 100
+            // postings is ~200KB total, well within reason but the server response time varies.
+            client.Timeout = TimeSpan.FromSeconds(20);
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (compatible; Jobnet/1.0)");
+        });
+        services.AddSingleton<Parsing.SelectorProfileReplayer>();
         services.AddSingleton<Parsing.AiSelectorDeriver>();
-        services.AddSingleton<AtsAdapters.AiExtractedJobSource>();
-        services.AddSingleton<AtsAdapters.IAtsJobSource>(sp => sp.GetRequiredService<AtsAdapters.GreenhouseJobSource>());
-        services.AddSingleton<AtsAdapters.IAtsJobSource>(sp => sp.GetRequiredService<AtsAdapters.LeverJobSource>());
-        services.AddSingleton<AtsAdapters.IAtsJobSource>(sp => sp.GetRequiredService<AtsAdapters.AshbyJobSource>());
-        services.AddSingleton<AtsAdapters.IAtsJobSource>(sp => sp.GetRequiredService<AtsAdapters.AiExtractedJobSource>());
-        services.AddSingleton<AtsAdapters.IJobRefresher, AtsAdapters.JobRefresher>();
-        services.AddHttpClient<AtsAdapters.IJobDetailRefresher, AtsAdapters.JobDetailRefresher>(client =>
+        // Hand-written company parsers. Registration order = priority order — more-specific
+        // patterns first. The registry is what JobRefresher will probe before falling back to
+        // the AI-extract path.
+        services.AddSingleton<Parsing.HtmlPatternParsers.IHtmlPatternParser, Parsing.HtmlPatternParsers.LeverShortcodeParser>();
+        services.AddSingleton<Parsing.HtmlPatternParsers.IHtmlPatternParser, Parsing.HtmlPatternParsers.GreenhouseLinkParser>();
+        services.AddSingleton<Parsing.HtmlPatternParsers.HtmlPatternRegistry>();
+        services.AddSingleton<JobSources.AiFallbackJobSource>();
+        services.AddSingleton<JobSources.IJobSource>(sp => sp.GetRequiredService<JobSources.GreenhouseJobSource>());
+        services.AddSingleton<JobSources.IJobSource>(sp => sp.GetRequiredService<JobSources.LeverJobSource>());
+        services.AddSingleton<JobSources.IJobSource>(sp => sp.GetRequiredService<JobSources.AshbyJobSource>());
+        services.AddSingleton<JobSources.IJobSource>(sp => sp.GetRequiredService<JobSources.BambooHRJobSource>());
+        services.AddSingleton<JobSources.IJobSource>(sp => sp.GetRequiredService<JobSources.WorkdayJobSource>());
+        services.AddSingleton<JobSources.IJobSource>(sp => sp.GetRequiredService<JobSources.WorkableJobSource>());
+        services.AddSingleton<JobSources.IJobSource>(sp => sp.GetRequiredService<JobSources.SmartRecruitersJobSource>());
+        services.AddSingleton<JobSources.IJobSource>(sp => sp.GetRequiredService<JobSources.PinpointJobSource>());
+        services.AddSingleton<JobSources.IJobSource>(sp => sp.GetRequiredService<JobSources.AmazonJobSource>());
+        services.AddSingleton<JobSources.IJobSource>(sp => sp.GetRequiredService<JobSources.AiFallbackJobSource>());
+        services.AddSingleton<JobSources.IJobRefresher, JobSources.JobRefresher>();
+        services.AddHttpClient<JobSources.IJobDetailRefresher, JobSources.JobDetailRefresher>(client =>
         {
             client.Timeout = TimeSpan.FromSeconds(15);
             client.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (compatible; Jobnet/0.6; +https://github.com/jobnet)");

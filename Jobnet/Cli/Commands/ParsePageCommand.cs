@@ -1,5 +1,5 @@
 using System;
-using Jobnet.Services.AtsAdapters;
+using Jobnet.Services.JobSources;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Jobnet.Cli.Commands;
@@ -18,7 +18,7 @@ public sealed class ParsePageCommand : ICliCommand
         }
 
         var url = args[0];
-        var extractor = services.GetRequiredService<AiExtractedJobSource>();
+        var extractor = services.GetRequiredService<AiFallbackJobSource>();
         Console.WriteLine($"Rendering and parsing {url}...");
 
         try

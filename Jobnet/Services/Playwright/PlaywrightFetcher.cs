@@ -1,7 +1,9 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using Dapper;
 using Microsoft.Playwright;
+using Jobnet.Data;
 using Jobnet.Services.ApiUsage;
 using Jobnet.Services.RateLimit;
 
@@ -18,15 +20,17 @@ public sealed class PlaywrightFetcher : IPlaywrightFetcher, IAsyncDisposable
     private readonly SemaphoreSlim _initLock = new(1, 1);
     private readonly IApiUsageTracker _usage;
     private readonly IRateLimiter _rateLimiter;
+    private readonly IDbConnectionFactory _connections;
 
     private IPlaywright? _playwright;
     private IBrowser? _browser;
     private bool _disposed;
 
-    public PlaywrightFetcher(IApiUsageTracker usage, IRateLimiter rateLimiter)
+    public PlaywrightFetcher(IApiUsageTracker usage, IRateLimiter rateLimiter, IDbConnectionFactory connections)
     {
         _usage = usage;
         _rateLimiter = rateLimiter;
+        _connections = connections;
     }
 
     public async Task<PlaywrightFetchResult> FetchAsync(string url, CancellationToken ct = default)
@@ -34,6 +38,52 @@ public sealed class PlaywrightFetcher : IPlaywrightFetcher, IAsyncDisposable
         await _rateLimiter.WaitAsync(Provider, ct);
         _usage.RecordCall(Provider);
 
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        PlaywrightFetchResult? result = null;
+        try
+        {
+            result = await FetchInternalAsync(url, ct);
+            return result;
+        }
+        finally
+        {
+            sw.Stop();
+            // Persist a forensic record so "why did this AI extract get 0 jobs?" becomes one SQL
+            // query, not a guess. Includes the captured network-request count which is how we
+            // tell SPA renders from static pages without re-fetching. Stamped with company_id /
+            // run_id from the AsyncLocal scope if present.
+            try
+            {
+                var ctx = Jobnet.Services.Logging.RefreshContext.Current;
+                using var conn = _connections.Open();
+                var html = result?.Html ?? "";
+                var sha = html.Length > 0
+                    ? Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(html))).Substring(0, 32)
+                    : null;
+                conn.Execute(@"
+                    INSERT INTO page_fetches (company_id, url, fetched_at, http_status,
+                                              content_sha256, success, error_message)
+                    VALUES (@companyId, @url, @fetchedAt, @httpStatus,
+                            @sha, @success, @error)",
+                    new {
+                        companyId = ctx?.CompanyId,
+                        url,
+                        fetchedAt = DateTime.UtcNow.ToString("o"),
+                        httpStatus = result?.HttpStatus ?? 0,
+                        sha,
+                        success = (result?.Success ?? false) ? 1 : 0,
+                        error = result?.Error,
+                    });
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[page_fetches] insert failed: {ex.Message}");
+            }
+        }
+    }
+
+    private async Task<PlaywrightFetchResult> FetchInternalAsync(string url, CancellationToken ct)
+    {
         var browser = await EnsureBrowserAsync(ct);
         var context = await browser.NewContextAsync(new BrowserNewContextOptions
         {

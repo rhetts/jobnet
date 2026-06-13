@@ -1,7 +1,7 @@
 using System;
 using System.Text.RegularExpressions;
 
-namespace Jobnet.Services.AtsAdapters;
+namespace Jobnet.Services.JobSources;
 
 /// <summary>
 /// Cleans raw job description text into a UI-friendly snippet. Two passes:
