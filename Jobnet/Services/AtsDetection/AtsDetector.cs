@@ -54,19 +54,11 @@ public sealed class AtsDetector : IAtsDetector
         // We capture both via separate groups, then assemble in CombineWorkdaySlug below.
         (new Regex(@"^https?://(?<wdhost>[a-z0-9-]+\.wd\d+\.myworkdayjobs\.com)/(?<wdsite>[a-zA-Z0-9_-]+)",                          RegexOptions.IgnoreCase), "workday"),
 
-        // TODO Rise People — Canadian HRIS hosted at careers.risepeople.com/{slug}/en. Two
-        // confirmed customers in the DB so far (PainWorth, Foresight Canada) and likely more
-        // as we add Canadian small-mid companies. NOT wired in here yet because:
-        //   - The page is a pure Angular SPA (1.2 KB shell + a 2.4 MB JS bundle).
-        //   - The API gateway at https://gateway.risepeople.com/api/v2/... returns 401 to
-        //     anonymous requests; the bundle constructs an `Authorization: Basic ...` header
-        //     at runtime via btoa(user+":"+pass). The user/pass values aren't string literals
-        //     — they're derived in code, which would take real reverse-engineering to crack.
-        //   - Until then, Rise People companies fall through to the AI-extract path (Playwright
-        //     renders the SPA, AI extracts jobs from the rendered DOM). That works fine, just
-        //     costs an AI call per refresh instead of a free API hit.
-        // When implementing: probe Network panel for the actual Authorization header value while
-        // the SPA is live, see if it's a static "public" credential or per-session-issued.
+        // Rise People — Canadian HRIS, careers.risepeople.com/{slug}/en. The public API at
+        // gateway.risepeople.com/applicant_tracking/public/careers?company_uri={slug} accepts
+        // anonymous GETs — the Basic-auth path in the bundle is only for applicant submission.
+        // Slug = the first URL segment after the host.
+        (new Regex(@"^https?://careers\.risepeople\.com/(?<slug>[a-z0-9-]+)",                                       RegexOptions.IgnoreCase), "risepeople"),
     };
 
     // HTML fingerprints — found in the page body when a company embeds a third-party board.
@@ -84,6 +76,7 @@ public sealed class AtsDetector : IAtsDetector
         (new Regex(@"(?:src|href)=[""']https?://(?<slug>[a-z0-9-]+)\.recruitee\.com",                                                       RegexOptions.IgnoreCase), "recruitee"),
         (new Regex(@"(?:src|href)=[""']https?://(?<slug>[a-z0-9-]+)\.bamboohr\.com",                                                        RegexOptions.IgnoreCase), "bamboohr"),
         (new Regex(@"(?:src|href)=[""']https?://(?<slug>[a-z0-9-]+)\.pinpointhq\.com",                                                       RegexOptions.IgnoreCase), "pinpoint"),
+        (new Regex(@"(?:src|href)=[""']https?://careers\.risepeople\.com/(?<slug>[a-z0-9-]+)",                                              RegexOptions.IgnoreCase), "risepeople"),
         (new Regex(@"(?:src|href)=[""']https?://(?<wdhost>[a-z0-9-]+\.wd\d+\.myworkdayjobs\.com)/(?<wdsite>[a-zA-Z0-9_-]+)",                 RegexOptions.IgnoreCase), "workday"),
     };
 
@@ -113,6 +106,8 @@ public sealed class AtsDetector : IAtsDetector
         (new Regex(@"https?://(?<slug>[a-z0-9][a-z0-9-]{1,60})\.recruitee\.com",                      RegexOptions.IgnoreCase), "recruitee"),
         (new Regex(@"https?://(?<slug>[a-z0-9][a-z0-9-]{1,60})\.bamboohr\.com",                       RegexOptions.IgnoreCase), "bamboohr"),
         (new Regex(@"https?://(?<slug>[a-z0-9][a-z0-9-]{1,60})\.pinpointhq\.com",                      RegexOptions.IgnoreCase), "pinpoint"),
+        (new Regex(@"https?://careers\.risepeople\.com/(?<slug>[a-z0-9][a-z0-9-]{1,60})",              RegexOptions.IgnoreCase), "risepeople"),
+        (new Regex(@"https?://gateway\.risepeople\.com/applicant_tracking/public/careers\?company_uri=(?<slug>[a-z0-9-]+)", RegexOptions.IgnoreCase), "risepeople"),
         (new Regex(@"https?://(?<wdhost>[a-z0-9-]+\.wd\d+\.myworkdayjobs\.com)/(?<wdsite>[a-zA-Z0-9_-]+)",  RegexOptions.IgnoreCase), "workday"),
     };
 
@@ -372,6 +367,7 @@ public sealed class AtsDetector : IAtsDetector
             "workable"        => $"https://{slug}.workable.com/api/v3/jobs",
             "smartrecruiters" => $"https://api.smartrecruiters.com/v1/companies/{slug}/postings?limit=1",
             "pinpoint"        => $"https://{slug}.pinpointhq.com/postings.json",
+            "risepeople"      => $"https://gateway.risepeople.com/applicant_tracking/public/careers?company_uri={slug}&language=en",
             _                 => null,
         };
         if (verifyUrl is null) return false;

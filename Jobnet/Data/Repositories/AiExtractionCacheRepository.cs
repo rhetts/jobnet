@@ -30,6 +30,24 @@ public sealed class AiExtractionCacheRepository : IAiExtractionCacheRepository
         return row.JobsJson;
     }
 
+    public string? GetByUrlIfRecent(string url, int withinHours)
+    {
+        if (withinHours <= 0) return null;
+        using var conn = _connections.Open();
+        var row = conn.QuerySingleOrDefault<(string CachedAt, string JobsJson)>(@"
+            SELECT cached_at AS CachedAt, jobs_json AS JobsJson
+            FROM ai_extraction_cache WHERE url = @url", new { url });
+        if (row.JobsJson is null) return null;
+        if (!DateTime.TryParse(row.CachedAt, out var cachedAt)) return null;
+        if ((DateTime.UtcNow - cachedAt.ToUniversalTime()).TotalHours > withinHours) return null;
+        // Bump hit_count so we can distinguish "skipped by recency" from "skipped by content hash"
+        // — same column, but the gap between cached_at and the hit will be small (within the
+        // skip window) which is a cheap way to spot recency skips post-hoc if needed.
+        conn.Execute("UPDATE ai_extraction_cache SET hit_count = hit_count + 1 WHERE url = @url",
+            new { url });
+        return row.JobsJson;
+    }
+
     public void Put(string url, string contentHash, string jobsJson)
     {
         using var conn = _connections.Open();

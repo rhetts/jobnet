@@ -83,6 +83,7 @@ public sealed class RefreshDryRunCommand : ICliCommand
             "pinpoint"        => $"https://{c.AtsSlug}.pinpointhq.com/postings.json",
             "bamboohr"        => $"https://{c.AtsSlug}.bamboohr.com/careers/list",
             "amazon"          => "https://www.amazon.jobs/en/search.json?normalized_state_name%5B%5D=British+Columbia&result_limit=1",
+            "risepeople"      => $"https://gateway.risepeople.com/applicant_tracking/public/careers?company_uri={c.AtsSlug}&language=en",
             _                 => null,
         };
         if (url is null) return (null, "(unknown ATS type)");

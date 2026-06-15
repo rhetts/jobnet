@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Json;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
@@ -50,8 +52,8 @@ public sealed class LeverJobSource : IJobSource
                 EmploymentType = j.Categories?.Commitment?.ToLowerInvariant(),
                 Department = j.Categories?.Department ?? j.Categories?.Team,
                 DescriptionSnippet = SnippetCleaner.Clean(j.DescriptionPlain, maxChars: 500),
-                SalaryMin = j.SalaryRange?.Min,
-                SalaryMax = j.SalaryRange?.Max,
+                SalaryMin = ReadIntLoose(j.SalaryRange?.Min),
+                SalaryMax = ReadIntLoose(j.SalaryRange?.Max),
                 SalaryCurrency = j.SalaryRange?.Currency,
                 SalaryPeriod = NormalizeInterval(j.SalaryRange?.Interval),
             });
@@ -111,9 +113,40 @@ public sealed class LeverJobSource : IJobSource
 
     private sealed class SalaryRangeObj
     {
-        [JsonPropertyName("min")]      public int? Min { get; set; }
-        [JsonPropertyName("max")]      public int? Max { get; set; }
+        // Lever returns salaryRange.min/max as either an integer ("120000"), a quoted string
+        // ("$120,000"), or a float (120000.0) depending on which Match Group brand owns the
+        // posting. A strict int? mapping fails the entire batch on the first non-int row — that's
+        // what was killing the POF refresh on $[20].salaryRange.min. Use JsonElement so the
+        // deserialiser accepts anything, and convert ourselves with <see cref="ReadIntLoose"/>.
+        [JsonPropertyName("min")]      public JsonElement? Min { get; set; }
+        [JsonPropertyName("max")]      public JsonElement? Max { get; set; }
         [JsonPropertyName("currency")] public string? Currency { get; set; }
         [JsonPropertyName("interval")] public string? Interval { get; set; }
+    }
+
+    /// <summary>Best-effort int extraction from a JsonElement that could be Number, String, or
+    /// Null. Used for Lever's salaryRange.min/max where the value type varies by tenant. Returns
+    /// null on anything we can't coerce so a single oddball row doesn't break the batch.</summary>
+    private static int? ReadIntLoose(JsonElement? elt)
+    {
+        if (elt is not { } e) return null;
+        switch (e.ValueKind)
+        {
+            case JsonValueKind.Number:
+                if (e.TryGetInt32(out var n))   return n;
+                if (e.TryGetDouble(out var dn)) return (int)Math.Round(dn);
+                return null;
+            case JsonValueKind.String:
+                var s = e.GetString();
+                if (string.IsNullOrEmpty(s)) return null;
+                // Strip currency symbols and grouping separators ("$120,000" → "120000").
+                var cleaned = new string(s.Where(c => char.IsDigit(c) || c == '.' || c == '-').ToArray());
+                if (double.TryParse(cleaned, System.Globalization.NumberStyles.Float,
+                                     System.Globalization.CultureInfo.InvariantCulture, out var ds))
+                    return (int)Math.Round(ds);
+                return null;
+            default:
+                return null;
+        }
     }
 }

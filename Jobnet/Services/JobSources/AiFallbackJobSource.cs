@@ -130,6 +130,32 @@ public sealed class AiFallbackJobSource : IJobSource
     {
         var companyId = company?.Id ?? 0;
         LastParserUsed = null;
+
+        // ── URL-level recency skip ──────────────────────────────────────────────
+        // Cheap pre-check before Playwright: if we scraped this URL within the configured
+        // skip window, just return the cached jobs and avoid the entire Playwright + AI
+        // roundtrip. Default 0 (disabled). 6-12h is a sane setting for production — most
+        // careers pages don't churn faster than that.
+        //
+        // Bias: this trades freshness for cost. A page that adds a new posting within the
+        // window is missed until the window expires. Acceptable for AI-extract companies
+        // (which by definition aren't on a structured ATS) but the user can tune per
+        // their patience.
+        var skipHours = int.TryParse(_config.GetOrDefault("ai_extraction_url_skip_hours", "0"),
+                                      out var sh) ? sh : 0;
+        if (skipHours > 0)
+        {
+            var recent = _cache.GetByUrlIfRecent(url, skipHours);
+            if (recent is not null)
+            {
+                LastCacheHits++;
+                // No SetLastScan / MarkYielded here — those happen in the outer caller (JobRefresher)
+                // based on returned jobs. The whole point of this skip is to take a fast lane
+                // before any side effects.
+                return DeserializeCached(recent);
+            }
+        }
+
         var fetch = await _fetcher.FetchAsync(url, ct);
         PersistDiscoveredUrls(companyId, fetch);
 

@@ -155,6 +155,11 @@ internal static class ServiceRegistration
             client.Timeout = TimeSpan.FromSeconds(20);
             client.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (compatible; Jobnet/1.0)");
         });
+        services.AddHttpClient<JobSources.RisePeopleJobSource>(client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(15);
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("Jobnet/1.0");
+        });
         services.AddSingleton<Parsing.SelectorProfileReplayer>();
         services.AddSingleton<Parsing.AiSelectorDeriver>();
         // Hand-written company parsers. Registration order = priority order — more-specific
@@ -173,6 +178,7 @@ internal static class ServiceRegistration
         services.AddSingleton<JobSources.IJobSource>(sp => sp.GetRequiredService<JobSources.SmartRecruitersJobSource>());
         services.AddSingleton<JobSources.IJobSource>(sp => sp.GetRequiredService<JobSources.PinpointJobSource>());
         services.AddSingleton<JobSources.IJobSource>(sp => sp.GetRequiredService<JobSources.AmazonJobSource>());
+        services.AddSingleton<JobSources.IJobSource>(sp => sp.GetRequiredService<JobSources.RisePeopleJobSource>());
         services.AddSingleton<JobSources.IJobSource>(sp => sp.GetRequiredService<JobSources.AiFallbackJobSource>());
         services.AddSingleton<JobSources.IJobRefresher, JobSources.JobRefresher>();
         services.AddHttpClient<JobSources.IJobDetailRefresher, JobSources.JobDetailRefresher>(client =>
