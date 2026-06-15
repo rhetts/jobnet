@@ -1,0 +1,161 @@
+<Window x:Class="Jobnet.Views.StatsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="clr-namespace:Jobnet.ViewModels"
+        Title="Jobnet — Stats"
+        Width="640" Height="640"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        Background="#FAFAFA">
+    <Window.Resources>
+        <Style x:Key="SectionHeader" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Foreground" Value="#444"/>
+            <Setter Property="Margin" Value="0,12,0,4"/>
+        </Style>
+        <Style x:Key="MetricLabel" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="#666"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+        <Style x:Key="MetricValue" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="Consolas"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="HorizontalAlignment" Value="Right"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+    </Window.Resources>
+
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <Grid Grid.Row="0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="Stats" FontSize="16" FontWeight="SemiBold"/>
+            <Button Grid.Column="1" Content="Refresh" Padding="14,4" Command="{Binding RefreshCommand}"/>
+        </Grid>
+
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Margin="0,12,0,0">
+            <StackPanel>
+                <!-- COMPANIES -->
+                <TextBlock Style="{StaticResource SectionHeader}" Text="Companies"/>
+                <Border BorderBrush="#DDD" BorderThickness="1" Background="White" CornerRadius="3" Padding="12,8">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+                        <TextBlock Grid.Row="0" Grid.Column="0" Style="{StaticResource MetricLabel}" Text="Active"/>
+                        <TextBlock Grid.Row="0" Grid.Column="1" Style="{StaticResource MetricValue}" Text="{Binding CompaniesActive}"/>
+                        <TextBlock Grid.Row="1" Grid.Column="0" Style="{StaticResource MetricLabel}" Text="Inactive (retired)"/>
+                        <TextBlock Grid.Row="1" Grid.Column="1" Style="{StaticResource MetricValue}" Text="{Binding CompaniesInactive}" Foreground="#888"/>
+                        <TextBlock Grid.Row="2" Grid.Column="0" Style="{StaticResource MetricLabel}" Text="Total"/>
+                        <TextBlock Grid.Row="2" Grid.Column="1" Style="{StaticResource MetricValue}" Text="{Binding CompaniesTotal}"/>
+                    </Grid>
+                </Border>
+
+                <!-- JOBS -->
+                <TextBlock Style="{StaticResource SectionHeader}" Text="Jobs"/>
+                <Border BorderBrush="#DDD" BorderThickness="1" Background="White" CornerRadius="3" Padding="12,8">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+                        <TextBlock Grid.Row="0" Grid.Column="0" Style="{StaticResource MetricLabel}" Text="Active"/>
+                        <TextBlock Grid.Row="0" Grid.Column="1" Style="{StaticResource MetricValue}" Text="{Binding JobsActive}"/>
+                        <TextBlock Grid.Row="1" Grid.Column="0" Style="{StaticResource MetricLabel}" Text="Removed (no longer in source ATS)"/>
+                        <TextBlock Grid.Row="1" Grid.Column="1" Style="{StaticResource MetricValue}" Text="{Binding JobsRemoved}" Foreground="#888"/>
+                        <TextBlock Grid.Row="2" Grid.Column="0" Style="{StaticResource MetricLabel}" Text="Total"/>
+                        <TextBlock Grid.Row="2" Grid.Column="1" Style="{StaticResource MetricValue}" Text="{Binding JobsTotal}"/>
+                        <TextBlock Grid.Row="3" Grid.Column="0" Style="{StaticResource MetricLabel}" Text="Active jobs with AI summary"/>
+                        <TextBlock Grid.Row="3" Grid.Column="1" Style="{StaticResource MetricValue}" Text="{Binding JobsWithSummary}"/>
+                        <TextBlock Grid.Row="4" Grid.Column="0" Style="{StaticResource MetricLabel}" Text="Active jobs with resume score"/>
+                        <TextBlock Grid.Row="4" Grid.Column="1" Style="{StaticResource MetricValue}" Text="{Binding JobsWithResumeMatch}"/>
+                    </Grid>
+                </Border>
+
+                <!-- QUEUE -->
+                <TextBlock Style="{StaticResource SectionHeader}" Text="Background queue"/>
+                <Border BorderBrush="#DDD" BorderThickness="1" Background="White" CornerRadius="3" Padding="12,8">
+                    <StackPanel>
+                        <TextBlock Foreground="#888" FontSize="11" Margin="0,0,0,6"
+                                   Text="Workers run continuously while Jobnet is open. Pending rows drain at the configured poll interval."/>
+                        <ItemsControl ItemsSource="{Binding Queue}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate DataType="{x:Type vm:QueueRow}">
+                                    <Grid Margin="0,2">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="160"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="{Binding TaskType}" FontFamily="Consolas" FontSize="11" Foreground="#444"/>
+                                        <TextBlock Grid.Column="1" Text="{Binding Status}"   FontFamily="Consolas" FontSize="11" Foreground="#666"/>
+                                        <TextBlock Grid.Column="2" Text="{Binding Count}"    FontFamily="Consolas" FontSize="13" FontWeight="SemiBold"/>
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <TextBlock Text="(queue is empty)" Foreground="#888" FontStyle="Italic" FontSize="11" Margin="0,4,0,0">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding Queue.Count}" Value="0">
+                                            <Setter Property="Visibility" Value="Visible"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                    </StackPanel>
+                </Border>
+
+                <!-- PARSER SYSTEM BREAKDOWN -->
+                <TextBlock Style="{StaticResource SectionHeader}" Text="Companies by extraction system"/>
+                <Border BorderBrush="#DDD" BorderThickness="1" Background="White" CornerRadius="3" Padding="12,8">
+                    <ItemsControl ItemsSource="{Binding ParserSystems}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate DataType="{x:Type vm:ParserSystemRow}">
+                                <Grid Margin="0,2">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="{Binding System}" FontFamily="Consolas" FontSize="11" Foreground="#444"/>
+                                    <TextBlock Grid.Column="1" Text="{Binding Count}"  FontFamily="Consolas" FontSize="13" FontWeight="SemiBold"/>
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
+            <Button Content="Close" Padding="14,4" Click="Close_Click"/>
+        </StackPanel>
+    </Grid>
+</Window>

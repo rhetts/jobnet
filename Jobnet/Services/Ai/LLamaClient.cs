@@ -28,6 +28,15 @@ public sealed class LLamaClient : IAiClient, IDisposable
     private readonly IApiUsageTracker _usage;
     private readonly object _loadLock = new();
 
+    /// <summary>Serializes inference calls. The native llama.cpp context is NOT thread-safe —
+    /// concurrent inference on the same context produces an AccessViolationException that
+    /// kills the whole process (no managed catch can recover from native memory corruption).
+    /// Yesterday this was fine because all AI calls came from the UI thread one at a time;
+    /// today's worker architecture has three workers (summary, resume_match, company_profile)
+    /// all routing through IAiClient, which means three concurrent llama calls without this
+    /// gate. Singleton client → singleton semaphore → at most one inference in flight.</summary>
+    private readonly SemaphoreSlim _inferenceGate = new(1, 1);
+
     private LLamaWeights? _weights;
     private ModelParams? _loadedParams;
     private string? _loadedPath;
@@ -58,6 +67,13 @@ public sealed class LLamaClient : IAiClient, IDisposable
         if (!File.Exists(path))
             throw new AiUnavailableException($"Local llama model file not found: {path}");
 
+        // Acquire the inference gate before touching native context. Workers stack up here
+        // when multiple are running concurrently — that's fine because llama inference is the
+        // bottleneck regardless. A request that waits 30s for its turn is still cheaper than
+        // a process crash. Cancellation is honored so a Ctrl-C / app shutdown unblocks waiters.
+        await _inferenceGate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
         var weights = EnsureLoaded(path);
         using var context = weights.CreateContext(_loadedParams!);
         var executor = new StatelessExecutor(weights, _loadedParams!);
@@ -105,6 +121,11 @@ public sealed class LLamaClient : IAiClient, IDisposable
             Model = Path.GetFileName(path),
             ProviderId = Provider,
         };
+        }
+        finally
+        {
+            _inferenceGate.Release();
+        }
     }
 
     private static int _nativeConfigured;
@@ -277,5 +298,6 @@ public sealed class LLamaClient : IAiClient, IDisposable
     {
         _weights?.Dispose();
         _weights = null;
+        _inferenceGate.Dispose();
     }
 }

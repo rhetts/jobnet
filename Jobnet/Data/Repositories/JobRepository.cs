@@ -25,11 +25,16 @@ public sealed class JobRepository : IJobRepository
 
     private readonly IDbConnectionFactory _connections;
     private readonly IAreaRepository _areas;
+    private readonly IJobProcessingQueueRepository? _queue;
 
-    public JobRepository(IDbConnectionFactory connections, IAreaRepository areas)
+    public JobRepository(IDbConnectionFactory connections, IAreaRepository areas,
+                          IJobProcessingQueueRepository? queue = null)
     {
         _connections = connections;
         _areas = areas;
+        // Queue is optional in the ctor (default null) so existing unit tests that construct
+        // JobRepository directly don't break. Production DI always supplies it.
+        _queue = queue;
     }
 
     public IReadOnlyList<Job> GetAll(bool includeRemoved = false)
@@ -47,6 +52,39 @@ public sealed class JobRepository : IJobRepository
                   (includeRemoved ? "" : " AND is_active = 1") + " ORDER BY date_first_seen DESC";
         var rows = conn.Query<JobRow>(sql, new { companyId }).ToList();
         return Hydrate(conn, rows);
+    }
+
+    public IReadOnlyList<Job> GetByIds(IEnumerable<int> ids, bool includeRemoved = false)
+    {
+        var idList = ids.ToList();
+        if (idList.Count == 0) return Array.Empty<Job>();
+        using var conn = _connections.Open();
+        var sql = SelectAll + " WHERE id IN @ids" + (includeRemoved ? "" : " AND is_active = 1");
+        var rows = conn.Query<JobRow>(sql, new { ids = idList }).ToList();
+        return Hydrate(conn, rows);
+    }
+
+    public IReadOnlyList<int> GetActiveIdsMissingSummary()
+    {
+        using var conn = _connections.Open();
+        // Need *some* text to summarise — a posting with no description and no snippet
+        // would produce garbage. Filter both at SELECT time so the worker doesn't pull
+        // un-summarisable rows and immediately fail them.
+        return conn.Query<int>(@"
+            SELECT id FROM jobs
+            WHERE is_active = 1 AND (summary IS NULL OR summary = '')
+              AND (description_snippet IS NOT NULL AND length(description_snippet) >= 50
+                   OR url IS NOT NULL)
+            ORDER BY date_first_seen DESC").ToList();
+    }
+
+    public IReadOnlyList<int> GetActiveIdsMissingResumeMatch()
+    {
+        using var conn = _connections.Open();
+        return conn.Query<int>(@"
+            SELECT id FROM jobs
+            WHERE is_active = 1 AND resume_match_score IS NULL
+            ORDER BY date_first_seen DESC").ToList();
     }
 
     public Job? GetByHash(string hash)
@@ -139,6 +177,18 @@ public sealed class JobRepository : IJobRepository
                 });
 
             if (job.AreaIds.Count > 0) _areas.SetAreasForJob(newId, job.AreaIds);
+
+            // Fan the new job out to the async workers. Two queue rows per job: one for
+            // summary generation, one for resume scoring. The workers pick these up on
+            // their own poll cycle — the refresh path doesn't wait. Idempotent: the UNIQUE
+            // constraint absorbs accidental re-enqueues (e.g. from a botched refresh that
+            // somehow upserts the same hash as "new" twice in a row).
+            if (_queue is not null)
+            {
+                _queue.Enqueue(newId, JobProcessingTaskTypes.Summary);
+                _queue.Enqueue(newId, JobProcessingTaskTypes.ResumeMatch);
+            }
+
             return (newId, true);
         }
 

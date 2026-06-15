@@ -40,6 +40,10 @@ public interface ICompanyRepository
     /// extraction after previously matching a parser).</summary>
     void SetLastCompanyParser(int id, string? parserName);
 
+    /// <summary>Active company ids whose <c>profile_summary</c> hasn't been generated yet.
+    /// Used by the queue-backfill CLI to seed the CompanyProfileWorker.</summary>
+    System.Collections.Generic.IReadOnlyList<int> GetActiveIdsMissingProfile();
+
     /// <summary>Persist the per-refresh health rollup: last jobs count, consecutive_failures
     /// (incremented on no-jobs OR failure, reset to 0 on ≥1 job), last_success_at (stamped only
     /// when jobsCount &gt; 0). Call once per company per RefreshOneAsync.</summary>

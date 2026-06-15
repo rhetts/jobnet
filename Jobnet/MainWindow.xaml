@@ -377,6 +377,10 @@
                 <Button Content="Runs..."
                         Style="{StaticResource ToolbarButton}"
                         Command="{Binding OpenRunsCommand}"/>
+                <Button Content="Stats..."
+                        Style="{StaticResource ToolbarButton}"
+                        Command="{Binding OpenStatsCommand}"
+                        ToolTip="Top-level counts: companies, jobs, queue backlog, extraction-system breakdown."/>
                 <Button Content="Parsers..."
                         Style="{StaticResource ToolbarButton}"
                         Command="{Binding OpenParserReportCommand}"

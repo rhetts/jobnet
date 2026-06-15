@@ -8,7 +8,13 @@ public interface IJobRepository
 {
     IReadOnlyList<Job> GetAll(bool includeRemoved = false);
     IReadOnlyList<Job> GetByCompany(int companyId, bool includeRemoved = false);
+    IReadOnlyList<Job> GetByIds(IEnumerable<int> ids, bool includeRemoved = false);
     Job? GetByHash(string hash);
+
+    /// <summary>Active job ids missing the field used by the corresponding queue worker. Backfill
+    /// helpers — feed the result into <see cref="IJobProcessingQueueRepository.EnqueueMissing"/>.</summary>
+    IReadOnlyList<int> GetActiveIdsMissingSummary();
+    IReadOnlyList<int> GetActiveIdsMissingResumeMatch();
     int Insert(Job job, int hashTier);
 
     /// <summary>Insert if hashKey is new; otherwise update date_last_seen and reactivate if needed.

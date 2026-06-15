@@ -8,6 +8,11 @@ namespace Jobnet.Data.Repositories;
 
 public sealed class CompanyRepository : ICompanyRepository
 {
+    /// <summary>Optional queue hook — when present, every successful Insert enqueues a
+    /// <c>company_profile</c> task. Optional so existing unit tests that instantiate
+    /// CompanyRepository directly continue to compile.</summary>
+    private readonly IJobProcessingQueueRepository? _queue;
+
     private const string SelectAll = @"
         SELECT id, name, domain, website_url, careers_url, ats_type, ats_slug,
                ats_department_filter,
@@ -22,9 +27,11 @@ public sealed class CompanyRepository : ICompanyRepository
 
     private readonly IDbConnectionFactory _connections;
 
-    public CompanyRepository(IDbConnectionFactory connections)
+    public CompanyRepository(IDbConnectionFactory connections,
+                              IJobProcessingQueueRepository? queue = null)
     {
         _connections = connections;
+        _queue = queue;
     }
 
     public IReadOnlyList<Company> GetAll()
@@ -53,7 +60,7 @@ public sealed class CompanyRepository : ICompanyRepository
     public int Insert(Company company)
     {
         using var conn = _connections.Open();
-        return (int)conn.ExecuteScalar<long>(@"
+        var id = (int)conn.ExecuteScalar<long>(@"
             INSERT INTO companies (name, domain, website_url, careers_url, ats_type, ats_slug,
                                    parser_strategy, city, interest_level, notes, date_discovered,
                                    date_last_scan, is_active, is_agency)
@@ -73,6 +80,13 @@ public sealed class CompanyRepository : ICompanyRepository
                 DateLastScanText = company.DateLastScan?.ToUniversalTime().ToString("o"),
                 IsAgencyInt = company.IsAgency ? 1 : 0,
             });
+
+        // Enqueue company-profile generation for the new company. Idempotent (the unique
+        // constraint absorbs accidental re-adds — though Insert should never run twice for
+        // the same domain because domain is UNIQUE on the table).
+        _queue?.Enqueue(id, JobProcessingTaskTypes.CompanyProfile);
+
+        return id;
     }
 
     public void Update(Company company)
@@ -245,6 +259,16 @@ public sealed class CompanyRepository : ICompanyRepository
         using var conn = _connections.Open();
         conn.Execute("UPDATE companies SET last_company_parser = @name WHERE id = @id",
             new { id, name = parserName });
+    }
+
+    public IReadOnlyList<int> GetActiveIdsMissingProfile()
+    {
+        using var conn = _connections.Open();
+        return conn.Query<int>(@"
+            SELECT id FROM companies
+            WHERE is_active = 1
+              AND (profile_summary IS NULL OR profile_summary = '')
+            ORDER BY date_discovered DESC").ToList();
     }
 
     public void RecordRefreshResult(int id, int jobsCount, bool hadFailure)

@@ -194,55 +194,14 @@
                     </StackPanel>
                 </Border>
 
-                <!-- MATCH RESUME -->
-                <Border BorderBrush="#DDD" BorderThickness="1" Padding="10,8" Margin="0,0,0,8" Background="White" CornerRadius="3">
-                    <StackPanel>
-                        <TextBlock Text="Match resume to jobs" FontWeight="SemiBold"/>
-                        <TextBlock Style="{StaticResource ActionHint}"
-                                   Text="Score every active job against your uploaded resume (~10 jobs per AI call). Upload + preferences live in Profile."/>
-                        <Button Content="Run resume match"
-                                Padding="14,4"
-                                HorizontalAlignment="Right"
-                                Margin="0,8,0,0"
-                                Command="{Binding MatchResumeCommand}"/>
-                    </StackPanel>
-                </Border>
+                <!-- Resume-match and summary generation moved to the background queue workers —
+                     they run automatically on every new job and pick up backlog via the
+                     queue-backfill CLI. -->
 
-                <!-- Backfill missing summaries (incremental — separate from regenerate-all) -->
-                <Button Style="{StaticResource ActionButton}"
-                        Command="{Binding GenerateSummariesCommand}">
-                    <StackPanel>
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
-                            <TextBlock Grid.Column="0" Text="Generate AI summaries (only missing)" FontWeight="SemiBold"/>
-                            <TextBlock Grid.Column="1" Text="{Binding LastGenerateSummariesRunText}"
-                                       Foreground="#888" FontSize="11" VerticalAlignment="Center"/>
-                        </Grid>
-                        <TextBlock Style="{StaticResource ActionHint}"
-                                   Text="Produce a 2-3 sentence summary for each job that doesn't have one yet. Incremental — cheaper than 'Regenerate ALL'."/>
-                    </StackPanel>
-                </Button>
+                <!-- Company profile generation moved to the CompanyProfileWorker queue —
+                     fires automatically on every new company added and on a backfill via
+                     queue-backfill. No UI button needed. -->
 
-                <!-- Generate missing company profiles -->
-                <Button Style="{StaticResource ActionButton}"
-                        Command="{Binding GenerateCompanyProfilesCommand}">
-                    <StackPanel>
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
-                            <TextBlock Grid.Column="0" Text="Generate company profiles" FontWeight="SemiBold"/>
-                            <TextBlock Grid.Column="1" Text="{Binding LastCompanyProfilesRunText}"
-                                       Foreground="#888" FontSize="11" VerticalAlignment="Center"/>
-                        </Grid>
-                        <TextBlock Style="{StaticResource ActionHint}"
-                                   Text="Short AI-written description of what each company does. Runs for companies without one yet (≤50 per click)."/>
-                    </StackPanel>
-                </Button>
 
             </StackPanel>
         </ScrollViewer>

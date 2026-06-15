@@ -31,6 +31,7 @@ public partial class MainWindowViewModel : ObservableObject
     private readonly Func<ResumeWindow>? _resumeWindowFactory;
     private readonly Func<ServiceLimitsWindow>? _limitsWindowFactory;
     private readonly Func<RunsWindow>? _runsWindowFactory;
+    private readonly Func<StatsWindow>? _statsWindowFactory;
     private readonly Func<ParserReportWindow>? _parserReportWindowFactory;
     private readonly Func<CoverLetterWindow>? _coverLetterWindowFactory;
     private List<JobViewModel> _allJobs = new();
@@ -162,7 +163,9 @@ public partial class MainWindowViewModel : ObservableObject
                                 Func<RunsWindow>? runsWindowFactory = null,
                                 Func<CoverLetterWindow>? coverLetterWindowFactory = null,
                                 ITechnologyRepository? techsRepo = null,
-                                Func<ParserReportWindow>? parserReportWindowFactory = null)
+                                Func<ParserReportWindow>? parserReportWindowFactory = null,
+                                Func<StatsWindow>? statsWindowFactory = null,
+                                Services.Workers.IEntityChangeNotifier? entityChanges = null)
     {
         _data = data;
         _jobsRepo = jobsRepo;
@@ -182,6 +185,13 @@ public partial class MainWindowViewModel : ObservableObject
         _coverLetterWindowFactory = coverLetterWindowFactory;
         _techsRepo = techsRepo;
         _parserReportWindowFactory = parserReportWindowFactory;
+        _statsWindowFactory = statsWindowFactory;
+
+        // Subscribe to background-worker completions so finished summaries / resume scores /
+        // company profiles appear in the UI live without the user reloading. The notifier
+        // raises events on a worker thread; the handler marshals back to the WPF dispatcher.
+        if (entityChanges is not null)
+            entityChanges.EntityChanged += OnEntityChanged;
 
         CompaniesView = CollectionViewSource.GetDefaultView(Companies);
         CompaniesView.Filter = FilterCompany;
@@ -753,6 +763,15 @@ public partial class MainWindowViewModel : ObservableObject
         window.ShowDialog();
     }
 
+    [RelayCommand]
+    private void OpenStats()
+    {
+        if (_statsWindowFactory is null) return;
+        var window = _statsWindowFactory();
+        window.Owner = Application.Current.MainWindow;
+        window.ShowDialog();
+    }
+
 
     [RelayCommand]
     private void OpenCoverLetter(JobViewModel? job)
@@ -1057,5 +1076,63 @@ public partial class MainWindowViewModel : ObservableObject
                                               onInterestChanged: OnInterestChanged,
                                               onMarkExpired: OnMarkExpired);
         StatusBarText = $"Marked '{job.Job.Title}' as {level.ToString().ToLowerInvariant()}";
+    }
+
+    /// <summary>Background-worker completion handler. Refreshes the affected job row in place
+    /// when a summary or resume_match lands. Runs on a worker thread — marshals to the WPF
+    /// dispatcher before touching ObservableCollections. Company-profile updates don't trigger
+    /// a Jobs refresh because profile is shown in a separate window opened on demand.</summary>
+    private void OnEntityChanged(object? sender, Services.Workers.EntityChangedEventArgs e)
+    {
+        if (e.EntityType != Services.Workers.EntityChangeKinds.Job) return;
+        if (_jobsRepo is null) return;
+
+        // Marshal to UI thread. The dispatcher may be null if the app is shutting down — in
+        // that case there's no UI to update, so swallow.
+        var dispatcher = System.Windows.Application.Current?.Dispatcher;
+        if (dispatcher is null) return;
+        dispatcher.BeginInvoke(new Action(() =>
+        {
+            try { RefreshJobRow(e.EntityId); }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"[OnEntityChanged] {ex.GetType().Name}: {ex.Message}"); }
+        }));
+    }
+
+    /// <summary>Replace the JobViewModel for <paramref name="jobId"/> in both the live Jobs
+    /// collection (filtered/sorted view) and the underlying _allJobs cache. Re-reads the row
+    /// from the DB so newly-set Summary / ResumeMatchScore land. Selection is preserved.</summary>
+    private void RefreshJobRow(int jobId)
+    {
+        if (_jobsRepo is null) return;
+        var fresh = _jobsRepo.GetByIds(new[] { jobId }, includeRemoved: true);
+        if (fresh.Count == 0) return;
+        var freshJob = fresh[0];
+
+        // Locate the old VM (might be in _allJobs but not Jobs if filters hid it).
+        var oldVm = _allJobs.FirstOrDefault(v => v.Job.Id == jobId);
+        if (oldVm is null) return;
+
+        var refreshed = new JobViewModel(freshJob, oldVm.CompanyName, oldVm.CompanyCity,
+                                          _data.ScoreJob(freshJob),
+                                          levelName: oldVm.LevelName == "Unclassified" ? null : oldVm.LevelName,
+                                          areaNames: oldVm.AreasDisplay == "—" ? null : oldVm.AreasDisplay.Split(", ", StringSplitOptions.RemoveEmptyEntries),
+                                          onAppliedToggled: OnAppliedToggled,
+                                          onInterestChanged: OnInterestChanged,
+                                          technologyNames: oldVm.Technologies,
+                                          technologyIds: oldVm.TechnologyIds,
+                                          isAgency: oldVm.IsAgency,
+                                          onMarkExpired: OnMarkExpired);
+
+        var allIdx = _allJobs.IndexOf(oldVm);
+        if (allIdx >= 0) _allJobs[allIdx] = refreshed;
+
+        var visibleIdx = Jobs.IndexOf(oldVm);
+        if (visibleIdx >= 0)
+        {
+            // Replace in place. Doing RemoveAt+Insert (vs Jobs[i] = refreshed) is the WPF-safe
+            // pattern because some bindings need the Reset notification to re-evaluate triggers.
+            Jobs.RemoveAt(visibleIdx);
+            Jobs.Insert(visibleIdx, refreshed);
+        }
     }
 }

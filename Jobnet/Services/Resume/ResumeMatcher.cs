@@ -25,6 +25,14 @@ public interface IResumeMatcher
         IProgress<Jobnet.Services.Logging.BatchStepProgress>? progress = null,
         CancellationToken ct = default);
 
+    /// <summary>Score a specific slice of jobs (used by the resume-match queue worker —
+    /// it dequeues N rows at a time and feeds the corresponding Job list here). No
+    /// "needs match" filter, no progress reporter — the worker drives the cadence.
+    /// Returns a per-job map of jobId→score so the caller can mark queue rows
+    /// completed/failed individually.</summary>
+    Task<IReadOnlyDictionary<int, ResumeMatchOutcome>> MatchSubsetAsync(
+        IReadOnlyList<Models.Job> jobs, CancellationToken ct = default);
+
     /// <summary>Returns the stored resume text (or null if none uploaded).</summary>
     string? GetStoredResume();
     string? GetStoredResumeSourcePath();
@@ -45,6 +53,17 @@ public sealed class ResumeMatchReport
     public int JobsFailed   { get; set; }
     public List<string> Errors { get; } = new();
     public string? LastRawResponse { get; set; }
+}
+
+/// <summary>Per-job result from <see cref="IResumeMatcher.MatchSubsetAsync"/>. Score and
+/// reason are set on success; Error is set when the AI batched scored everything except
+/// this job (rare — usually the whole batch fails or none).</summary>
+public sealed class ResumeMatchOutcome
+{
+    public int? Score { get; init; }
+    public string? Reason { get; init; }
+    public string? Error { get; init; }
+    public bool Success => Score.HasValue;
 }
 
 public sealed class ResumeMatcher : IResumeMatcher
@@ -210,6 +229,53 @@ public sealed class ResumeMatcher : IResumeMatcher
             }
         }
         return report;
+    }
+
+    public async Task<IReadOnlyDictionary<int, ResumeMatchOutcome>> MatchSubsetAsync(
+        IReadOnlyList<Models.Job> jobs, CancellationToken ct = default)
+    {
+        // Worker-friendly variant: score exactly the jobs handed in, no filtering, no progress
+        // events. The queue worker has already decided what to send (dequeued batch) and tracks
+        // success/failure per row via the queue table — this method just hands back outcomes.
+        var outcomes = new Dictionary<int, ResumeMatchOutcome>(jobs.Count);
+        if (jobs.Count == 0) return outcomes;
+
+        var resume = GetStoredResume();
+        if (string.IsNullOrWhiteSpace(resume))
+        {
+            var err = new ResumeMatchOutcome { Error = "No resume uploaded." };
+            foreach (var j in jobs) outcomes[j.Id] = err;
+            return outcomes;
+        }
+        if (!_ai.IsConfigured)
+        {
+            var err = new ResumeMatchOutcome { Error = "AI provider not configured." };
+            foreach (var j in jobs) outcomes[j.Id] = err;
+            return outcomes;
+        }
+
+        if (resume!.Length > 6000) resume = resume.Substring(0, 6000);
+        var companyNames = _companies.GetAll().ToDictionary(c => c.Id, c => c.Name);
+
+        try
+        {
+            var scored = await ScoreBatchAsync(resume!, jobs.ToList(), companyNames, ct);
+            // ScoreBatchAsync already persists via _jobs.SetResumeMatch — we just need the
+            // returned values to populate per-job outcomes.
+            foreach (var s in scored)
+                outcomes[s.JobId] = new ResumeMatchOutcome { Score = s.Value, Reason = s.Reason };
+            // Jobs the AI didn't score (rare, but possible if its JSON misses one): mark as
+            // an explicit error so the queue worker can retry-or-fail-them individually.
+            foreach (var j in jobs)
+                if (!outcomes.ContainsKey(j.Id))
+                    outcomes[j.Id] = new ResumeMatchOutcome { Error = "AI did not return a score for this job." };
+        }
+        catch (Exception ex)
+        {
+            var err = new ResumeMatchOutcome { Error = $"{ex.GetType().Name}: {ex.Message}" };
+            foreach (var j in jobs) outcomes[j.Id] = err;
+        }
+        return outcomes;
     }
 
     /// <summary>Diagnostic — last raw AI response surfaced for debugging when scores come back empty.</summary>

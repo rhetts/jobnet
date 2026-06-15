@@ -84,6 +84,10 @@ public partial class App : Application
                 services.AddTransient<Views.RunsWindow>();
                 services.AddSingleton<Func<Views.RunsWindow>>(sp => () => sp.GetRequiredService<Views.RunsWindow>());
 
+                services.AddTransient<StatsViewModel>();
+                services.AddTransient<Views.StatsWindow>();
+                services.AddSingleton<Func<Views.StatsWindow>>(sp => () => sp.GetRequiredService<Views.StatsWindow>());
+
                 services.AddTransient<ParserReportViewModel>();
                 services.AddTransient<Views.ParserReportWindow>();
                 services.AddSingleton<Func<Views.ParserReportWindow>>(sp => () => sp.GetRequiredService<Views.ParserReportWindow>());
@@ -117,9 +121,33 @@ public partial class App : Application
                 LogException("RunLogCleanup", cleanupEx);
             }
 
+            // Same idea for the worker queue: rows stuck in 'running' from a prior process
+            // session need to be reset to 'pending' so this session's workers can re-claim them.
+            try
+            {
+                var reset = Host.Services.GetRequiredService<Data.Repositories.IJobProcessingQueueRepository>()
+                    .ResetStaleRunning();
+                if (reset > 0)
+                    File.AppendAllText(_logPath, $"Queue cleanup: reset {reset} stale 'running' row(s) to 'pending'.\n");
+            }
+            catch (Exception queueEx)
+            {
+                LogException("QueueCleanup", queueEx);
+            }
+
             var window = Host.Services.GetRequiredService<MainWindow>();
             window.Show();
             File.AppendAllText(_logPath, "Main window shown OK\n");
+
+            // Start the queue workers AFTER the main window is showing so any startup error
+            // surfaces in the foreground first. Workers run for the lifetime of the app and
+            // are torn down in OnExit.
+            try
+            {
+                Host.Services.GetRequiredService<Services.Workers.WorkerHost>().Start();
+                File.AppendAllText(_logPath, "Queue workers started\n");
+            }
+            catch (Exception workerEx) { LogException("WorkerHost.Start", workerEx); }
         }
         catch (Exception ex)
         {
@@ -135,6 +163,16 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        // Stop the queue workers first — they may be mid-AI-call. The host gives them up to 5s
+        // to drain, then signals cancellation and moves on. This must come before Host.StopAsync
+        // because the workers depend on services owned by the host.
+        try
+        {
+            Host.Services.GetService<Services.Workers.WorkerHost>()?.StopAsync()
+                .GetAwaiter().GetResult();
+        }
+        catch (Exception ex) { LogException("OnExit.WorkerHostStop", ex); }
+
         // Explicitly dispose resources that own native handles / child processes — Host.Dispose
         // alone doesn't reach them deterministically, so without this Jobnet.exe stays alive
         // after the main window closes (Playwright keeps its Chromium worker; LLamaSharp keeps

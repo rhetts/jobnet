@@ -20,6 +20,7 @@ internal static class ServiceRegistration
 
         services.AddSingleton<IConfigRepository, ConfigRepository>();
         services.AddSingleton<IAggregatorRepository, AggregatorRepository>();
+        services.AddSingleton<IJobProcessingQueueRepository, JobProcessingQueueRepository>();
         services.AddSingleton<ICompanyRepository, CompanyRepository>();
         services.AddSingleton<ICompanyUrlsRepository, CompanyUrlsRepository>();
         services.AddSingleton<IJobRepository, JobRepository>();
@@ -192,6 +193,13 @@ internal static class ServiceRegistration
 
         services.AddSingleton<IJobDataService, SqliteJobDataService>();
         services.AddSingleton<FakeJobDataService>(); // for seed-fake command only
+
+        // Background queue workers — started by App.OnStartup, stopped on shutdown.
+        services.AddSingleton<Workers.IEntityChangeNotifier, Workers.EntityChangeNotifier>();
+        services.AddSingleton<Workers.SummaryWorker>();
+        services.AddSingleton<Workers.ResumeMatchWorker>();
+        services.AddSingleton<Workers.CompanyProfileWorker>();
+        services.AddSingleton<Workers.WorkerHost>();
         return services;
     }
 
