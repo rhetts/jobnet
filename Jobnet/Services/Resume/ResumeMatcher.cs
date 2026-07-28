@@ -74,9 +74,11 @@ public sealed class ResumeMatcher : IResumeMatcher
     private readonly ICompanyRepository _companies;
     private readonly ILevelRepository _levels;
     private readonly IAreaRepository _areas;
+    private readonly IJobProcessingQueueRepository? _queue;
 
     public ResumeMatcher(IAiClient ai, IConfigRepository config, IJobRepository jobs,
-                         ICompanyRepository companies, ILevelRepository levels, IAreaRepository areas)
+                         ICompanyRepository companies, ILevelRepository levels, IAreaRepository areas,
+                         IJobProcessingQueueRepository? queue = null)
     {
         _ai = ai;
         _config = config;
@@ -84,6 +86,9 @@ public sealed class ResumeMatcher : IResumeMatcher
         _companies = companies;
         _levels = levels;
         _areas = areas;
+        // Queue is optional so unit tests that construct ResumeMatcher directly don't have to
+        // wire it. Production DI always supplies it.
+        _queue = queue;
     }
 
     /// <summary>Resolve the candidate's stored preferences into a prompt block. Empty if all
@@ -161,7 +166,16 @@ public sealed class ResumeMatcher : IResumeMatcher
             _config.Set("resume_text", text);
             _config.Set("resume_source_path", pdfPath);
             _config.Set("resume_uploaded_at", DateTime.UtcNow.ToString("o"));
-            _jobs.ClearAllResumeMatches();
+
+            // Don't wipe existing scores — they're better than nothing while the worker fills in
+            // the gaps, and the user has explicit "rescore all" elsewhere if they actually want
+            // every job re-evaluated against the new resume. Just enqueue anything currently
+            // missing a score so #3-style legacy gaps get filled too, not only the new upload.
+            if (_queue is not null)
+            {
+                var ids = _jobs.GetActiveIdsMissingResumeMatch();
+                if (ids.Count > 0) _queue.EnqueueMissing(ids, JobProcessingTaskTypes.ResumeMatch);
+            }
 
             return Task.FromResult(new ResumeUploadResult { Success = true, Pages = pages, Characters = text.Length });
         }
@@ -206,11 +220,9 @@ public sealed class ResumeMatcher : IResumeMatcher
             try
             {
                 var scored = await ScoreBatchAsync(resume!, batch, companyNames, ct);
-                foreach (var s in scored)
-                {
-                    _jobs.SetResumeMatch(s.JobId, s.Value, s.Reason);
-                    report.JobsScored++;
-                }
+                // Persistence happens inside ScoreBatchAsync now (so the queue-worker call path
+                // gets it too). Just count outcomes for the report here.
+                report.JobsScored += scored.Count;
                 progress?.Report(new Jobnet.Services.Logging.BatchStepProgress
                 {
                     Name = stepName, Stage = "done", Status = "completed",
@@ -327,7 +339,15 @@ public sealed class ResumeMatcher : IResumeMatcher
 
         var resp = await _ai.CompleteAsync(user, system, maxTokens: 8192, ct, task: "resume_match");
         LastRawResponse = resp.Text;
-        return ParseScores(resp.Text);
+        var scores = ParseScores(resp.Text);
+
+        // Persist immediately — both call paths (MatchAllAsync, MatchSubsetAsync/worker) rely on
+        // this. Until June 2026 the queue-worker path was silently dropping scores because
+        // persistence lived inside the now-removed loop in MatchAllAsync.
+        foreach (var s in scores)
+            _jobs.SetResumeMatch(s.JobId, s.Value, s.Reason);
+
+        return scores;
     }
 
     private static IReadOnlyList<Score> ParseScores(string responseText)

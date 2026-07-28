@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Jobnet.Data.Repositories;
@@ -56,24 +57,30 @@ public sealed class RoutingAiClient : IAiClient
             if (!c.IsConfigured) continue;
             try
             {
-                return await c.CompleteAsync(userMessage, system, maxTokens, ct);
+                return await c.CompleteAsync(userMessage, system, maxTokens, ct, task);
             }
             catch (AiUnavailableException ex)
             {
                 last = ex;
-                var hasMoreFallbacks = AnyConfiguredAfter(chain, i);
-                if (hasMoreFallbacks)
-                {
-                    // Silently fall over to the next provider.
-                    continue;
-                }
-                // Last-resort: classify as RPM or RPD and surface the controller dialog only here.
                 var message = ex.Message ?? "";
                 var isDaily = message.Contains("daily", StringComparison.OrdinalIgnoreCase)
                            || message.Contains("RPD", StringComparison.OrdinalIgnoreCase)
                            || message.Contains("per_day", StringComparison.OrdinalIgnoreCase);
+
+                var hasMoreFallbacks = AnyConfiguredAfter(chain, i);
+                if (hasMoreFallbacks)
+                {
+                    // Silently fall over to the next provider. If this was a daily-quota error,
+                    // remember it for the rest of the session so future calls skip this provider
+                    // entirely — no point repeatedly burning a round-trip on a known-exhausted
+                    // provider only to fail over again.
+                    if (isDaily) _quota.MarkProviderExhausted(c.ProviderId);
+                    continue;
+                }
+                // Last-resort: classify as RPM or RPD and surface the controller dialog only here.
                 if (isDaily)
                 {
+                    _quota.MarkProviderExhausted(c.ProviderId);
                     var decision = await _quota.OnPerDayLimitAsync(c.ProviderId, message);
                     if (decision == QuotaDecision.Cancel)
                         throw new OperationCanceledException($"{c.ProviderId} daily quota — user cancelled.");
@@ -110,22 +117,37 @@ public sealed class RoutingAiClient : IAiClient
 
         var chain = new List<IAiClient>();
         var seen  = new HashSet<string>();
+        void Add(IAiClient c, string id) { if (seen.Add(id)) chain.Add(c); }
+
         foreach (var tok in raw.Replace("+", ",").Split(',', System.StringSplitOptions.RemoveEmptyEntries))
         {
             var name = tok.Trim();
-            if (!seen.Add(name)) continue;
-            IAiClient? c = name switch
+            switch (name)
             {
-                "gemini" or "google"    => _gemini,
-                "groq"                  => _groq,
-                "claude" or "anthropic" => _claude,
-                "llama" or "local"      => _llama,
-                _                       => null,
-            };
-            if (c is not null) chain.Add(c);
+                case "gemini": case "google":    Add(_gemini, "gemini"); break;
+                case "groq":                     Add(_groq,   "groq");   break;
+                case "claude": case "anthropic": Add(_claude, "claude"); break;
+                case "llama":  case "local":     Add(_llama,  "llama");  break;
+            }
         }
-        if (chain.Count == 0) chain.Add(_gemini);
-        return chain;
+        if (chain.Count == 0) Add(_gemini, "gemini");
+
+        // Auto-pair Gemini and Groq. The two free-tier cloud providers cover for each other:
+        // when the user picks just one of them, silently append the other as a fallback so a
+        // single-provider RPD-out doesn't strand the caller. Honors the user's primary choice
+        // — we only append, never reorder.
+        if (seen.Contains("gemini") && !seen.Contains("groq") && _groq.IsConfigured)
+            Add(_groq, "groq");
+        else if (seen.Contains("groq") && !seen.Contains("gemini") && _gemini.IsConfigured)
+            Add(_gemini, "gemini");
+
+        // Drop providers known to be RPD-exhausted in this session. Keeps the chain from burning
+        // a wasted round-trip on a provider we already failed over from. Reset on ResetSession().
+        // Safety net: if every provider gets filtered out, fall back to the original chain so
+        // the caller still gets a meaningful "daily quota" error instead of a misleading
+        // "no provider configured" one.
+        var pruned = chain.Where(c => !_quota.IsProviderExhausted(c.ProviderId)).ToList();
+        return pruned.Count > 0 ? pruned : chain;
     }
 
     /// <summary>The set of provider IDs this router knows how to instantiate, in display order.

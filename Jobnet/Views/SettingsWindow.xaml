@@ -477,6 +477,48 @@
                 </ScrollViewer>
             </TabItem>
 
+            <!-- Blacklist tab -->
+            <TabItem Header="Blacklist">
+                <Grid Margin="14,10,14,10">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <TextBlock Grid.Row="0"
+                               Text="Companies you've blacklisted from the job-card right-click menu. Their jobs are hidden from the main view and the refresh loop skips them. Click Unblacklist to bring one back."
+                               TextWrapping="Wrap"
+                               Foreground="#666"
+                               Margin="0,4,0,12"/>
+                    <ListBox Grid.Row="1"
+                             ItemsSource="{Binding BlacklistedCompanies}"
+                             BorderBrush="#CCC"
+                             HorizontalContentAlignment="Stretch">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate DataType="{x:Type vm:BlacklistedCompanyItem}">
+                                <Border Padding="8,6" BorderBrush="#EEE" BorderThickness="0,0,0,1">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Grid.Column="0">
+                                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="13"/>
+                                            <TextBlock Text="{Binding Domain}" Foreground="#888" FontSize="11"
+                                                       FontFamily="Consolas" Margin="0,2,0,0"/>
+                                        </StackPanel>
+                                        <Button Grid.Column="1"
+                                                Content="Unblacklist"
+                                                Padding="10,4"
+                                                Command="{Binding DataContext.UnblacklistCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                CommandParameter="{Binding}"/>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </Grid>
+            </TabItem>
+
             <!-- Data tab -->
             <TabItem Header="Data">
                 <StackPanel Margin="14,10,14,10">

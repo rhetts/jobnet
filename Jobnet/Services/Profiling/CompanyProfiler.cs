@@ -157,6 +157,10 @@ public sealed class CompanyProfiler : ICompanyProfiler
 
     private void Persist(int companyId, CompanyProfile p)
     {
+        // Derive the bucketed size from the freeform hint. Stored next to the raw hint so the
+        // Sources screen can filter on a finite set without re-parsing on every render.
+        var sizeCategory = CompanySizeClassifier.Classify(p.SizeHint);
+
         using var conn = _connections.Open();
         conn.Execute(@"
             UPDATE companies SET
@@ -166,6 +170,7 @@ public sealed class CompanyProfiler : ICompanyProfiler
                 profile_tech_signals = @Signals,
                 profile_hq_hint      = @Hq,
                 profile_size_hint    = @Size,
+                size_category        = @SizeCategory,
                 profile_generated_at = @GeneratedAt,
                 profile_model        = @Model
             WHERE id = @Id",
@@ -178,6 +183,7 @@ public sealed class CompanyProfiler : ICompanyProfiler
                 Signals = JsonSerializer.Serialize(p.TechSignals),
                 Hq = p.HeadquartersHint,
                 Size = p.SizeHint,
+                SizeCategory = sizeCategory,
                 GeneratedAt = p.GeneratedAt?.ToString("o"),
                 p.Model,
             });

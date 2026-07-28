@@ -36,6 +36,13 @@ public partial class JobViewModel : ObservableObject
     [ObservableProperty]
     private bool _isIdJustCopied;
 
+    /// <summary>How many of the current search-box tokens were found in this job's text.
+    /// Set externally by <c>MainWindowViewModel</c> whenever the search box changes; the
+    /// JobsView sort uses this so jobs matching more keywords float up. Zero when there's
+    /// no search active.</summary>
+    [ObservableProperty]
+    private int _keywordMatchCount;
+
     [ObservableProperty]
     private bool _isApplied;
 

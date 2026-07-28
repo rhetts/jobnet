@@ -42,6 +42,15 @@ public interface IApiQuotaController
     /// adaptive bump produced by <see cref="OnPerMinuteLimit"/>. The bump is transient and
     /// resets on process restart.</summary>
     int GetEffectiveMinDelayMs(string provider);
+
+    /// <summary>Mark <paramref name="provider"/> as exhausted for the rest of this session. The
+    /// routing chain will skip it on subsequent calls so we don't keep paying a wasted round-trip
+    /// for a provider we already know is RPD-locked. Cleared by <see cref="ResetSession"/>.</summary>
+    void MarkProviderExhausted(string provider);
+
+    /// <summary>True if <see cref="MarkProviderExhausted"/> was called for this provider in the
+    /// current session.</summary>
+    bool IsProviderExhausted(string provider);
 }
 
 public enum QuotaDecision { Continue, Cancel }

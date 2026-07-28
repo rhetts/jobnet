@@ -15,6 +15,7 @@ public partial class SettingsViewModel : ObservableObject
 {
     private readonly IConfigRepository _config;
     private readonly IAggregatorRepository _aggregators;
+    private readonly ICompanyRepository _companies;
     private readonly ILevelRepository _levels;
     private readonly IAreaRepository _areas;
     private readonly IDiscoverySeedRepository _seeds;
@@ -86,11 +87,13 @@ public partial class SettingsViewModel : ObservableObject
     public event Action? CloseRequested;
 
     public SettingsViewModel(IConfigRepository config, IAggregatorRepository aggregators,
+                              ICompanyRepository companies,
                               ILevelRepository levels, IAreaRepository areas,
                               IDiscoverySeedRepository seeds, IAppPaths paths)
     {
         _config = config;
         _aggregators = aggregators;
+        _companies = companies;
         _levels = levels;
         _areas = areas;
         _seeds = seeds;
@@ -98,6 +101,25 @@ public partial class SettingsViewModel : ObservableObject
         DatabasePath = paths.DatabasePath;
 
         Load();
+    }
+
+    public ObservableCollection<BlacklistedCompanyItem> BlacklistedCompanies { get; } = new();
+
+    private void LoadBlacklist()
+    {
+        BlacklistedCompanies.Clear();
+        foreach (var c in _companies.GetAll().Where(c => c.IsBlacklisted).OrderBy(c => c.Name))
+            BlacklistedCompanies.Add(new BlacklistedCompanyItem(c.Id, c.Name, c.Domain));
+    }
+
+    /// <summary>Toggle a company's blacklist back off. Removes it from the list right away —
+    /// no need to re-open Settings.</summary>
+    [RelayCommand]
+    private void Unblacklist(BlacklistedCompanyItem? item)
+    {
+        if (item is null) return;
+        _companies.SetBlacklisted(item.Id, false);
+        BlacklistedCompanies.Remove(item);
     }
 
     private void Load()
@@ -143,6 +165,8 @@ public partial class SettingsViewModel : ObservableObject
         DiscoverySeeds.Clear();
         foreach (var s in _seeds.GetAll())
             DiscoverySeeds.Add(new DiscoverySeedItemViewModel(s.Id, s.Name, s.Url, s.Description, s.IsEnabled, s.MaxPages));
+
+        LoadBlacklist();
 
         // AI routing rows — one per known task. Load whatever's in config; rows with no
         // override default to "use global default".
@@ -408,3 +432,7 @@ public partial class SettingsViewModel : ObservableObject
         double.TryParse(s, System.Globalization.NumberStyles.Float,
                         System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : 0;
 }
+
+/// <summary>One row on the Settings → Blacklist tab. Trivial DTO bound to the ListBox; the
+/// Unblacklist command is on the parent <see cref="SettingsViewModel"/>.</summary>
+public sealed record BlacklistedCompanyItem(int Id, string Name, string Domain);

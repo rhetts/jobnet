@@ -21,6 +21,11 @@ public sealed class ApiQuotaController : IApiQuotaController
     private readonly IConfigRepository _config;
     private readonly ConcurrentDictionary<string, QuotaDecision> _cachedDecisions = new();
 
+    /// <summary>Providers that have hit a daily-quota error in this session. RoutingAiClient drops
+    /// them from the chain on subsequent calls so we don't burn a network round-trip on a dead
+    /// provider before the inevitable failover. Cleared by <see cref="ResetSession"/>.</summary>
+    private readonly ConcurrentDictionary<string, byte> _exhausted = new();
+
     /// <summary>Transient per-provider delay bump kept in-memory only. Survives within the process
     /// but resets on restart — so a bad burst of 429s can't permanently degrade throughput. The
     /// configured <c>api_min_delay_ms.{provider}</c> remains the sacred floor.</summary>
@@ -53,9 +58,14 @@ public sealed class ApiQuotaController : IApiQuotaController
             _sessionCts.Dispose();
             _sessionCts = new CancellationTokenSource();
             _cachedDecisions.Clear();
+            _exhausted.Clear();
             _wasCancelledByDailyQuota = false;
         }
     }
+
+    public void MarkProviderExhausted(string provider) => _exhausted[provider] = 1;
+
+    public bool IsProviderExhausted(string provider) => _exhausted.ContainsKey(provider);
 
     public void CancelSession()
     {

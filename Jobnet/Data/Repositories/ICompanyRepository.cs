@@ -53,4 +53,34 @@ public interface ICompanyRepository
     /// auto-clear-stale-slug rule when consecutive_failures hits the threshold for a company
     /// with a 4xx-returning slug. Appends a reason to <c>notes</c> so the user can see why.</summary>
     void ClearAtsSlug(int id, string reason);
+
+    /// <summary>Flip a company's blacklist flag. When true, the refresh loop skips it and the
+    /// main job view hides every job posted by it. Set to false to bring it back.</summary>
+    void SetBlacklisted(int id, bool blacklisted);
+
+    /// <summary>Returns one row per active company with the fields the Sources screen needs:
+    /// the size category (already bucketed), the website URL, careers URL, and the seed name(s)
+    /// it was discovered from. Built in one query so the screen doesn't N+1.</summary>
+    IReadOnlyList<CompanySourceRow> GetCompanySourceRows();
+
+    /// <summary>Re-derive <c>size_category</c> from every row's existing <c>profile_size_hint</c>
+    /// and persist. Returns the count of rows updated. Used as a one-off backfill after migration
+    /// 051 so existing companies get their bucket without waiting for the next profile refresh.</summary>
+    int BackfillSizeCategories(System.Func<string?, string?> classifier);
+}
+
+/// <summary>One row shown on the Sources screen. <see cref="SizeCategory"/> is one of
+/// <c>startup/growth/mid_size/large</c> or null when unknown. <see cref="SourceNames"/> is a
+/// semicolon-joined list of discovery seed names (e.g. "Relay Ventures portfolio; Sequoia").</summary>
+public sealed class CompanySourceRow
+{
+    public required int Id { get; init; }
+    public required string Name { get; init; }
+    public string? Domain { get; init; }
+    public string? WebsiteUrl { get; init; }
+    public string? CareersUrl { get; init; }
+    public string? City { get; init; }
+    public string? SizeCategory { get; init; }
+    public string? SourceNames { get; init; }
+    public bool IsActive { get; init; }
 }

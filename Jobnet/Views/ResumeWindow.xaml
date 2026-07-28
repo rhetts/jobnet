@@ -44,7 +44,12 @@
                             </Grid.ColumnDefinitions>
                             <StackPanel Grid.Column="0">
                                 <TextBlock Text="Resume" FontWeight="SemiBold"/>
-                                <TextBlock Text="{Binding StatusLine}" Foreground="#666" FontSize="11" Margin="0,2,0,0"/>
+                                <TextBox Text="{Binding StatusLine, Mode=OneWay}"
+                                         IsReadOnly="True"
+                                         Background="Transparent" BorderThickness="0" Padding="0"
+                                         Foreground="#666" FontSize="11" Margin="0,2,0,0"
+                                         TextWrapping="Wrap"
+                                         ToolTip="Click and drag to select · Ctrl+C to copy"/>
                             </StackPanel>
                             <Button Grid.Column="1" Content="Upload PDF..."
                                     Command="{Binding UploadCommand}"

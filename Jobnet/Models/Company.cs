@@ -72,4 +72,10 @@ public sealed class Company
     /// 0-yield drift detection — when this was &gt;0 but the current refresh returned 0, the
     /// slug/page has probably changed shape and we should re-detect.</summary>
     public int? LastRefreshJobsCount { get; set; }
+
+    /// <summary>True when the user has chosen never to see this company again. The refresh loop
+    /// skips it and the job list filters out all its jobs. Distinct from <see cref="IsActive"/>:
+    /// inactive = "retired/acquired, keep history visible", blacklisted = "hide everything".
+    /// Reversed via the Blacklist tab in Settings.</summary>
+    public bool IsBlacklisted { get; set; }
 }

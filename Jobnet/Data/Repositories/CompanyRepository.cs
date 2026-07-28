@@ -22,7 +22,8 @@ public sealed class CompanyRepository : ICompanyRepository
                parser_strategy_last_result, parser_strategy_last_result_at,
                parser_strategy_last_error,
                last_company_parser,
-               consecutive_failures, last_success_at, last_refresh_jobs_count
+               consecutive_failures, last_success_at, last_refresh_jobs_count,
+               is_blacklisted
         FROM companies";
 
     private readonly IDbConnectionFactory _connections;
@@ -203,6 +204,7 @@ public sealed class CompanyRepository : ICompanyRepository
         ConsecutiveFailures = r.ConsecutiveFailures,
         LastSuccessAt = ParseUtc(r.LastSuccessAt),
         LastRefreshJobsCount = r.LastRefreshJobsCount,
+        IsBlacklisted = r.IsBlacklisted != 0,
     };
 
     private static DateTime? ParseUtc(string? value)
@@ -314,6 +316,53 @@ public sealed class CompanyRepository : ICompanyRepository
             });
     }
 
+    public void SetBlacklisted(int id, bool blacklisted)
+    {
+        using var conn = _connections.Open();
+        conn.Execute("UPDATE companies SET is_blacklisted = @flag WHERE id = @id",
+            new { id, flag = blacklisted ? 1 : 0 });
+    }
+
+    public IReadOnlyList<CompanySourceRow> GetCompanySourceRows()
+    {
+        using var conn = _connections.Open();
+        // Join discoveries to surface the seed(s) a company came from. group_concat with the
+        // DISTINCT modifier keeps the list short when the same company was discovered via
+        // multiple paths (e.g. Sequoia portfolio AND a brave_search query).
+        return conn.Query<CompanySourceRow>(@"
+            SELECT c.id           AS Id,
+                   c.name         AS Name,
+                   c.domain       AS Domain,
+                   c.website_url  AS WebsiteUrl,
+                   c.careers_url  AS CareersUrl,
+                   c.city         AS City,
+                   c.size_category AS SizeCategory,
+                   c.is_active    AS IsActive,
+                   (SELECT GROUP_CONCAT(DISTINCT d.source_name)
+                    FROM company_discoveries d
+                    WHERE d.company_id = c.id) AS SourceNames
+            FROM companies c
+            ORDER BY c.name").ToList();
+    }
+
+    public int BackfillSizeCategories(Func<string?, string?> classifier)
+    {
+        using var conn = _connections.Open();
+        var rows = conn.Query<(int Id, string? Hint)>(
+            "SELECT id AS Id, profile_size_hint AS Hint FROM companies WHERE profile_size_hint IS NOT NULL AND profile_size_hint != ''").ToList();
+        var updated = 0;
+        foreach (var (id, hint) in rows)
+        {
+            var bucket = classifier(hint);
+            if (bucket is null) continue;
+            conn.Execute(
+                "UPDATE companies SET size_category = @bucket WHERE id = @id AND (size_category IS NULL OR size_category != @bucket)",
+                new { id, bucket });
+            updated++;
+        }
+        return updated;
+    }
+
     // Same caveat as JobRepository.ToDbText — DB CHECK forces 'interesting' on disk for the
     // Approved enum value. Parse accepts both spellings.
     private static string? ToDbText(InterestLevel level) => level switch
@@ -358,5 +407,6 @@ public sealed class CompanyRepository : ICompanyRepository
         public int ConsecutiveFailures { get; set; }
         public string? LastSuccessAt { get; set; }
         public int? LastRefreshJobsCount { get; set; }
+        public int IsBlacklisted { get; set; }
     }
 }

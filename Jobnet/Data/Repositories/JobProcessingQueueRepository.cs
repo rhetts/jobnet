@@ -116,6 +116,28 @@ public sealed class JobProcessingQueueRepository : IJobProcessingQueueRepository
             .ToList();
     }
 
+    public int Requeue(IEnumerable<int> entityIds, string taskType)
+    {
+        var ids = entityIds.ToList();
+        if (ids.Count == 0) return 0;
+        using var conn = _connections.Open();
+        // Only touches terminal rows so an in-flight 'running' claim by the worker isn't
+        // hijacked mid-batch. Resets attempts so the row gets a fresh try, not an immediate
+        // re-failure on the existing attempts >= maxAttempts check.
+        return conn.Execute(@"
+            UPDATE job_processing_queue
+            SET status = 'pending',
+                started_at = NULL,
+                completed_at = NULL,
+                attempts = 0,
+                last_error = NULL,
+                enqueued_at = @now
+            WHERE task_type = @taskType
+              AND status IN ('completed', 'failed')
+              AND entity_id IN @ids",
+            new { ids, taskType, now = DateTime.UtcNow.ToString("o") });
+    }
+
     public int EnqueueMissing(IEnumerable<int> entityIds, string taskType)
     {
         // One INSERT-OR-IGNORE per id inside a transaction. Cheaper than a single statement with

@@ -47,6 +47,13 @@ public interface IJobProcessingQueueRepository
     /// already have a row for <paramref name="taskType"/>, insert one. Returns the count
     /// actually inserted. Used by queue-backfill to seed the queue for existing entities.</summary>
     int EnqueueMissing(System.Collections.Generic.IEnumerable<int> entityIds, string taskType);
+
+    /// <summary>Reset terminal (completed/failed) rows back to 'pending' for the given
+    /// entity ids + task type, also zeroing attempts/last_error so the worker gets a clean
+    /// retry. Returns the count of rows touched. Used by the Stats "Rescore stuck" action to
+    /// unstick jobs whose queue rows are terminal but whose target field (e.g. resume score)
+    /// is still NULL.</summary>
+    int Requeue(System.Collections.Generic.IEnumerable<int> entityIds, string taskType);
 }
 
 public static class JobProcessingTaskTypes

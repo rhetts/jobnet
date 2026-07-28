@@ -45,25 +45,36 @@
                     Padding="14,12"
                     CornerRadius="3"
                     Cursor="Hand"
-                    MouseLeftButtonUp="JobCard_MouseLeftButtonUp">
+                    MouseLeftButtonUp="JobCard_MouseLeftButtonUp"
+                    Tag="{Binding DataContext, RelativeSource={RelativeSource AncestorType=Window}}">
+                <!-- Tag carries the MainWindowViewModel into the ContextMenu's separate visual
+                     tree. The menu items reach it via PlacementTarget.Tag. RelativeSource
+                     AncestorType=Window does NOT work from inside a ContextMenu (it lives in
+                     a Popup, not the window's tree) — that's why context-menu commands silently
+                     no-op when bound that way. -->
                 <Border.ContextMenu>
                     <ContextMenu>
                         <MenuItem Header="Open in browser"
-                                  Command="{Binding DataContext.OpenJobInBrowserCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                  Command="{Binding PlacementTarget.Tag.OpenJobInBrowserCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
                                   CommandParameter="{Binding}"/>
                         <MenuItem Header="Copy URL"
-                                  Command="{Binding DataContext.CopyJobUrlCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                  Command="{Binding PlacementTarget.Tag.CopyJobUrlCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
                                   CommandParameter="{Binding}"/>
                         <Separator/>
                         <MenuItem Header="Approve (move to Approved tab)"
-                                  Command="{Binding DataContext.MarkJobInterestingCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                  Command="{Binding PlacementTarget.Tag.MarkJobInterestingCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
                                   CommandParameter="{Binding}"/>
                         <MenuItem Header="Downvote (sink to bottom)"
-                                  Command="{Binding DataContext.MarkJobNotInterestingCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                  Command="{Binding PlacementTarget.Tag.MarkJobNotInterestingCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
                                   CommandParameter="{Binding}"/>
                         <MenuItem Header="Clear interest"
-                                  Command="{Binding DataContext.ClearJobInterestCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                  Command="{Binding PlacementTarget.Tag.ClearJobInterestCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
                                   CommandParameter="{Binding}"/>
+                        <Separator/>
+                        <MenuItem Header="Blacklist company"
+                                  Command="{Binding PlacementTarget.Tag.BlacklistCompanyCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                  CommandParameter="{Binding}"
+                                  ToolTip="Hide every job from this company AND skip it on future refreshes. Reversible from Settings → Blacklist."/>
                     </ContextMenu>
                 </Border.ContextMenu>
                 <Border.Style>
@@ -371,20 +382,25 @@
                 <Button Content="Profile..."
                         Style="{StaticResource ToolbarButton}"
                         Command="{Binding OpenResumeCommand}"/>
-                <Button Content="Limits..."
-                        Style="{StaticResource ToolbarButton}"
-                        Command="{Binding OpenServiceLimitsCommand}"/>
                 <Button Content="Runs..."
                         Style="{StaticResource ToolbarButton}"
                         Command="{Binding OpenRunsCommand}"/>
-                <Button Content="Stats..."
+                <Button Content="Monitor..."
                         Style="{StaticResource ToolbarButton}"
                         Command="{Binding OpenStatsCommand}"
-                        ToolTip="Top-level counts: companies, jobs, queue backlog, extraction-system breakdown."/>
+                        ToolTip="Stats (companies, jobs, queue backlog, extraction systems), API usage (RPM/RPD/TPD vs caps), and the live log."/>
+                <Button Content="Sources..."
+                        Style="{StaticResource ToolbarButton}"
+                        Command="{Binding OpenSourcesCommand}"
+                        ToolTip="Browse every company we track plus the discovery seeds &amp; aggregator boards. Filter by type or company size."/>
                 <Button Content="Parsers..."
                         Style="{StaticResource ToolbarButton}"
                         Command="{Binding OpenParserReportCommand}"
                         ToolTip="Shows which extraction system each company uses, plus health of cached selector profiles."/>
+                <Button Content="Cover from URL..."
+                        Style="{StaticResource ToolbarButton}"
+                        Command="{Binding OpenCoverFromUrlCommand}"
+                        ToolTip="Paste a job-posting URL — we'll fetch the page, identify the role and company, and draft a cover letter."/>
                 <Button Content="Settings"
                         Style="{StaticResource ToolbarButton}"
                         Command="{Binding OpenSettingsCommand}"
@@ -502,8 +518,11 @@
                                                Visibility="{Binding HasCity, Converter={StaticResource BoolToVis}}"/>
                                 </StackPanel>
                                 <TextBlock Grid.Column="2"
-                                           Text="{Binding ActiveJobCount}"
+                                           Text="{Binding JobCountDisplay}"
+                                           ToolTip="Active jobs / total jobs ever tracked (active + removed)."
                                            Foreground="#888"
+                                           FontFamily="Consolas"
+                                           FontSize="11"
                                            VerticalAlignment="Center"
                                            Margin="6,0,0,0"/>
                                 <TextBlock Grid.Column="3"
@@ -817,7 +836,12 @@
 
         <!-- Status bar -->
         <Border Grid.Row="3" Background="White" BorderBrush="#DDD" BorderThickness="0,1,0,0" Padding="16,6">
-            <TextBlock Text="{Binding StatusBarText}" Foreground="#666" FontSize="12"/>
+            <TextBox Text="{Binding StatusBarText, Mode=OneWay}"
+                     IsReadOnly="True"
+                     Background="Transparent" BorderThickness="0" Padding="0"
+                     Foreground="#666" FontSize="12"
+                     TextWrapping="NoWrap"
+                     ToolTip="Click and drag to select · Ctrl+C to copy · right-click for menu"/>
         </Border>
     </Grid>
 </Window>

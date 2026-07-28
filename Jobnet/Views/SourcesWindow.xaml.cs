@@ -3,13 +3,12 @@ using Jobnet.ViewModels;
 
 namespace Jobnet.Views;
 
-public partial class CoverLetterWindow : Window
+public partial class SourcesWindow : Window
 {
-    public CoverLetterWindow(CoverLetterViewModel viewModel)
+    public SourcesWindow(SourcesViewModel viewModel)
     {
         InitializeComponent();
         DataContext = viewModel;
-        Closing += (_, _) => (DataContext as CoverLetterViewModel)?.Flush();
     }
 
     private void Close_Click(object sender, RoutedEventArgs e) => Close();

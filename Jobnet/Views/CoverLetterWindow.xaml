@@ -70,7 +70,7 @@
 
                         <TextBlock Text="Save folder" FontWeight="SemiBold" Margin="0,16,0,4"/>
                         <TextBlock Foreground="#666" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,6"
-                                   Text="Where 'Save to file' writes cover letters. The folder is created if it doesn't exist. Files are named {company}_{title}_{timestamp}.txt."/>
+                                   Text="Where 'Save to file' writes the PDF. The folder is created if it doesn't exist. Files are named '{Company} {Title}.pdf'."/>
                         <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*"/>
@@ -96,7 +96,12 @@
         <Border Grid.Row="2" Background="White" BorderBrush="#DDD" BorderThickness="1"
                 Padding="10,6" Margin="0,8,0,0" CornerRadius="3">
             <StackPanel>
-                <TextBlock Text="{Binding StatusLine}" Foreground="#333" FontSize="12" TextWrapping="Wrap"/>
+                <TextBox Text="{Binding StatusLine, Mode=OneWay}"
+                         IsReadOnly="True"
+                         Background="Transparent" BorderThickness="0" Padding="0"
+                         Foreground="#333" FontSize="12"
+                         TextWrapping="Wrap"
+                         ToolTip="Click and drag to select · Ctrl+C to copy"/>
                 <ProgressBar IsIndeterminate="{Binding IsBusy}"
                              Height="3" Margin="0,4,0,0"
                              Visibility="{Binding IsBusy, Converter={StaticResource BoolToVis}}"/>

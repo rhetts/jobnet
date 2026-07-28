@@ -134,8 +134,12 @@
                                         <Run Text="  fail "/>
                                         <Run Text="{Binding Failed, Mode=OneWay}"/>
                                     </TextBlock>
-                                    <TextBlock Text="{Binding ErrorMessage}" Foreground="#C44" FontSize="11"
-                                               Margin="0,3,0,0" TextWrapping="Wrap"/>
+                                    <TextBox Text="{Binding ErrorMessage, Mode=OneWay}"
+                                             IsReadOnly="True"
+                                             Background="Transparent" BorderThickness="0" Padding="0"
+                                             Foreground="#C44" FontSize="11"
+                                             Margin="0,3,0,0" TextWrapping="Wrap"
+                                             ToolTip="Click and drag to select · Ctrl+C to copy"/>
                                 </StackPanel>
                             </Border>
                         </DataTemplate>

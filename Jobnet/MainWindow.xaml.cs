@@ -49,14 +49,23 @@ public partial class MainWindow : Window
         if (fe.DataContext is not JobViewModel jvm) return;
 
         // Walk up from the original source — if any ancestor is a button, the click belongs to that
-        // button and we should not also toggle the card.
+        // button and we should not also toggle the card. OriginalSource can be a content element
+        // like Run (inline text inside a TextBlock); VisualTreeHelper.GetParent throws on those,
+        // so fall back to LogicalTreeHelper until we reach a Visual.
         DependencyObject? d = e.OriginalSource as DependencyObject;
         while (d is not null && d != fe)
         {
             if (d is ButtonBase) return;
-            d = System.Windows.Media.VisualTreeHelper.GetParent(d);
+            d = GetAnyParent(d);
         }
 
         jvm.IsExpanded = !jvm.IsExpanded;
+    }
+
+    private static DependencyObject? GetAnyParent(DependencyObject d)
+    {
+        if (d is System.Windows.Media.Visual or System.Windows.Media.Media3D.Visual3D)
+            return System.Windows.Media.VisualTreeHelper.GetParent(d);
+        return System.Windows.LogicalTreeHelper.GetParent(d);
     }
 }

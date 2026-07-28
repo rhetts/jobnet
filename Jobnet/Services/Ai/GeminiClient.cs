@@ -43,7 +43,6 @@ public sealed class GeminiClient : IAiClient
 
     public async Task<AiResponse> CompleteAsync(string userMessage, string? system = null, int? maxTokens = null, CancellationToken ct = default, string? task = null)
     {
-        _ = task;
         var apiKey = _config.GetOrDefault("gemini_api_key", "");
         if (string.IsNullOrWhiteSpace(apiKey))
             throw new AiUnavailableException("Gemini API key is not configured. Set gemini_api_key in Settings (get a free key at https://aistudio.google.com/apikey).");
@@ -51,10 +50,18 @@ public sealed class GeminiClient : IAiClient
         var model = _config.GetOrDefault("gemini_model", "gemini-2.5-flash-lite");
         var cap = maxTokens ?? int.Parse(_config.GetOrDefault("gemini_max_tokens_classify", "256"));
 
+        // Gemini 2.5 Flash/Pro spend "thinking" tokens that count against maxOutputTokens by default.
+        // For pure prose tasks (cover letter, summary, profile) thinking adds no value and just eats
+        // budget — disable it so the visible output isn't truncated.
+        var disableThinking = task is "cover_letter" or "summary" or "profile";
+        object generationConfig = disableThinking
+            ? new { maxOutputTokens = cap, temperature = 0.0, thinkingConfig = new { thinkingBudget = 0 } }
+            : new { maxOutputTokens = cap, temperature = 0.0 };
+
         var payload = new Dictionary<string, object?>
         {
             ["contents"] = new[] { new { role = "user", parts = new[] { new { text = userMessage } } } },
-            ["generationConfig"] = new { maxOutputTokens = cap, temperature = 0.0 }
+            ["generationConfig"] = generationConfig
         };
         if (!string.IsNullOrEmpty(system))
             payload["systemInstruction"] = new { parts = new[] { new { text = system } } };

@@ -21,6 +21,7 @@ public partial class MainWindowViewModel : ObservableObject
 {
     private readonly IJobDataService _data;
     private readonly IJobRepository? _jobsRepo;
+    private readonly ICompanyRepository? _companiesRepo;
     private readonly IDiscoveryService? _discovery;
     private readonly IJobRefresher? _refresher;
     private readonly Func<SettingsWindow>? _settingsWindowFactory;
@@ -34,7 +35,13 @@ public partial class MainWindowViewModel : ObservableObject
     private readonly Func<StatsWindow>? _statsWindowFactory;
     private readonly Func<ParserReportWindow>? _parserReportWindowFactory;
     private readonly Func<CoverLetterWindow>? _coverLetterWindowFactory;
+    private readonly Func<SourcesWindow>? _sourcesWindowFactory;
     private List<JobViewModel> _allJobs = new();
+
+    /// <summary>Company ids the user has blacklisted. Both the sidebar (company list) and the
+    /// job-list filter consult this set so blacklisted entries never appear in either. Refreshed
+    /// by <see cref="LoadFromDataService"/> after every reload.</summary>
+    private HashSet<int> _blacklistedCompanyIds = new();
 
     public ObservableCollection<CompanyViewModel> Companies { get; } = new();
     public ICollectionView CompaniesView { get; }
@@ -75,6 +82,12 @@ public partial class MainWindowViewModel : ObservableObject
     // Job filters (right pane)
     [ObservableProperty]
     private string _jobKeywordFilter = string.Empty;
+
+    /// <summary>Lowercased, whitespace-split tokens from <see cref="JobKeywordFilter"/>. Empty
+    /// when the search box is blank. Multi-word search treats each token independently — a job
+    /// passes if it contains AT LEAST ONE token in any searched field, and the match count
+    /// drives sort order so more relevant results float up.</summary>
+    private string[] _keywordTokens = Array.Empty<string>();
 
     [ObservableProperty]
     private string _levelFilterSummary = "Any level";
@@ -148,6 +161,7 @@ public partial class MainWindowViewModel : ObservableObject
 
     public MainWindowViewModel(IJobDataService data,
                                 IJobRepository? jobsRepo = null,
+                                ICompanyRepository? companiesRepo = null,
                                 ILevelRepository? levelsRepo = null,
                                 IAreaRepository? areasRepo = null,
                                 IConfigRepository? config = null,
@@ -165,10 +179,12 @@ public partial class MainWindowViewModel : ObservableObject
                                 ITechnologyRepository? techsRepo = null,
                                 Func<ParserReportWindow>? parserReportWindowFactory = null,
                                 Func<StatsWindow>? statsWindowFactory = null,
+                                Func<SourcesWindow>? sourcesWindowFactory = null,
                                 Services.Workers.IEntityChangeNotifier? entityChanges = null)
     {
         _data = data;
         _jobsRepo = jobsRepo;
+        _companiesRepo = companiesRepo;
         _levelsRepo = levelsRepo;
         _areasRepo = areasRepo;
         _config = config;
@@ -186,6 +202,7 @@ public partial class MainWindowViewModel : ObservableObject
         _techsRepo = techsRepo;
         _parserReportWindowFactory = parserReportWindowFactory;
         _statsWindowFactory = statsWindowFactory;
+        _sourcesWindowFactory = sourcesWindowFactory;
 
         // Subscribe to background-worker completions so finished summaries / resume scores /
         // company profiles appear in the UI live without the user reloading. The notifier
@@ -200,11 +217,13 @@ public partial class MainWindowViewModel : ObservableObject
         CompaniesView.SortDescriptions.Add(new SortDescription(nameof(CompanyViewModel.IsAllJobsSentinel), ListSortDirection.Descending));
 
         JobsView = CollectionViewSource.GetDefaultView(Jobs);
-        // Tab 1 sort: active jobs first, downvoted at the bottom. Within each group, by
-        // resume-match score when present (else composite score) descending. Approved jobs are
-        // filtered out — they live on the Approved tab.
-        JobsView.SortDescriptions.Add(new SortDescription(nameof(JobViewModel.VoteOrder), ListSortDirection.Ascending));
-        JobsView.SortDescriptions.Add(new SortDescription(nameof(JobViewModel.SortKey),   ListSortDirection.Descending));
+        // Tab 1 sort: active jobs first, downvoted at the bottom. Within each group, jobs that
+        // match more of the search-box tokens float up (no-op when the box is empty since every
+        // count is 0), then by resume-match score (or composite). Approved jobs are filtered out —
+        // they live on the Approved tab.
+        JobsView.SortDescriptions.Add(new SortDescription(nameof(JobViewModel.VoteOrder),         ListSortDirection.Ascending));
+        JobsView.SortDescriptions.Add(new SortDescription(nameof(JobViewModel.KeywordMatchCount), ListSortDirection.Descending));
+        JobsView.SortDescriptions.Add(new SortDescription(nameof(JobViewModel.SortKey),           ListSortDirection.Descending));
         JobsView.Filter = FilterJobInView;
 
         // Tab 2: just approved jobs. Sort: not-applied above applied (so the user's "to do"
@@ -386,6 +405,7 @@ public partial class MainWindowViewModel : ObservableObject
         var companies = _data.GetCompanies();
         var jobs = _data.GetJobs();
         var companyById = companies.ToDictionary(c => c.Id);
+        _blacklistedCompanyIds = companies.Where(c => c.IsBlacklisted).Select(c => c.Id).ToHashSet();
 
         var levelNameById = _levelsRepo?.GetAll().ToDictionary(l => l.Id, l => l.Name) ?? new Dictionary<int, string>();
         var areaNameById  = _areasRepo?.GetAll().ToDictionary(a => a.Id, a => a.Name)  ?? new Dictionary<int, string>();
@@ -416,6 +436,12 @@ public partial class MainWindowViewModel : ObservableObject
             .GroupBy(j => j.CompanyId)
             .ToDictionary(g => g.Key, g => g.Count());
 
+        // Historical totals include removed jobs — used together with activeJobCounts to render
+        // "active / total" in the sidebar.
+        var totalJobCounts = jobs
+            .GroupBy(j => j.CompanyId)
+            .ToDictionary(g => g.Key, g => g.Count());
+
         // 30-day churn per company, batch-loaded so we don't N+1 in the sidebar render.
         // Absent from the dict => no jobs ≥30 days old yet — sidebar shows "—".
         var churnByCompany = _jobsRepo?.GetChurnRate30dByCompany()
@@ -425,12 +451,15 @@ public partial class MainWindowViewModel : ObservableObject
         var wasAllJobs = SelectedCompany?.IsAllJobsSentinel ?? true;
 
         Companies.Clear();
-        Companies.Add(CompanyViewModel.CreateAllJobsSentinel(jobs.Count(j => j.IsActive)));
+        Companies.Add(CompanyViewModel.CreateAllJobsSentinel(
+            activeJobCount: jobs.Count(j => j.IsActive),
+            totalJobCount:  jobs.Count));
         foreach (var c in companies.OrderBy(c => c.Name))
         {
-            activeJobCounts.TryGetValue(c.Id, out var count);
+            activeJobCounts.TryGetValue(c.Id, out var active);
+            totalJobCounts.TryGetValue(c.Id, out var total);
             churnByCompany.TryGetValue(c.Id, out var churn);
-            Companies.Add(new CompanyViewModel(c, count,
+            Companies.Add(new CompanyViewModel(c, active, total,
                 churnByCompany.ContainsKey(c.Id) ? churn : (Jobnet.Data.Repositories.ChurnStat?)null));
         }
 
@@ -440,6 +469,10 @@ public partial class MainWindowViewModel : ObservableObject
 
         RebuildAvailableCities();
         RefreshStatusBar();
+
+        // Newly built VMs need their KeywordMatchCount set for the current search-box state,
+        // otherwise the first sort cycle ranks them all at 0 even when the search box has content.
+        RecomputeKeywordMatches();
     }
 
     partial void OnSelectedCompanyChanged(CompanyViewModel? value)
@@ -501,8 +534,44 @@ public partial class MainWindowViewModel : ObservableObject
 
     partial void OnJobKeywordFilterChanged(string value)
     {
+        _keywordTokens = (value ?? string.Empty)
+            .Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries)
+            .Select(t => t.ToLowerInvariant())
+            .Distinct()
+            .ToArray();
+        RecomputeKeywordMatches();
         RefreshJobsView();
         if (_settingsLoaded) _config?.Set("ui_filter_keyword", value ?? string.Empty);
+    }
+
+    /// <summary>Score every loaded job against the current keyword tokens and stash the match
+    /// count on each VM. The JobsView sort reads this via a SortDescription so jobs with more
+    /// matched tokens float up. When the search box is empty, every job's count is 0 → the
+    /// sort collapses cleanly back to the existing VoteOrder/SortKey ordering.</summary>
+    private void RecomputeKeywordMatches()
+    {
+        foreach (var jvm in _allJobs)
+            jvm.KeywordMatchCount = CountKeywordMatches(jvm);
+    }
+
+    private int CountKeywordMatches(JobViewModel jvm)
+    {
+        if (_keywordTokens.Length == 0) return 0;
+        var title   = jvm.Job.Title?.ToLowerInvariant() ?? "";
+        var company = jvm.CompanyName?.ToLowerInvariant() ?? "";
+        var desc    = jvm.Job.DescriptionSnippet?.ToLowerInvariant() ?? "";
+        var summary = jvm.Job.Summary?.ToLowerInvariant() ?? "";
+        var loc     = jvm.Job.Location?.ToLowerInvariant() ?? "";
+        var city    = jvm.CompanyCity?.ToLowerInvariant() ?? "";
+
+        var matches = 0;
+        foreach (var tok in _keywordTokens)
+        {
+            if (title.Contains(tok) || company.Contains(tok) || desc.Contains(tok)
+                || summary.Contains(tok) || loc.Contains(tok) || city.Contains(tok))
+                matches++;
+        }
+        return matches;
     }
 
     partial void OnSelectedJobAgeChanged(JobAgeFilter? value)
@@ -564,6 +633,10 @@ public partial class MainWindowViewModel : ObservableObject
         if (obj is not CompanyViewModel vm) return false;
         if (vm.IsAllJobsSentinel) return true;
 
+        // Blacklisted companies vanish from the sidebar entirely. The Settings → Blacklist tab
+        // is the only place they're still visible (so the user can unblacklist).
+        if (vm.Company is not null && _blacklistedCompanyIds.Contains(vm.Company.Id)) return false;
+
         // Default view: hide companies with 0 active jobs. Toggle via ShowAllCompanies.
         if (!ShowAllCompanies && vm.ActiveJobCount == 0) return false;
 
@@ -574,6 +647,9 @@ public partial class MainWindowViewModel : ObservableObject
     private bool FilterJobInView(object obj)
     {
         if (obj is not JobViewModel jvm) return false;
+
+        // Blacklist trumps everything — the user said "never show me this company".
+        if (_blacklistedCompanyIds.Contains(jvm.Job.CompanyId)) return false;
 
         // Approved jobs live on the Approved-jobs tab — keep them off this one.
         if (jvm.IsApproved) return false;
@@ -610,16 +686,10 @@ public partial class MainWindowViewModel : ObservableObject
             if (jvm.Job.DateFirstSeen < cutoff) return false;
         }
 
-        if (!string.IsNullOrWhiteSpace(JobKeywordFilter))
-        {
-            var needle = JobKeywordFilter.Trim();
-            var inTitle   = jvm.Job.Title?.Contains(needle, StringComparison.OrdinalIgnoreCase) == true;
-            var inCompany = jvm.CompanyName?.Contains(needle, StringComparison.OrdinalIgnoreCase) == true;
-            var inDesc    = jvm.Job.DescriptionSnippet?.Contains(needle, StringComparison.OrdinalIgnoreCase) == true;
-            var inLoc     = jvm.Job.Location?.Contains(needle, StringComparison.OrdinalIgnoreCase) == true;
-            var inCity    = jvm.CompanyCity?.Contains(needle, StringComparison.OrdinalIgnoreCase) == true;
-            if (!(inTitle || inCompany || inDesc || inLoc || inCity)) return false;
-        }
+        // Multi-word search: a job passes if it matches AT LEAST ONE token. Ranking by
+        // match count is handled by the JobsView sort, not here — this filter is purely
+        // "show / hide".
+        if (_keywordTokens.Length > 0 && jvm.KeywordMatchCount == 0) return false;
         return true;
     }
 
@@ -737,15 +807,6 @@ public partial class MainWindowViewModel : ObservableObject
     }
 
     [RelayCommand]
-    private void OpenServiceLimits()
-    {
-        if (_limitsWindowFactory is null) return;
-        var window = _limitsWindowFactory();
-        window.Owner = Application.Current.MainWindow;
-        window.ShowDialog();
-    }
-
-    [RelayCommand]
     private void OpenParserReport()
     {
         if (_parserReportWindowFactory is null) return;
@@ -761,6 +822,41 @@ public partial class MainWindowViewModel : ObservableObject
         var window = _runsWindowFactory();
         window.Owner = Application.Current.MainWindow;
         window.ShowDialog();
+    }
+
+    [RelayCommand]
+    private void OpenSources()
+    {
+        if (_sourcesWindowFactory is null) return;
+        var window = _sourcesWindowFactory();
+        window.Owner = Application.Current.MainWindow;
+        window.ShowDialog();
+    }
+
+    /// <summary>Ask the user to paste a job-posting URL, then open the Cover Letter window in
+    /// URL mode so the AI fetches the page and writes a letter on the spot.</summary>
+    [RelayCommand]
+    private void OpenCoverFromUrl()
+    {
+        if (_coverLetterWindowFactory is null) return;
+        var owner = Application.Current.MainWindow;
+        var url = Views.TextPromptWindow.Ask(owner,
+            title: "Cover letter from URL",
+            prompt: "Paste the job-posting URL. We'll fetch the page, identify the role and company, and draft a cover letter.",
+            initialValue: "");
+        if (string.IsNullOrWhiteSpace(url)) return;
+        if (!url.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+            && !url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        {
+            StatusBarText = "URL must start with http:// or https://";
+            return;
+        }
+
+        var window = _coverLetterWindowFactory();
+        if (window.DataContext is CoverLetterViewModel vm)
+            vm.LoadFromUrl(url);
+        window.Owner = owner;
+        window.Show();   // non-modal so user can keep working while the AI thinks
     }
 
     [RelayCommand]
@@ -955,6 +1051,28 @@ public partial class MainWindowViewModel : ObservableObject
 
     [RelayCommand]
     private void ClearJobInterest(JobViewModel? job) => SetJobInterest(job, Models.InterestLevel.Neutral);
+
+    /// <summary>Right-click → "Blacklist company". Persists the flag, then reloads from the data
+    /// service so the sidebar and job list immediately drop every job tied to that company.
+    /// Reversed from Settings → Blacklist tab. Every failure branch updates the status bar so
+    /// the user sees feedback even when something upstream silently dropped the click.</summary>
+    [RelayCommand]
+    private void BlacklistCompany(JobViewModel? job)
+    {
+        if (job is null) { StatusBarText = "Blacklist failed: no job was passed to the command."; return; }
+        if (_companiesRepo is null) { StatusBarText = "Blacklist failed: ICompanyRepository wasn't injected — restart the app."; return; }
+        try
+        {
+            _companiesRepo.SetBlacklisted(job.Job.CompanyId, true);
+            var companyName = job.CompanyName;
+            LoadFromDataService();
+            StatusBarText = $"Blacklisted {companyName}. Reverse from Settings → Blacklist.";
+        }
+        catch (Exception ex)
+        {
+            StatusBarText = $"Blacklist failed: {ex.GetType().Name}: {ex.Message}";
+        }
+    }
 
     [RelayCommand]
     private void CopyJobUrl(JobViewModel? job)
