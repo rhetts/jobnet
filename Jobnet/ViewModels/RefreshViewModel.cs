@@ -129,8 +129,14 @@ public partial class RefreshViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(PruneOutOfAreaCommand))]
     [NotifyCanExecuteChangedFor(nameof(ReclassifyJobsCommand))]
     [NotifyCanExecuteChangedFor(nameof(StopRunCommand))]
+    [NotifyCanExecuteChangedFor(nameof(SkipCompanyCommand))]
     [NotifyCanExecuteChangedFor(nameof(RunMaintenanceCommand))]
     private bool _isBusy;
+
+    /// <summary>Label for the skip button — names the company it would abandon, so the user
+    /// isn't guessing. Falls back to a generic label between companies.</summary>
+    [ObservableProperty]
+    private string _skipCompanyLabel = "Skip company";
 
     [ObservableProperty]
     private string _statusText = "Pick an action.";
@@ -266,6 +272,23 @@ public partial class RefreshViewModel : ObservableObject
         _quota.CancelSession();
     }
 
+    /// <summary>Abandon the company currently being refreshed and carry on with the next one.
+    /// Only meaningful during a "Discover jobs" / "Refresh existing" sweep; harmless otherwise
+    /// (the refresher no-ops when nothing is in flight).
+    ///
+    /// Carries the same delay as Stop: an in-flight local-llama call finishes its current
+    /// generation before the cancellation is observed, so a company already wedged in a
+    /// multi-hour call will not disappear the instant you click.</summary>
+    [RelayCommand(CanExecute = nameof(CanStop))]
+    private void SkipCompany()
+    {
+        var name = _refresher.CurrentCompanyName;
+        StatusText = name is null
+            ? "Skip requested — no company in flight right now."
+            : $"Skipping {name} — waiting for the current step to unwind...";
+        _refresher.SkipCurrentCompany();
+    }
+
     /// <summary>Build a Progress&lt;T&gt; that mirrors batch-service ticks into run_step_log rows. The
     /// "starting" stage opens a step; "done" closes it with the per-item counts. Captured on the
     /// UI thread so the SQLite writes run on the dispatcher (single-writer; SQLite WAL is fine).</summary>
@@ -391,6 +414,10 @@ public partial class RefreshViewModel : ObservableObject
     [RelayCommand(CanExecute = nameof(CanRunMaintenance))]
     private async Task RunMaintenanceAsync()
     {
+        // Reset the quota session BEFORE flipping _runningMaintenance, otherwise BeginSession()
+        // sees the flag set and skips ResetSession() — leaving a cancelled CTS / sticky
+        // _wasCancelledByDailyQuota from a prior aborted batch and short-circuiting every step.
+        _quota.ResetSession();
         _runningMaintenance = true;
         IsBusy = true;
         var ct = BeginSession();
@@ -510,11 +537,13 @@ public partial class RefreshViewModel : ObservableObject
         {
             runStatus = "cancelled";
             StatusText = CancelledStatusText();
+            Completed?.Invoke();
         }
         catch (Exception ex)
         {
             runStatus = "failed";
             StatusText = $"Failed: {ex.GetType().Name}: {ex.Message}";
+            Completed?.Invoke();
         }
         finally
         {
@@ -595,6 +624,9 @@ public partial class RefreshViewModel : ObservableObject
                            + $"{p.JobsAddedSoFar} added, {p.JobsUpdatedSoFar} updated"
                            + (p.ErrorsSoFar > 0 ? $", {p.ErrorsSoFar} errors" : "");
 
+                // Name the company on the skip button so it's clear what's about to be abandoned.
+                SkipCompanyLabel = p.Stage == "starting" ? $"Skip {p.CompanyName}" : "Skip company";
+
                 if (p.Stage == "starting")
                 {
                     currentStepId = _runs.StartStep(runId, $"{p.CompanyName} ({p.CompanyDomain})");
@@ -639,6 +671,7 @@ public partial class RefreshViewModel : ObservableObject
             // progress callback are the best snapshot we have of work completed up to the cancel.
             _runs.FinishRun(runId, "cancelled",
                 examined: examinedSoFar, added: prevAdded, updated: prevUpdated, errorCount: prevErrors);
+            Completed?.Invoke();
         }
         catch (Exception ex)
         {
@@ -646,6 +679,7 @@ public partial class RefreshViewModel : ObservableObject
             _runs.FinishRun(runId, "failed",
                 examined: examinedSoFar, added: prevAdded, updated: prevUpdated, errorCount: prevErrors,
                 notes: $"{ex.GetType().Name}: {ex.Message}");
+            Completed?.Invoke();
         }
         finally { if (!_runningMaintenance) IsBusy = false; }
     }
@@ -674,11 +708,13 @@ public partial class RefreshViewModel : ObservableObject
         {
             StatusText = CancelledStatusText();
             _runs.FinishRun(runId, "cancelled");
+            Completed?.Invoke();
         }
         catch (Exception ex)
         {
             StatusText = $"Failed: {ex.GetType().Name}: {ex.Message}";
             _runs.FinishRun(runId, "failed", notes: $"{ex.GetType().Name}: {ex.Message}");
+            Completed?.Invoke();
         }
         finally { if (!_runningMaintenance) IsBusy = false; }
     }
@@ -703,6 +739,7 @@ public partial class RefreshViewModel : ObservableObject
         {
             StatusText = $"Failed: {ex.GetType().Name}: {ex.Message}";
             _runs.FinishRun(runId, "failed", notes: $"{ex.GetType().Name}: {ex.Message}");
+            Completed?.Invoke();
         }
         finally { if (!_runningMaintenance) IsBusy = false; }
     }
@@ -735,6 +772,7 @@ public partial class RefreshViewModel : ObservableObject
         {
             StatusText = $"Failed: {ex.GetType().Name}: {ex.Message}";
             _runs.FinishRun(runId, "failed", notes: $"{ex.GetType().Name}: {ex.Message}");
+            Completed?.Invoke();
         }
         finally { if (!_runningMaintenance) IsBusy = false; }
     }

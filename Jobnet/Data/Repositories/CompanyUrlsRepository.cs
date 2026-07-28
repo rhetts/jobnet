@@ -28,6 +28,12 @@ public sealed class CompanyUrlsRepository : ICompanyUrlsRepository
             new { companyId }).Select(Map).ToList();
     }
 
+    public IReadOnlyList<CompanyUrl> GetAll()
+    {
+        using var conn = _connections.Open();
+        return conn.Query<Row>($"{SelectAll} ORDER BY company_id, url").Select(Map).ToList();
+    }
+
     public IReadOnlyList<CompanyUrl> GetByCompanyAndKind(int companyId, string kind)
     {
         using var conn = _connections.Open();
@@ -80,6 +86,22 @@ public sealed class CompanyUrlsRepository : ICompanyUrlsRepository
         using var conn = _connections.Open();
         conn.Execute("DELETE FROM company_urls WHERE company_id = @companyId AND url = @url",
             new { companyId, url });
+    }
+
+    public int DeleteWhere(Func<string, bool> shouldDelete)
+    {
+        using var conn = _connections.Open();
+        var all = conn.Query<(int Id, string Url)>("SELECT id, url FROM company_urls").ToList();
+        var doomed = all.Where(r => shouldDelete(r.Url)).Select(r => r.Id).ToList();
+        if (doomed.Count == 0) return 0;
+
+        // Chunked so a large purge doesn't build a parameter list SQLite will reject.
+        var deleted = 0;
+        using var tx = conn.BeginTransaction();
+        foreach (var chunk in doomed.Chunk(500))
+            deleted += conn.Execute("DELETE FROM company_urls WHERE id IN @ids", new { ids = chunk }, tx);
+        tx.Commit();
+        return deleted;
     }
 
     public int DeleteStale(int notYieldedDays)

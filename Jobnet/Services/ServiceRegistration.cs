@@ -33,6 +33,9 @@ internal static class ServiceRegistration
         services.AddSingleton<IAiExtractionCacheRepository, AiExtractionCacheRepository>();
         services.AddSingleton<ITechnologyRepository, TechnologyRepository>();
         services.AddSingleton<Technology.ITechnologyMatcher, Technology.TechnologyMatcher>();
+        services.AddSingleton<IFilterRuleRepository, FilterRuleRepository>();
+        // Caches the compiled rule set for 60s — see FilterRuleProvider.
+        services.AddSingleton<Filters.FilterRuleProvider>();
 
         services.AddSingleton<Classification.HeuristicClassifier>();
         services.AddSingleton<Classification.AiFallbackClassifier>();
@@ -189,7 +192,9 @@ internal static class ServiceRegistration
         });
 
         services.AddSingleton<Resume.IResumeMatcher, Resume.ResumeMatcher>();
+        services.AddSingleton<ICoverLetterRepository, CoverLetterRepository>();
         services.AddSingleton<CoverLetter.ICoverLetterGenerator, CoverLetter.CoverLetterGenerator>();
+        services.AddSingleton<CoverLetter.ICoverLetterPdfWriter, CoverLetter.CoverLetterPdfWriter>();
 
         services.AddSingleton<IJobDataService, SqliteJobDataService>();
         services.AddSingleton<FakeJobDataService>(); // for seed-fake command only

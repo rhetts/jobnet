@@ -42,6 +42,11 @@ public interface IRunLogger
                     int skipped = 0, int failed = 0, int errorCount = 0,
                     string? notes = null);
 
+    /// <summary>Per-company scan-time rollup from <c>refresh_attempt</c>, slowest first by total
+    /// time. Backs the Scan Times window: finding the domains that eat the clock is otherwise a
+    /// hand-written SQL job. <paramref name="sinceDays"/> of 0 means all history.</summary>
+    IReadOnlyList<ScanTimeSummary> GetScanTimes(int sinceDays = 0);
+
     /// <summary>Recent runs in reverse chronological order.</summary>
     IReadOnlyList<RunSummary> GetRecent(int limit = 50);
 
@@ -77,6 +82,25 @@ public sealed class RunSummary
     public int Failed { get; init; }
     public int ErrorCount { get; init; }
     public string? Notes { get; init; }
+}
+
+/// <summary>Per-company scan-time rollup. All durations come from <c>refresh_attempt.duration_ms</c>,
+/// which is stamped per stage attempt (ats_api / cached_url / ai_extract / detect_ats), so a single
+/// company contributes several rows per run.</summary>
+public sealed class ScanTimeSummary
+{
+    public required int CompanyId { get; init; }
+    public required string Name { get; init; }
+    public required string Domain { get; init; }
+    public required int Attempts { get; init; }
+    public required long TotalMs { get; init; }
+    public required long AvgMs { get; init; }
+    public required long WorstMs { get; init; }
+    /// <summary>Jobs yielded across all those attempts — the return on the time spent.</summary>
+    public required int JobsYielded { get; init; }
+    public System.DateTime? LastAttempt { get; init; }
+    public required bool IsBlacklisted { get; init; }
+    public required bool IsActive { get; init; }
 }
 
 public sealed class StepSummary

@@ -137,6 +137,61 @@ public sealed class RunLogger : IRunLogger
                   examined, added, updated, skipped, failed, errorCount, notes });
     }
 
+    public IReadOnlyList<ScanTimeSummary> GetScanTimes(int sinceDays = 0)
+    {
+        using var conn = _connections.Open();
+        // started_at is ISO-8601 UTC text, so a plain string comparison orders correctly.
+        var cutoff = sinceDays > 0 ? DateTime.UtcNow.AddDays(-sinceDays).ToString("o") : null;
+        return conn.Query<ScanTimeRow>(@"
+            SELECT a.company_id            AS CompanyId,
+                   c.name                  AS Name,
+                   c.domain                AS Domain,
+                   COUNT(*)                AS Attempts,
+                   SUM(a.duration_ms)      AS TotalMs,
+                   CAST(AVG(a.duration_ms) AS INTEGER) AS AvgMs,
+                   MAX(a.duration_ms)      AS WorstMs,
+                   SUM(a.jobs_yielded)     AS JobsYielded,
+                   MAX(a.started_at)       AS LastAttemptIso,
+                   c.is_blacklisted        AS IsBlacklisted,
+                   c.is_active             AS IsActive
+              FROM refresh_attempt a
+              JOIN companies c ON c.id = a.company_id
+             WHERE a.duration_ms IS NOT NULL
+               AND (@cutoff IS NULL OR a.started_at >= @cutoff)
+             GROUP BY a.company_id
+             ORDER BY SUM(a.duration_ms) DESC",
+            new { cutoff }).Select(r => new ScanTimeSummary
+            {
+                CompanyId = r.CompanyId,
+                Name = r.Name ?? "(unnamed)",
+                Domain = r.Domain ?? "",
+                Attempts = r.Attempts,
+                TotalMs = r.TotalMs,
+                AvgMs = r.AvgMs,
+                WorstMs = r.WorstMs,
+                JobsYielded = r.JobsYielded,
+                LastAttempt = string.IsNullOrEmpty(r.LastAttemptIso)
+                    ? null : DateTime.Parse(r.LastAttemptIso).ToUniversalTime(),
+                IsBlacklisted = r.IsBlacklisted != 0,
+                IsActive = r.IsActive != 0,
+            }).ToList();
+    }
+
+    private sealed class ScanTimeRow
+    {
+        public int CompanyId { get; set; }
+        public string? Name { get; set; }
+        public string? Domain { get; set; }
+        public int Attempts { get; set; }
+        public long TotalMs { get; set; }
+        public long AvgMs { get; set; }
+        public long WorstMs { get; set; }
+        public int JobsYielded { get; set; }
+        public string? LastAttemptIso { get; set; }
+        public int IsBlacklisted { get; set; }
+        public int IsActive { get; set; }
+    }
+
     public IReadOnlyList<RunSummary> GetRecent(int limit = 50)
     {
         using var conn = _connections.Open();

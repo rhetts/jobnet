@@ -1,0 +1,184 @@
+<Window x:Class="Jobnet.Views.FiltersWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="clr-namespace:Jobnet.ViewModels"
+        Title="Jobnet — Filters"
+        Width="1240" Height="760"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        Background="#FAFAFA">
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0" Margin="0,0,0,10">
+            <TextBlock Text="Filter rules" FontSize="16" FontWeight="SemiBold"/>
+            <TextBlock Foreground="#666" FontSize="11" Margin="0,2,0,0" TextWrapping="Wrap"
+                       Text="Every block / allow rule in one list. 'domain' matches a host and all its subdomains; 'word' matches whole words only. Scope 'everywhere' applies to both crawling and discovery — use 'discovery' for domains you don't want auto-added as companies but still want to crawl if you added them yourself."/>
+        </StackPanel>
+
+        <!-- compile errors -->
+        <Border Grid.Row="1" Background="#FDECEA" BorderBrush="#C44" BorderThickness="1"
+                CornerRadius="3" Padding="8,5" Margin="0,0,0,8">
+            <Border.Style>
+                <Style TargetType="Border">
+                    <Setter Property="Visibility" Value="Visible"/>
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding CompileErrors}" Value="">
+                            <Setter Property="Visibility" Value="Collapsed"/>
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </Border.Style>
+            <TextBlock Text="{Binding CompileErrors}" Foreground="#A00" FontSize="11" TextWrapping="Wrap"/>
+        </Border>
+
+        <Grid Grid.Row="2" Margin="0,0,0,10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="Subject:" VerticalAlignment="Center" Margin="0,0,6,0"/>
+            <ComboBox  Grid.Column="1" Width="140" Padding="6,2"
+                       ItemsSource="{Binding SubjectFilters}" SelectedItem="{Binding SelectedSubjectFilter}"/>
+            <TextBlock Grid.Column="2" Text="Show:" VerticalAlignment="Center" Margin="14,0,6,0"/>
+            <ComboBox  Grid.Column="3" Width="140" Padding="6,2"
+                       ItemsSource="{Binding ShowFilters}" SelectedItem="{Binding SelectedShowFilter}"/>
+            <TextBlock Grid.Column="4" Text="{Binding Summary}" VerticalAlignment="Center"
+                       Margin="14,0,0,0" Foreground="#666"/>
+            <Button    Grid.Column="5" Content="Refresh" Padding="14,4" Command="{Binding RefreshCommand}"/>
+        </Grid>
+
+        <DataGrid Grid.Row="3"
+                  ItemsSource="{Binding Rows}"
+                  AutoGenerateColumns="False"
+                  HeadersVisibility="Column"
+                  CanUserAddRows="False" CanUserDeleteRows="False" IsReadOnly="True"
+                  GridLinesVisibility="Horizontal" HorizontalGridLinesBrush="#EEE"
+                  BorderBrush="#DDD" BorderThickness="1"
+                  Background="White" RowBackground="White" AlternatingRowBackground="#FAFAFA"
+                  RowHeight="30" FontSize="12">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="Subject" Binding="{Binding Subject}" Width="90"/>
+                <DataGridTextColumn Header="Action"  Binding="{Binding Action}"  Width="70"/>
+                <DataGridTextColumn Header="Match"   Binding="{Binding MatchType}" Width="80"/>
+                <DataGridTemplateColumn Header="Pattern" Width="300" SortMemberPath="Pattern">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate DataType="{x:Type vm:FilterRuleRowVm}">
+                            <TextBlock Text="{Binding Pattern}" Foreground="{Binding RowBrush}"
+                                       FontFamily="Consolas" VerticalAlignment="Center"/>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTextColumn Header="Scope" Binding="{Binding ScopeDisplay}" Width="85"/>
+                <DataGridTextColumn Header="Hits"  Binding="{Binding HitCount}" Width="55"/>
+                <DataGridTextColumn Header="Last hit" Binding="{Binding LastHitDisplay}" Width="120"/>
+                <DataGridTextColumn Header="Note"  Binding="{Binding Note}" Width="*"/>
+                <DataGridTemplateColumn Header="Actions" Width="150">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate DataType="{x:Type vm:FilterRuleRowVm}">
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <Button Content="{Binding EnabledToggleLabel}" Padding="8,1" Margin="0,0,6,0"
+                                        Command="{Binding DataContext.ToggleEnabledCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                        CommandParameter="{Binding}"
+                                        ToolTip="Turn the rule off without deleting it — useful for testing whether it's the one causing trouble."/>
+                                <Button Content="Delete" Padding="8,1"
+                                        Command="{Binding DataContext.DeleteRuleCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                        CommandParameter="{Binding}"/>
+                            </StackPanel>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+            </DataGrid.Columns>
+        </DataGrid>
+
+        <!-- add a rule -->
+        <Border Grid.Row="4" Background="White" BorderBrush="#DDD" BorderThickness="1"
+                CornerRadius="3" Padding="10,8" Margin="0,10,0,0">
+            <StackPanel>
+                <TextBlock Text="Add a rule" FontWeight="SemiBold" Foreground="#444" FontSize="12"/>
+                <Grid Margin="0,6,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <ComboBox Grid.Column="0" Width="110" Padding="6,2" Margin="0,0,6,0"
+                              ItemsSource="{Binding Subjects}"   SelectedItem="{Binding NewSubject}"/>
+                    <ComboBox Grid.Column="1" Width="90"  Padding="6,2" Margin="0,0,6,0"
+                              ItemsSource="{Binding Actions}"    SelectedItem="{Binding NewAction}"/>
+                    <ComboBox Grid.Column="2" Width="100" Padding="6,2" Margin="0,0,6,0"
+                              ItemsSource="{Binding MatchTypes}" SelectedItem="{Binding NewMatchType}"/>
+                    <ComboBox Grid.Column="3" Width="115" Padding="6,2" Margin="0,0,6,0"
+                              ItemsSource="{Binding Scopes}"     SelectedItem="{Binding NewScope}"/>
+                    <TextBox  Grid.Column="4" Padding="6,3" FontFamily="Consolas"
+                              Text="{Binding NewPattern, UpdateSourceTrigger=PropertyChanged}"
+                              ToolTip="Pattern. For 'domain' just the host (linkedin.com). For 'regex' a .NET regex (/(category|tag)/)."/>
+                    <Button   Grid.Column="5" Content="Preview" Padding="14,3" Margin="6,0,6,0"
+                              Command="{Binding PreviewCommand}"
+                              ToolTip="Replay this pattern against the real URL cache without saving. Shows what it would purge and warns if it would break an active company."/>
+                    <Button   Grid.Column="6" Content="Add" Padding="18,3"
+                              Background="#2A8F4F" Foreground="White"
+                              Command="{Binding AddRuleCommand}"/>
+                </Grid>
+                <TextBox Text="{Binding NewNote, UpdateSourceTrigger=PropertyChanged}"
+                         Padding="6,3" Margin="0,6,0,0"
+                         ToolTip="Why this rule exists. Worth filling in — it's what the next person (or you in three months) needs."/>
+                <TextBlock Text="{Binding PreviewText}" Margin="0,6,0,0" FontSize="11" TextWrapping="Wrap">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Foreground" Value="#2A8F4F"/>
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding PreviewIsWarning}" Value="True">
+                                    <Setter Property="Foreground" Value="#C44"/>
+                                    <Setter Property="FontWeight" Value="SemiBold"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+            </StackPanel>
+        </Border>
+
+        <!-- test a url -->
+        <Border Grid.Row="5" Background="White" BorderBrush="#DDD" BorderThickness="1"
+                CornerRadius="3" Padding="10,8" Margin="0,8,0,0">
+            <StackPanel>
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="Test a URL:" VerticalAlignment="Center"
+                               FontWeight="SemiBold" Foreground="#444" FontSize="12" Margin="0,0,8,0"/>
+                    <TextBox Grid.Column="1" Padding="6,3" FontFamily="Consolas"
+                             Text="{Binding TestUrl, UpdateSourceTrigger=PropertyChanged}"/>
+                    <Button  Grid.Column="2" Content="Check" Padding="18,3" Margin="6,0,0,0"
+                             Command="{Binding RunTestCommand}"/>
+                </Grid>
+                <TextBlock Text="{Binding TestResult}" Margin="0,6,0,0" FontSize="11"
+                           FontFamily="Consolas" Foreground="#333" TextWrapping="Wrap"/>
+            </StackPanel>
+        </Border>
+
+        <StackPanel Grid.Row="6" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
+            <Button Content="Close" Padding="14,4" Click="Close_Click"/>
+        </StackPanel>
+    </Grid>
+</Window>

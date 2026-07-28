@@ -1,6 +1,7 @@
 using System;
 using System.Text.RegularExpressions;
 using Jobnet.Models;
+using Jobnet.Services.Filters;
 
 namespace Jobnet.Services.JobSources;
 
@@ -27,18 +28,24 @@ internal static class UrlClassifier
         @"^/(jobs?|careers?|openings?|positions?|roles?)/?(?:\?.*)?$",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
-    /// <summary>Returns the best-guess kind for a URL. Returns null if the URL is clearly not job-related
-    /// (login, privacy, blog, etc.) so the caller can skip it.</summary>
-    public static string? Classify(string url)
+    /// <summary>Returns the best-guess kind for a URL. Returns null if the URL is blocked, or is
+    /// clearly not job-related, so the caller can skip it.
+    ///
+    /// <paramref name="filters"/> is consulted FIRST, before any positive pattern. That ordering
+    /// is the whole point: the old inline skip list ran last, so DepartmentPath claimed
+    /// /category/all-news/page/5/ as a department before anything could veto it — which is how
+    /// Blue Ant Media accumulated 35 WordPress news archives in company_urls. It also means a
+    /// host rule for linkedin.com now stops linkedin.com/jobs/view/123, which the old
+    /// "/jobs" positive check happily classified as a job board.</summary>
+    public static string? Classify(string url, FilterRuleSet? filters = null)
     {
         if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)) return null;
-        var path = uri.AbsolutePath;
+
+        if (filters is not null && filters.IsUrlBlocked(url, FilterScope.Crawl)) return null;
+
         var pathAndQuery = uri.PathAndQuery;
         var low = uri.AbsoluteUri.ToLowerInvariant();
 
-        // Positive patterns run BEFORE the skip list — a URL like
-        // /about/careers/search/ otherwise gets killed by "/about" before the
-        // job-signal check can save it (common WordPress site convention).
         if (JobDetail.IsMatch(pathAndQuery))       return UrlKind.JobDetail;
         if (JobDetailAlt.IsMatch(pathAndQuery))    return UrlKind.JobDetail;
         if (DepartmentQuery.IsMatch(pathAndQuery)) return UrlKind.Department;
@@ -46,18 +53,10 @@ internal static class UrlClassifier
         if (JobListPath.IsMatch(pathAndQuery))     return UrlKind.JobList;
         if (low.Contains("/career") || low.Contains("/jobs")) return UrlKind.JobList;
 
-        // No positive job signal — apply the skip list to weed out generic noise links.
-        var skip = new[] {
-            "/login", "/signin", "/sign-in", "/signup", "/register",
-            "/privacy", "/cookie", "/terms", "/legal", "/security",
-            "/contact", "/press", "/news", "/blog/", "/article/",
-            "/about", "/team-members", "/leadership",
-            "/investors", "/sustainability", "/diversity",
-            "facebook.com", "twitter.com", "linkedin.com/company", "instagram.com",
-            "youtube.com", "tiktok.com", "/feed", "/rss",
-        };
-        foreach (var s in skip) if (low.Contains(s)) return null;
-
+        // No positive job signal. The inline skip list that used to sit here was dead code —
+        // both it and the fall-through returned null — so it's gone. Its useful entries
+        // (auth pages, policy pages, feeds) are now url-subject rows in filter_rule, where
+        // they actually run.
         return null;
     }
 }

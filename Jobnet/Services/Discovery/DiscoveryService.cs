@@ -18,21 +18,26 @@ public sealed class DiscoveryService : IDiscoveryService
     private readonly IConfigRepository _config;
     private readonly IDbConnectionFactory _connections;
     private readonly ICompanyDiscoveryRepository _sightings;
+    private readonly Filters.FilterRuleProvider _filters;
 
     public DiscoveryService(ISearchClient cse, ICompanyRepository companies, IConfigRepository config,
-                             IDbConnectionFactory connections, ICompanyDiscoveryRepository sightings)
+                             IDbConnectionFactory connections, ICompanyDiscoveryRepository sightings,
+                             Filters.FilterRuleProvider filters)
     {
         _search = cse;
         _companies = companies;
         _config = config;
         _connections = connections;
         _sightings = sightings;
+        _filters = filters;
     }
 
     public async Task<DiscoveryReport> RunAsync(int maxQueriesPerTerm = 1, CancellationToken ct = default)
     {
         var terms = GetActiveDiscoveryTerms();
         var scanId = StartScanLog();
+        // Compiled once for the whole run — see FilterRuleProvider.
+        var filters = _filters.Current;
 
         var queriesIssued = 0;
         var resultsExamined = 0;
@@ -83,6 +88,14 @@ public sealed class DiscoveryService : IDiscoveryService
                         continue;
                     }
 
+                    // Blocklist moved out of DomainExtractor into filter_rule (migration 053),
+                    // so the same host rules now also apply on the crawl side.
+                    if (filters.IsHostBlocked(extracted.HostDomain, Models.FilterScope.Discovery))
+                    {
+                        resultsSkipped++;
+                        continue;
+                    }
+
                     if (!domainsSeenThisRun.Add(extracted.CanonicalDomain))
                         continue; // already processed this domain in this run
 
@@ -128,6 +141,7 @@ public sealed class DiscoveryService : IDiscoveryService
 
         AbortRun:
         FinishScanLog(scanId, queriesIssued, companiesAdded, errors);
+        filters.FlushHits();
 
         return new DiscoveryReport
         {

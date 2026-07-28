@@ -9,6 +9,11 @@ public interface ICompanyUrlsRepository
     IReadOnlyList<CompanyUrl> GetByCompany(int companyId);
     IReadOnlyList<CompanyUrl> GetByCompanyAndKind(int companyId, string kind);
 
+    /// <summary>Every cached URL across all companies. Used by the Filters screen to dry-run a
+    /// candidate rule before it's saved — showing what it would purge, and flagging any URL that
+    /// has produced jobs before.</summary>
+    IReadOnlyList<CompanyUrl> GetAll();
+
     /// <summary>Insert if new; otherwise bump last_seen, label, discovered_via.</summary>
     void Upsert(int companyId, string url, string kind, string? label = null, string? discoveredVia = null);
 
@@ -20,4 +25,9 @@ public interface ICompanyUrlsRepository
 
     void Delete(int companyId, string url);
     int DeleteStale(int notYieldedDays);
+
+    /// <summary>Delete every cached URL the predicate rejects. Runs the match in C# because
+    /// SQLite has no regex — the filter rules are .NET patterns. Called at the start of a
+    /// refresh so editing a rule cleans up rows saved before it existed.</summary>
+    int DeleteWhere(System.Func<string, bool> shouldDelete);
 }

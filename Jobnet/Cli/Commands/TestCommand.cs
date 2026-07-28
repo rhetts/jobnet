@@ -29,8 +29,8 @@ public sealed class TestCommand : ICliCommand
         Console.WriteLine();
 
         RunClassifierTests(services);
-        RunDomainExtractorTests();
-        RunUrlClassifierTests();
+        RunDomainExtractorTests(services);
+        RunUrlClassifierTests(services);
         RunLocationMatcherTests();
         RunRateLimiterTests(services).GetAwaiter().GetResult();
         RunMigrationTests(services);
@@ -74,25 +74,33 @@ public sealed class TestCommand : ICliCommand
         else    Fail(msg + $"  (expected level={expectedLevel ?? "(none)"}, area containing {expectedAreaContains})");
     }
 
-    private void RunDomainExtractorTests()
+    /// <summary>Host-blocking moved out of DomainExtractor into the filter_rule table, so these
+    /// now double as an integration check that migration 053's seed data actually landed.</summary>
+    private void RunDomainExtractorTests(IServiceProvider services)
     {
-        Console.WriteLine("DomainExtractor tests:");
+        Console.WriteLine("DomainExtractor + host filter tests:");
+        var filters = services.GetRequiredService<Jobnet.Services.Filters.FilterRuleProvider>().Current;
+
+        foreach (var err in filters.CompileErrors)
+            Fail($"filter_rule failed to compile: {err}");
+
         // Skip cases
-        AssertSkipped("https://www.linkedin.com/in/somebody",               true);
-        AssertSkipped("https://ca.indeed.com/jobs?q=engineer",              true);
-        AssertSkipped("https://glassdoor.ca/Job/x",                         true);
-        AssertSkipped("https://www.crunchbase.com/organization/acme",       true);
-        AssertSkipped("https://www.bcsc.bc.ca/news/some-article",           true);  // suffix match bug fix
-        AssertSkipped("https://bcsc.bc.ca/news/some-article",               true);
-        AssertSkipped("https://www.clutch.co/profile/x",                    true);
-        AssertSkipped("https://startus-insights.com/innovators/x",          true);
-        AssertSkipped("https://en.wikipedia.org/wiki/Acme",                 true);
+        AssertSkipped(filters, "https://www.linkedin.com/in/somebody",         true);
+        AssertSkipped(filters, "https://ca.indeed.com/jobs?q=engineer",        true);   // subdomain
+        AssertSkipped(filters, "https://glassdoor.ca/Job/x",                   true);
+        AssertSkipped(filters, "https://www.crunchbase.com/organization/acme", true);
+        AssertSkipped(filters, "https://www.bcsc.bc.ca/news/some-article",     true);   // suffix match
+        AssertSkipped(filters, "https://bcsc.bc.ca/news/some-article",         true);
+        AssertSkipped(filters, "https://www.clutch.co/profile/x",              true);
+        AssertSkipped(filters, "https://startus-insights.com/innovators/x",    true);
+        AssertSkipped(filters, "https://en.wikipedia.org/wiki/Acme",           true);
 
         // Keep cases
-        AssertSkipped("https://www.steamclock.com",                         false);
-        AssertSkipped("https://blackbirdinteractive.com/about",             false);
-        AssertSkipped("https://acme.com",                                   false);
-        AssertSkipped("https://boards.greenhouse.io/shopify",               false);  // ATS link is a valid signal
+        AssertSkipped(filters, "https://www.steamclock.com",                   false);
+        AssertSkipped(filters, "https://blackbirdinteractive.com/about",       false);
+        AssertSkipped(filters, "https://acme.com",                             false);
+        AssertSkipped(filters, "https://boards.greenhouse.io/shopify",         false);  // ATS link is a valid signal
+        AssertSkipped(filters, "https://acme.bc.ca",                           false);  // must not match bcsc.bc.ca
 
         // Canonical-domain stripping
         AssertCanonical("https://www.acme.com",       "acme.com");
@@ -101,12 +109,13 @@ public sealed class TestCommand : ICliCommand
         Console.WriteLine();
     }
 
-    private void AssertSkipped(string url, bool shouldBeSkipped)
+    private void AssertSkipped(Jobnet.Services.Filters.FilterRuleSet filters, string url, bool shouldBeSkipped)
     {
         var r = DomainExtractor.Extract(url);
-        var ok = (r is null) == shouldBeSkipped;
-        if (ok) Pass($"{url} → {(shouldBeSkipped ? "skipped" : "kept")}");
-        else    Fail($"{url} → expected {(shouldBeSkipped ? "skipped" : "kept")} but got {(r is null ? "skipped" : "kept")}");
+        var skipped = r is null
+                   || filters.IsHostBlocked(r.HostDomain, Models.FilterScope.Discovery);
+        if (skipped == shouldBeSkipped) Pass($"{url} → {(shouldBeSkipped ? "skipped" : "kept")}");
+        else Fail($"{url} → expected {(shouldBeSkipped ? "skipped" : "kept")} but got {(skipped ? "skipped" : "kept")}");
     }
 
     private void AssertCanonical(string url, string expected)
@@ -119,9 +128,10 @@ public sealed class TestCommand : ICliCommand
             Fail($"{url} → canonical {r.CanonicalDomain}, expected {expected}");
     }
 
-    private void RunUrlClassifierTests()
+    private void RunUrlClassifierTests(IServiceProvider services)
     {
         Console.WriteLine("UrlClassifier tests:");
+        _filters = services.GetRequiredService<Jobnet.Services.Filters.FilterRuleProvider>().Current;
         // Job detail pages (numeric or slug ID in path)
         AssertKind("https://boards.greenhouse.io/acme/jobs/12345",                  Models.UrlKind.JobDetail);
         AssertKind("https://careers.example.com/jobs/senior-backend-engineer-456",  Models.UrlKind.JobDetail);
@@ -142,6 +152,18 @@ public sealed class TestCommand : ICliCommand
         AssertKindNull("https://acme.com/blog/some-post");
         AssertKindNull("https://twitter.com/acme");
         AssertKindNull("https://linkedin.com/company/acme");
+
+        // Blocked by filter_rule BEFORE the positive patterns get a say. These are the
+        // regressions the unification exists to prevent:
+        //   - WordPress archives (DepartmentPath used to claim them — 35 of them for Blue Ant)
+        //   - aggregator job pages (the "/jobs" check used to file them as a real board)
+        AssertKindNull("https://blueantmedia.com/category/all-news/page/5/");
+        AssertKindNull("https://blueantmedia.com/category/channels/bbc-earth/");
+        AssertKindNull("https://www.linkedin.com/jobs/view/12345");
+        AssertKindNull("https://acme.com/2025/11/some-press-release/");
+
+        // ...but a real careers page under /about must still survive the blocklist running first.
+        AssertKind("https://blueantmedia.com/about-us/careers/", Models.UrlKind.JobList);
         Console.WriteLine();
     }
 
@@ -190,16 +212,19 @@ public sealed class TestCommand : ICliCommand
         else       Fail($"\"{label}\" → kept (expected rejected)");
     }
 
+    /// <summary>Rule set used by the UrlClassifier assertions; set by RunUrlClassifierTests.</summary>
+    private Jobnet.Services.Filters.FilterRuleSet? _filters;
+
     private void AssertKind(string url, string expectedKind)
     {
-        var k = Jobnet.Services.JobSources.UrlClassifier.Classify(url);
+        var k = Jobnet.Services.JobSources.UrlClassifier.Classify(url, _filters);
         if (k == expectedKind) Pass($"{url} → {k}");
         else                   Fail($"{url} → {k ?? "(null)"} (expected {expectedKind})");
     }
 
     private void AssertKindNull(string url)
     {
-        var k = Jobnet.Services.JobSources.UrlClassifier.Classify(url);
+        var k = Jobnet.Services.JobSources.UrlClassifier.Classify(url, _filters);
         if (k is null) Pass($"{url} → (skipped)");
         else           Fail($"{url} → {k} (expected null)");
     }
