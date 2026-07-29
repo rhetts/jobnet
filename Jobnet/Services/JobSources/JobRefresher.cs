@@ -135,19 +135,28 @@ public sealed class JobRefresher : IJobRefresher
             : active.ToList();
         skippedRecent = active.Count - eligible.Count;
 
-        // Order: native-ATS companies first, then by active-job count, then alphabetically.
+        // Order: least-recently-attempted first. Never-scanned companies lead, then oldest
+        // DateLastScan. Every company gets a turn instead of the same subset being re-scanned
+        // while the tail starves — a run that gets cancelled halfway still moves the frontier
+        // forward, because the next run resumes with whatever it didn't reach.
         //
-        // A long refresh can be cancelled before completing — and native adapters are 10–100x
-        // cheaper than the Playwright + AI fallback (no JS render, no AI tokens, one HTTP call).
-        // Front-loading them means: (a) the highest-confidence sources are covered first; (b) a
-        // cancelled run still produces a useful job list; (c) AI quota burns get pushed to the
-        // tail, where they're easier to defer or split across runs.
+        // DateLastScan is stamped at the end of RefreshOneAsync whether or not the company
+        // yielded anything, so this really is "attempted", not "succeeded". A company that fails
+        // every time won't monopolise the front of the queue.
         //
-        // Within each group, productive companies still come first so historical contributors
-        // re-confirm before low-yield marketing pages.
+        // This replaces native-ATS-first ordering, and gives up what that bought: native adapters
+        // are 10-100x cheaper than the Playwright + AI fallback, so front-loading them meant a
+        // cancelled run still produced a useful job list and AI quota burn landed at the tail.
+        // Staleness ordering interleaves expensive AI-extract companies early instead. That's the
+        // deliberate trade — coverage fairness over cheap-first.
+        //
+        // The old keys survive as tiebreakers, which is where they still earn their keep: the
+        // never-scanned group all tie on DateLastScan, so within it cheap native adapters go
+        // first, then higher-yield companies, then alphabetically for a stable order.
         var activeCounts = _jobs.GetActiveCountsByCompany();
         eligible = eligible
-            .OrderByDescending(c => !string.IsNullOrEmpty(c.AtsType) && !string.IsNullOrEmpty(c.AtsSlug))
+            .OrderBy(c => c.DateLastScan ?? DateTime.MinValue)
+            .ThenByDescending(c => !string.IsNullOrEmpty(c.AtsType) && !string.IsNullOrEmpty(c.AtsSlug))
             .ThenByDescending(c => activeCounts.TryGetValue(c.Id, out var n) ? n : 0)
             .ThenBy(c => c.Name, StringComparer.OrdinalIgnoreCase)
             .ToList();
