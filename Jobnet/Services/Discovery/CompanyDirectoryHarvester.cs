@@ -46,12 +46,14 @@ public sealed class CompanyDirectoryHarvester : ICompanyDirectoryHarvester
     private readonly IDirectoryCrawlRepository _crawls;
     private readonly IConfigRepository _config;
     private readonly System.Net.Http.HttpClient _http;
+    private readonly Filters.FilterRuleProvider _filters;
 
     public CompanyDirectoryHarvester(IPlaywrightFetcher fetcher, IAiClient ai,
                                        ICompanyRepository companies,
                                        ICompanyDiscoveryRepository sightings,
                                        IDirectoryCrawlRepository crawls,
                                        IConfigRepository config,
+                                       Filters.FilterRuleProvider filters,
                                        System.Net.Http.HttpClient http)
     {
         _fetcher = fetcher;
@@ -60,8 +62,14 @@ public sealed class CompanyDirectoryHarvester : ICompanyDirectoryHarvester
         _sightings = sightings;
         _crawls = crawls;
         _config = config;
+        _filters = filters;
         _http = http;
     }
+
+    /// <summary>Replaces the old Blocked + SocialUtility sets. Both were exact-match, so
+    /// ca.linkedin.com slipped through; FilterMatchType.Domain handles subdomains.</summary>
+    private bool IsBlockedDomain(string domain)
+        => _filters.Current.IsHostBlocked(domain, Models.FilterScope.Discovery);
 
     public async Task<HarvestReport> HarvestAsync(string url, string sourceName = "(custom)",
                                                    string sourceType = "directory",
@@ -324,23 +332,14 @@ public sealed class CompanyDirectoryHarvester : ICompanyDirectoryHarvester
                 var d = CanonicalDomain(href);
                 if (string.IsNullOrEmpty(d)) continue;
                 if (d.Equals(sourceHost, StringComparison.OrdinalIgnoreCase)) continue;
+                // One call now covers what Blocked + SocialUtility used to do separately.
                 if (IsBlockedDomain(d)) continue;
-                if (IsSocialOrUtilityDomain(d)) continue;
                 return d;
             }
         }
         catch { /* ignore — return null so caller skips this candidate */ }
         return null;
     }
-
-    private static readonly HashSet<string> SocialUtility = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "twitter.com", "x.com", "linkedin.com", "facebook.com", "instagram.com",
-        "youtube.com", "tiktok.com", "github.com", "medium.com", "substack.com",
-        "crunchbase.com", "angel.co", "wellfound.com", "glassdoor.com", "glassdoor.ca",
-        "google.com", "maps.google.com", "goo.gl",
-    };
-    private static bool IsSocialOrUtilityDomain(string domain) => SocialUtility.Contains(domain);
 
     private static List<Candidate> ParseCandidates(string responseText)
     {
@@ -388,20 +387,6 @@ public sealed class CompanyDirectoryHarvester : ICompanyDirectoryHarvester
             return "";
         }
     }
-
-    /// <summary>Block big multinationals and obvious non-companies even if the AI slipped them through.</summary>
-    private static readonly HashSet<string> Blocked = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "microsoft.com", "google.com", "amazon.com", "apple.com", "meta.com",
-        "facebook.com", "oracle.com", "sap.com", "salesforce.com", "adobe.com",
-        "ibm.com", "intel.com", "cisco.com", "dell.com", "hp.com",
-        "linkedin.com", "indeed.com", "indeed.ca", "glassdoor.com", "glassdoor.ca",
-        "twitter.com", "x.com", "instagram.com", "youtube.com", "github.com",
-        "builtinvancouver.org", "wearebctech.com", "techstars.com",
-        "ycombinator.com", "crunchbase.com", "angellist.com", "wellfound.com",
-    };
-
-    private static bool IsBlockedDomain(string domain) => Blocked.Contains(domain);
 
     private static string? StrOrNull(JsonElement obj, string name) =>
         obj.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;

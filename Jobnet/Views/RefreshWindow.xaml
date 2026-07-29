@@ -210,11 +210,14 @@
                 Padding="10,8" Margin="0,12,0,8" CornerRadius="3">
             <StackPanel>
                 <TextBlock Text="Status" FontWeight="SemiBold" Foreground="#444" FontSize="11"/>
-                <TextBlock Text="{Binding StatusText}"
-                           Margin="0,4,0,0"
-                           Foreground="#333"
-                           FontSize="12"
-                           TextWrapping="Wrap"/>
+                <TextBox Text="{Binding StatusText, Mode=OneWay}"
+                         IsReadOnly="True"
+                         Background="Transparent" BorderThickness="0" Padding="0"
+                         Margin="0,4,0,0"
+                         Foreground="#333"
+                         FontSize="12"
+                         TextWrapping="Wrap"
+                         ToolTip="Click and drag to select · Ctrl+C to copy"/>
                 <TextBlock Text="{Binding ActiveAiRouting}"
                            Margin="0,4,0,0"
                            Foreground="#888"
@@ -235,6 +238,22 @@
         </Border>
 
         <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button Content="Filters…"
+                    Padding="14,6"
+                    Margin="0,0,8,0"
+                    Click="Filters_Click"
+                    ToolTip="View and edit every block / allow rule. Add a pattern with a dry-run first, disable one to test, or check why a given URL is being skipped."/>
+            <Button Content="Scan times…"
+                    Padding="14,6"
+                    Margin="0,0,8,0"
+                    Click="ScanTimes_Click"
+                    ToolTip="Per-company scan durations from refresh history — find the domains eating the clock, and block them."/>
+            <Button Content="{Binding SkipCompanyLabel}"
+                    Padding="14,6"
+                    Margin="0,0,8,0"
+                    Background="#E08E0B" Foreground="White"
+                    Command="{Binding SkipCompanyCommand}"
+                    ToolTip="Abandon the company being scanned right now and move to the next one. The run continues.&#x0a;Like Stop, an in-flight local-llama call finishes its current generation first, so this is not instant."/>
             <Button Content="Stop run"
                     Padding="14,6"
                     Margin="0,0,8,0"

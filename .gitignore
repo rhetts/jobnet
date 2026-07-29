@@ -30,3 +30,12 @@ Jobnet/AI/
 # Debug HTML snapshots from one-off scrapes — large, not source
 audit/
 
+# SQLite database — never commit. It lives in %LOCALAPPDATA%\Jobnet\ at runtime; these patterns
+# keep a stray copy out of the repo. The config table holds live API keys (Gemini, Groq, Google
+# CSE, Brave) alongside resume text, generated cover letters, and the full applied/interest
+# history. Schema belongs in Data/Migrations/, not in a committed binary.
+*.db
+*.db-wal
+*.db-shm
+*.bak
+

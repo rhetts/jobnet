@@ -22,18 +22,21 @@ public sealed class AiCompetitorStrategy : IDiscoveryStrategy
     private readonly ICompanyRepository _companies;
     private readonly IJobRepository _jobs;
     private readonly ICompanyDiscoveryRepository _sightings;
+    private readonly Jobnet.Services.Filters.FilterRuleProvider _filters;
 
     public string Name => "AI: suggest competitors of known companies";
     public string Description => "For each company with active jobs, ask Gemini to name 5 similar Canadian tech firms. " +
                                   "Cheap and high-yield for lesser-known firms our keyword search misses.";
 
     public AiCompetitorStrategy(IAiClient ai, ICompanyRepository companies, IJobRepository jobs,
-                                  ICompanyDiscoveryRepository sightings)
+                                  ICompanyDiscoveryRepository sightings,
+                                  Jobnet.Services.Filters.FilterRuleProvider filters)
     {
         _ai = ai;
         _companies = companies;
         _jobs = jobs;
         _sightings = sightings;
+        _filters = filters;
     }
 
     public async Task<StrategyReport> RunAsync(CancellationToken ct = default)
@@ -185,15 +188,9 @@ public sealed class AiCompetitorStrategy : IDiscoveryStrategy
         catch { return ""; }
     }
 
-    private static readonly HashSet<string> Blocked = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "microsoft.com", "google.com", "amazon.com", "apple.com", "meta.com",
-        "facebook.com", "oracle.com", "sap.com", "salesforce.com", "adobe.com",
-        "ibm.com", "intel.com", "cisco.com", "stripe.com", "square.com", "block.xyz",
-        "linkedin.com", "indeed.com", "glassdoor.com", "twitter.com", "x.com",
-        "wellfound.com", "crunchbase.com",
-    };
-    private static bool IsBlockedDomain(string domain) => Blocked.Contains(domain);
+    /// <summary>Was a 23-entry exact-match set; now the shared filter_rule list.</summary>
+    private bool IsBlockedDomain(string domain)
+        => _filters.Current.IsHostBlocked(domain, Models.FilterScope.Discovery);
 
     private static string? StrOrNull(JsonElement obj, string name) =>
         obj.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;

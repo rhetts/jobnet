@@ -24,7 +24,11 @@ public partial class App : Application
         Directory.CreateDirectory(jobnetDir);
         _logPath = Path.Combine(jobnetDir, "jobnet.log");
 
-        File.AppendAllText(_logPath, $"\n=== App start {DateTime.Now:O} ===\n");
+        // All log writes use FileShare.ReadWrite | FileShare.Delete so a second Jobnet instance
+        // (or a tail-following process) can read/append concurrently. The previous code held the
+        // file open with the default FileShare.Read via TextWriterTraceListener; a leftover
+        // zombie process would block every new launch from writing its startup banner.
+        AppendShared(_logPath, $"\n=== App start {DateTime.Now:O} (pid {Environment.ProcessId}) ===\n");
 
         AppDomain.CurrentDomain.UnhandledException += (_, e) =>
             LogException("AppDomain.UnhandledException", e.ExceptionObject as Exception);
@@ -34,8 +38,14 @@ public partial class App : Application
             e.Handled = false;
         };
 
-        // Route WPF binding/trace errors to the same log so we can see them post-mortem
-        var listener = new TextWriterTraceListener(_logPath);
+        // Route WPF binding/trace errors to the same log so we can see them post-mortem. Wrap
+        // an explicit FileStream so the share mode is ReadWrite|Delete — otherwise the listener
+        // grabs an exclusive write lock and any other Jobnet instance dies on startup trying to
+        // open the same file (see the zombie-process scenario we hit).
+        var sharedStream = new FileStream(_logPath, FileMode.Append, FileAccess.Write,
+            FileShare.ReadWrite | FileShare.Delete);
+        var sharedWriter = new StreamWriter(sharedStream) { AutoFlush = true };
+        var listener = new TextWriterTraceListener(sharedWriter);
         PresentationTraceSources.Refresh();
         PresentationTraceSources.DataBindingSource.Listeners.Add(listener);
         PresentationTraceSources.DataBindingSource.Switch.Level = SourceLevels.Warning;
@@ -95,6 +105,18 @@ public partial class App : Application
                 services.AddTransient<CoverLetterViewModel>();
                 services.AddTransient<Views.CoverLetterWindow>();
                 services.AddSingleton<Func<Views.CoverLetterWindow>>(sp => () => sp.GetRequiredService<Views.CoverLetterWindow>());
+
+                services.AddTransient<SourcesViewModel>();
+                services.AddTransient<Views.SourcesWindow>();
+                services.AddSingleton<Func<Views.SourcesWindow>>(sp => () => sp.GetRequiredService<Views.SourcesWindow>());
+
+                services.AddTransient<ScanTimesViewModel>();
+                services.AddTransient<Views.ScanTimesWindow>();
+                services.AddSingleton<Func<Views.ScanTimesWindow>>(sp => () => sp.GetRequiredService<Views.ScanTimesWindow>());
+
+                services.AddTransient<FiltersViewModel>();
+                services.AddTransient<Views.FiltersWindow>();
+                services.AddSingleton<Func<Views.FiltersWindow>>(sp => () => sp.GetRequiredService<Views.FiltersWindow>());
             })
             .Build();
     }
@@ -114,7 +136,7 @@ public partial class App : Application
             {
                 var cleaned = Host.Services.GetRequiredService<Services.Logging.IRunLogger>().CleanupDanglingRuns();
                 if (cleaned > 0)
-                    File.AppendAllText(_logPath, $"Run-log cleanup: marked {cleaned} dangling row(s) as 'interrupted'.\n");
+                    AppendShared(_logPath, $"Run-log cleanup: marked {cleaned} dangling row(s) as 'interrupted'.\n");
             }
             catch (Exception cleanupEx)
             {
@@ -128,16 +150,32 @@ public partial class App : Application
                 var reset = Host.Services.GetRequiredService<Data.Repositories.IJobProcessingQueueRepository>()
                     .ResetStaleRunning();
                 if (reset > 0)
-                    File.AppendAllText(_logPath, $"Queue cleanup: reset {reset} stale 'running' row(s) to 'pending'.\n");
+                    AppendShared(_logPath, $"Queue cleanup: reset {reset} stale 'running' row(s) to 'pending'.\n");
             }
             catch (Exception queueEx)
             {
                 LogException("QueueCleanup", queueEx);
             }
 
+            // One-off backfill: derive size_category for any company that has a profile_size_hint
+            // but no size_category yet. Cheap (one UPDATE per existing profile), idempotent, and
+            // a no-op once everyone's been classified.
+            try
+            {
+                var classifier = (Func<string?, string?>)(hint => Services.Profiling.CompanySizeClassifier.Classify(hint));
+                var sizeUpdated = Host.Services.GetRequiredService<Data.Repositories.ICompanyRepository>()
+                    .BackfillSizeCategories(classifier);
+                if (sizeUpdated > 0)
+                    AppendShared(_logPath, $"Size backfill: classified {sizeUpdated} company size hint(s).\n");
+            }
+            catch (Exception sizeEx)
+            {
+                LogException("SizeBackfill", sizeEx);
+            }
+
             var window = Host.Services.GetRequiredService<MainWindow>();
             window.Show();
-            File.AppendAllText(_logPath, "Main window shown OK\n");
+            AppendShared(_logPath, "Main window shown OK\n");
 
             // Start the queue workers AFTER the main window is showing so any startup error
             // surfaces in the foreground first. Workers run for the lifetime of the app and
@@ -145,7 +183,7 @@ public partial class App : Application
             try
             {
                 Host.Services.GetRequiredService<Services.Workers.WorkerHost>().Start();
-                File.AppendAllText(_logPath, "Queue workers started\n");
+                AppendShared(_logPath, "Queue workers started\n");
             }
             catch (Exception workerEx) { LogException("WorkerHost.Start", workerEx); }
         }
@@ -159,6 +197,21 @@ public partial class App : Application
                 MessageBoxImage.Error);
             Shutdown(1);
         }
+    }
+
+    /// <summary>Append a line to <paramref name="path"/> using <see cref="FileShare.ReadWrite"/> +
+    /// <see cref="FileShare.Delete"/> so a second process holding the same file open in any mode
+    /// doesn't block us. Swallows IO errors — logging must never crash the host.</summary>
+    private static void AppendShared(string path, string text)
+    {
+        try
+        {
+            using var fs = new FileStream(path, FileMode.Append, FileAccess.Write,
+                FileShare.ReadWrite | FileShare.Delete);
+            using var sw = new StreamWriter(fs);
+            sw.Write(text);
+        }
+        catch { /* logging is best-effort */ }
     }
 
     protected override void OnExit(ExitEventArgs e)
@@ -198,11 +251,7 @@ public partial class App : Application
     private void LogException(string source, Exception? ex)
     {
         if (ex is null) return;
-        try
-        {
-            File.AppendAllText(_logPath,
-                $"[{DateTime.Now:O}] [{source}] {ex.GetType().FullName}: {ex.Message}\n{ex}\n\n");
-        }
-        catch { /* swallow logging failures */ }
+        AppendShared(_logPath,
+            $"[{DateTime.Now:O}] [{source}] {ex.GetType().FullName}: {ex.Message}\n{ex}\n\n");
     }
 }

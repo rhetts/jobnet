@@ -31,6 +31,7 @@ public sealed class JobRefresher : IJobRefresher
     private readonly ITechnologyMatcher _techMatcher;
     private readonly ITechnologyRepository _techs;
     private readonly Jobnet.Services.Logging.IRunLogger _runs;
+    private readonly Jobnet.Services.Filters.FilterRuleProvider _filters;
 
     public JobRefresher(IEnumerable<IJobSource> sources, AiFallbackJobSource aiSource,
                          ICompanyRepository companies, ICompanyUrlsRepository urls,
@@ -40,8 +41,10 @@ public sealed class JobRefresher : IJobRefresher
                          IConfigRepository config,
                          ITechnologyMatcher techMatcher,
                          ITechnologyRepository techs,
-                         Jobnet.Services.Logging.IRunLogger runs)
+                         Jobnet.Services.Logging.IRunLogger runs,
+                         Jobnet.Services.Filters.FilterRuleProvider filters)
     {
+        _filters = filters;
         _sources = sources.ToDictionary(s => s.AtsType, StringComparer.OrdinalIgnoreCase);
         _aiSource = aiSource;
         _companies = companies;
@@ -71,6 +74,28 @@ public sealed class JobRefresher : IJobRefresher
     private void RefreshGreylistTokens()
     {
         _greylistTokens = GreylistMatcher.Parse(_config.GetOrDefault("profile_greylist_keywords", ""));
+    }
+
+    // ── Skip-current-company support ───────────────────────────────────────
+    // A per-company CTS linked to the run's token. Cancelling it unwinds only the company in
+    // flight; the outer loop notices the run token is still live and carries on with the next.
+    // JobRefresher is a singleton, so these are guarded — a stale reference from a finished run
+    // must not let a later Skip click cancel an unrelated company.
+    private readonly object _skipLock = new();
+    private CancellationTokenSource? _currentCompanyCts;
+    private string? _currentCompanyName;
+
+    public string? CurrentCompanyName
+    {
+        get { lock (_skipLock) return _currentCompanyName; }
+    }
+
+    public void SkipCurrentCompany()
+    {
+        lock (_skipLock)
+        {
+            if (_currentCompanyCts is { IsCancellationRequested: false } cts) cts.Cancel();
+        }
     }
 
     public async Task<JobRefreshReport> RefreshAsync(Company company, CancellationToken ct = default, long? runId = null)
@@ -117,6 +142,12 @@ public sealed class JobRefresher : IJobRefresher
         // Prune URLs that haven't yielded jobs in 30 days. Keeps the cache clean over time.
         var prunedUrls = _urls.DeleteStale(notYieldedDays: 30);
 
+        // Drop cached URLs the filter rules now reject. Rows saved before a rule existed would
+        // otherwise survive until the 30-day window above — Blue Ant Media had 35 WordPress
+        // news archives costing ~40 minutes a run. Self-healing: edit a rule, next run cleans up.
+        var filters = _filters.Current;
+        var prunedBlocked = _urls.DeleteWhere(u => filters.IsUrlBlocked(u, Models.FilterScope.Crawl));
+
         // Refresh the greylist regex set once per batch — applied per-new-job below.
         RefreshGreylistTokens();
 
@@ -127,9 +158,10 @@ public sealed class JobRefresher : IJobRefresher
         var all = _companies.GetAll();
         // Pre-filter to the eligible list so the progress Total reflects what we'll actually visit.
         // Inactive companies are dropped entirely — they're acquired / defunct / wrong-domain entries
-        // we keep around only so their historical jobs survive. They never count against the
-        // skipped-recent tally because the user has explicitly retired them.
-        var active = all.Where(c => c.IsActive).ToList();
+        // we keep around only so their historical jobs survive. Blacklisted companies are also
+        // dropped: the user explicitly said "never scan this again". Neither group counts against
+        // the skipped-recent tally.
+        var active = all.Where(c => c.IsActive && !c.IsBlacklisted).ToList();
         var eligible = cutoff.HasValue
             ? active.Where(c => !c.DateLastScan.HasValue || c.DateLastScan.Value <= cutoff.Value).ToList()
             : active.ToList();
@@ -172,9 +204,19 @@ public sealed class JobRefresher : IJobRefresher
 
             string? outcomeKind = null;
             string? errorMessage = null;
+
+            // Own token per company so the UI can abandon just this one. Linked to the run token
+            // so a real Stop still tears everything down.
+            var companyCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            lock (_skipLock)
+            {
+                _currentCompanyCts = companyCts;
+                _currentCompanyName = c.Name;
+            }
+
             try
             {
-                var (a, u, r, ok) = await RefreshOneAsync(c, errors, ct, runId);
+                var (a, u, r, ok) = await RefreshOneAsync(c, errors, companyCts.Token, runId);
                 added += a; updated += u; removed += r;
                 outcomeKind = ok;
                 processed++;
@@ -186,8 +228,17 @@ public sealed class JobRefresher : IJobRefresher
             }
             catch (OperationCanceledException)
             {
+                // Run cancelled outright — unwind everything.
+                if (ct.IsCancellationRequested)
+                {
+                    outcomeKind = Logging.OutcomeKind.CancelledUser;
+                    throw;
+                }
+                // Only this company's token fired: the user pressed Skip. Count it and continue.
+                skipped++;
                 outcomeKind = Logging.OutcomeKind.CancelledUser;
-                throw;
+                errorMessage = "Skipped by user";
+                errors.Add($"[{c.Domain}] skipped by user");
             }
             catch (Exception ex)
             {
@@ -197,6 +248,20 @@ public sealed class JobRefresher : IJobRefresher
                 // the refresher itself didn't reach the per-stage classification path.
                 outcomeKind = ClassifyException(ex);
                 failed++;
+            }
+            finally
+            {
+                // Detach before disposing, so a Skip click racing the end of a company can't
+                // cancel a disposed CTS or, worse, the next company's one.
+                lock (_skipLock)
+                {
+                    if (ReferenceEquals(_currentCompanyCts, companyCts))
+                    {
+                        _currentCompanyCts = null;
+                        _currentCompanyName = null;
+                    }
+                }
+                companyCts.Dispose();
             }
 
             progress?.Report(new JobRefreshProgress
@@ -211,6 +276,7 @@ public sealed class JobRefresher : IJobRefresher
         }
 
         FinishScanLog(scanId, processed, added, removed, errors);
+        filters.FlushHits();
         return new JobRefreshReport
         {
             CompaniesProcessed = processed,

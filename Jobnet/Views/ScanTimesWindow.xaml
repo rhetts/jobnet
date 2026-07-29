@@ -1,0 +1,114 @@
+<Window x:Class="Jobnet.Views.ScanTimesWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="clr-namespace:Jobnet.ViewModels"
+        Title="Jobnet — Scan Times"
+        Width="1180" Height="700"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        Background="#FAFAFA">
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0" Margin="0,0,0,10">
+            <TextBlock Text="Scan times by company" FontSize="16" FontWeight="SemiBold"/>
+            <TextBlock Foreground="#666" FontSize="11" Margin="0,2,0,0" TextWrapping="Wrap"
+                       Text="Wall-clock spent per company against jobs produced, from refresh history. Anything over an hour is almost certainly a hang rather than a slow site — Playwright caps network idle at 30s, so a long wait is further down the stack (usually a local-llama call after Gemini's daily quota runs out)."/>
+        </StackPanel>
+
+        <Grid Grid.Row="1" Margin="0,0,0,10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="Window:" VerticalAlignment="Center" Margin="0,0,6,0"/>
+            <ComboBox  Grid.Column="1" Width="140" Padding="6,2"
+                       ItemsSource="{Binding Windows}"
+                       SelectedItem="{Binding SelectedWindow}"
+                       DisplayMemberPath="Label"/>
+            <TextBlock Grid.Column="2" Text="Show:" VerticalAlignment="Center" Margin="14,0,6,0"/>
+            <ComboBox  Grid.Column="3" Width="140" Padding="6,2"
+                       ItemsSource="{Binding Filters}"
+                       SelectedItem="{Binding SelectedFilter}"/>
+            <TextBlock Grid.Column="4" Text="{Binding Summary}" VerticalAlignment="Center"
+                       Margin="14,0,0,0" Foreground="#666"/>
+            <Button    Grid.Column="5" Content="Refresh" Padding="14,4" Command="{Binding RefreshCommand}"/>
+        </Grid>
+
+        <DataGrid Grid.Row="2"
+                  ItemsSource="{Binding Rows}"
+                  AutoGenerateColumns="False"
+                  HeadersVisibility="Column"
+                  CanUserAddRows="False"
+                  CanUserDeleteRows="False"
+                  IsReadOnly="True"
+                  GridLinesVisibility="Horizontal"
+                  HorizontalGridLinesBrush="#EEE"
+                  BorderBrush="#DDD" BorderThickness="1"
+                  Background="White"
+                  RowBackground="White"
+                  AlternatingRowBackground="#FAFAFA"
+                  RowHeight="34"
+                  FontSize="12">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="Company" Binding="{Binding Name}"   Width="180"/>
+                <DataGridTextColumn Header="Domain"  Binding="{Binding Domain}" Width="180" FontFamily="Consolas"/>
+                <DataGridTextColumn Header="Attempts" Binding="{Binding Attempts}" Width="75"/>
+                <DataGridTextColumn Header="Total"   Binding="{Binding TotalDisplay}" Width="80" FontFamily="Consolas"/>
+                <DataGridTextColumn Header="Avg"     Binding="{Binding AvgDisplay}"   Width="80" FontFamily="Consolas"/>
+                <!-- SortMemberPath points at the raw ms so header-click sorts numerically
+                     rather than alphabetically on the humanised string. -->
+                <DataGridTemplateColumn Header="Worst" Width="80" SortMemberPath="WorstMs">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate DataType="{x:Type vm:ScanTimeRowVm}">
+                            <TextBlock Text="{Binding WorstDisplay}"
+                                       Foreground="{Binding WorstBrush}"
+                                       FontFamily="Consolas"
+                                       FontWeight="SemiBold"
+                                       VerticalAlignment="Center"/>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTextColumn Header="Jobs"     Binding="{Binding JobsYielded}" Width="60"/>
+                <DataGridTextColumn Header="Per job"  Binding="{Binding CostPerJobDisplay}" Width="95" FontFamily="Consolas"/>
+                <DataGridTextColumn Header="Last run" Binding="{Binding LastAttemptDisplay}" Width="130"/>
+                <DataGridTemplateColumn Header="Actions" Width="*">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate DataType="{x:Type vm:ScanTimeRowVm}">
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <Button Content="{Binding BlacklistToggleLabel}"
+                                        Padding="8,2" Margin="0,0,6,0"
+                                        Command="{Binding DataContext.ToggleBlacklistCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                        CommandParameter="{Binding}"
+                                        ToolTip="Stop refreshing this company. Existing jobs stay but go stale; nothing is deleted."/>
+                                <Button Content="Block domain"
+                                        Padding="8,2"
+                                        Background="#C44" Foreground="White"
+                                        Command="{Binding DataContext.BlockDomainCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                        CommandParameter="{Binding}"
+                                        ToolTip="Add a host rule to filter_rule AND blacklist the company — stops crawling it and stops discovery re-adding it. Cached URLs are purged on the next refresh."/>
+                            </StackPanel>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+            </DataGrid.Columns>
+        </DataGrid>
+
+        <TextBlock Grid.Row="3" Text="{Binding LastAction}" Foreground="#2A8F4F"
+                   FontSize="11" Margin="0,8,0,0" TextWrapping="Wrap"/>
+
+        <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
+            <Button Content="Close" Padding="14,4" Click="Close_Click"/>
+        </StackPanel>
+    </Grid>
+</Window>

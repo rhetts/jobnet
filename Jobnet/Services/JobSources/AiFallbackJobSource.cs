@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using Jobnet.Data.Repositories;
 using Jobnet.Models;
 using Jobnet.Services.Ai;
+using Jobnet.Services.Filters;
 using Jobnet.Services.Parsing;
 using Jobnet.Services.Playwright;
 using Jobnet.Services.Profiling;
@@ -33,14 +34,17 @@ public sealed class AiFallbackJobSource : IJobSource
     private readonly ICompanyRepository _companies;
     private readonly Parsing.HtmlPatternParsers.HtmlPatternRegistry _companyParsers;
     private readonly Jobnet.Services.Logging.IRunLogger _runs;
+    private readonly FilterRuleProvider _filters;
 
     public AiFallbackJobSource(IPlaywrightFetcher fetcher, IAiClient ai, ICompanyUrlsRepository urls,
                                   IAiExtractionCacheRepository cache, IConfigRepository config,
                                   SelectorProfileReplayer selectorParser, AiSelectorDeriver selectorDeriver,
                                   ICompanyRepository companies,
                                   Parsing.HtmlPatternParsers.HtmlPatternRegistry companyParsers,
-                                  Jobnet.Services.Logging.IRunLogger runs)
+                                  Jobnet.Services.Logging.IRunLogger runs,
+                                  FilterRuleProvider filters)
     {
+        _filters = filters;
         _fetcher = fetcher;
         _ai = ai;
         _urls = urls;
@@ -299,8 +303,10 @@ public sealed class AiFallbackJobSource : IJobSource
     {
         if (companyId <= 0) return;
 
+        var filters = _filters.Current;
+
         // The landing URL itself
-        if (!string.IsNullOrEmpty(fetch.FinalUrl))
+        if (!string.IsNullOrEmpty(fetch.FinalUrl) && !filters.IsUrlBlocked(fetch.FinalUrl, FilterScope.Crawl))
             _urls.Upsert(companyId, fetch.FinalUrl, UrlKind.CareersRoot, label: null, discoveredVia: "anchor_scan");
 
         // ATS API endpoints observed in network requests
@@ -321,7 +327,7 @@ public sealed class AiFallbackJobSource : IJobSource
         {
             foreach (var (text, href) in ExtractAnchors(fetch.Html, fetch.FinalUrl, max: 200))
             {
-                var kind = UrlClassifier.Classify(href);
+                var kind = UrlClassifier.Classify(href, filters);
                 if (kind is null) continue;
                 _urls.Upsert(companyId, href, kind, label: text, discoveredVia: "anchor_scan");
             }

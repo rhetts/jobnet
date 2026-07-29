@@ -20,6 +20,21 @@ public interface IJobRefresher
     /// driving a live status bar in the UI since this method can run for hours on a full sweep.
     /// <paramref name="runId"/> threads through to refresh_attempt/api_call_log telemetry.</summary>
     Task<JobRefreshReport> RefreshAllAsync(int minDaysSinceLastScan = 0, IProgress<JobRefreshProgress>? progress = null, CancellationToken ct = default, long? runId = null);
+
+    /// <summary>Abandon the company currently being refreshed and move to the next one. Distinct
+    /// from cancelling the run: only the current company's work unwinds, and it's counted as
+    /// skipped rather than failed.
+    ///
+    /// Same caveat as Stop — an in-flight AI call (particularly local llama) does not abort
+    /// mid-token, so the skip lands at the next cancellation check. On a company already wedged
+    /// in a multi-hour LLama call this will not return promptly.
+    ///
+    /// No-op when no refresh is running.</summary>
+    void SkipCurrentCompany();
+
+    /// <summary>Name of the company being refreshed right now, or null when idle. Lets the UI
+    /// label the skip button with what it's about to abandon.</summary>
+    string? CurrentCompanyName { get; }
 }
 
 public sealed class JobRefreshProgress
