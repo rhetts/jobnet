@@ -110,6 +110,11 @@ public partial class RefreshViewModel : ObservableObject
     [ObservableProperty] private bool _doReclassifyJobs = true;
     [ObservableProperty] private bool _doPruneOutOfArea = true;
 
+    /// <summary>Modifier on the "Discover jobs" step: visit only companies pinned to an ATS we
+    /// have a native JSON adapter for, skipping the Playwright + AI-extract tail. Cheap and fast,
+    /// but it never discovers an ATS for a company that doesn't have one yet.</summary>
+    [ObservableProperty] private bool _discoverJobsNativeOnly;
+
     private readonly IConfigRepository _configRepo;
     private readonly ICompanyRepository _companiesRepo;
     private readonly Jobnet.Services.Profiling.ICompanyProfiler _profiler;
@@ -206,6 +211,7 @@ public partial class RefreshViewModel : ObservableObject
         _doRegenerateSummaries = _configRepo.GetOrDefault("ui_maint_regen_summaries",      "false") == "true";
         _doReclassifyJobs      = _configRepo.GetOrDefault("ui_maint_reclassify",           "true")  == "true";
         _doPruneOutOfArea      = _configRepo.GetOrDefault("ui_maint_prune",                "true")  == "true";
+        _discoverJobsNativeOnly= _configRepo.GetOrDefault("ui_maint_discover_jobs_native_only", "false") == "true";
 
         RefreshLastRunTimes();
     }
@@ -407,6 +413,11 @@ public partial class RefreshViewModel : ObservableObject
         _configRepo?.Set("ui_maint_prune", value ? "true" : "false");
         RunMaintenanceCommand?.NotifyCanExecuteChanged();
     }
+    partial void OnDiscoverJobsNativeOnlyChanged(bool value)
+    {
+        // Modifier, not a step — it doesn't affect CanRunMaintenance.
+        _configRepo?.Set("ui_maint_discover_jobs_native_only", value ? "true" : "false");
+    }
 
     /// <summary>Run every checked maintenance step in order. Each step manages its own run_log row;
     /// the consolidated runner just chains the calls and stops on cancellation. IsBusy is held for
@@ -595,10 +606,14 @@ public partial class RefreshViewModel : ObservableObject
         IsBusy = true;
         var ct = BeginSession();
         var skipDays = SelectedSkipScan?.Days ?? 0;
-        var scope = skipDays > 0 ? $"skip<{skipDays}d" : "all";
+        var nativeOnly = DiscoverJobsNativeOnly;
+        var scope = (skipDays > 0 ? $"skip<{skipDays}d" : "all") + (nativeOnly ? "+native-only" : "");
+        var whichCompanies = nativeOnly ? "known-ATS companies" : "known companies";
         StatusText = skipDays > 0
-            ? $"Pulling jobs from companies not scanned in the last {skipDays} day(s)..."
-            : "Pulling jobs from known companies (ATS endpoints + careers pages)...";
+            ? $"Pulling jobs from {whichCompanies} not scanned in the last {skipDays} day(s)..."
+            : nativeOnly
+                ? "Pulling jobs from known-ATS companies (native JSON endpoints only)..."
+                : "Pulling jobs from known companies (ATS endpoints + careers pages)...";
         var runId = _runs.StartRun("refresh_jobs", scope);
         // Track running totals so that if the user cancels (or an exception escapes) we can
         // still record what was accomplished before unwinding. Declared OUTSIDE the try so the
@@ -652,14 +667,17 @@ public partial class RefreshViewModel : ObservableObject
                     currentStepId = 0;
                 }
             });
-            var r = await Task.Run(() => _refresher.RefreshAllAsync(minDaysSinceLastScan: skipDays, progress: progress, ct: ct, runId: runId), ct).ConfigureAwait(true);
+            var r = await Task.Run(() => _refresher.RefreshAllAsync(minDaysSinceLastScan: skipDays, progress: progress, ct: ct, runId: runId, nativeAtsOnly: nativeOnly), ct).ConfigureAwait(true);
             StatusText = $"Refresh: {r.CompaniesProcessed} companies, " +
+                         (r.CompaniesSkippedNonNative > 0 ? $"{r.CompaniesSkippedNonNative} skipped (no native ATS), " : "") +
                          (r.CompaniesSkippedRecent > 0 ? $"{r.CompaniesSkippedRecent} skipped (recent), " : "") +
                          $"{r.JobsAdded} added, {r.JobsUpdated} updated, {r.JobsRemoved} marked removed."
                          + (r.Errors.Count > 0 ? $"  First error: {r.Errors[0]}" : "");
             _runs.FinishRun(runId, r.Errors.Count == 0 ? "completed" : "partial",
                 examined: r.CompaniesProcessed, added: r.JobsAdded, updated: r.JobsUpdated,
-                skipped: r.CompaniesSkippedRecent,
+                // Both skip reasons roll into the one run_log column — the scope string
+                // ("...+native-only") is what tells them apart after the fact.
+                skipped: r.CompaniesSkippedRecent + r.CompaniesSkippedNonNative,
                 failed: r.JobsRemoved, errorCount: r.Errors.Count,
                 notes: r.Errors.Count == 0 ? null : string.Join(" | ", r.Errors.Take(5)));
             Completed?.Invoke();

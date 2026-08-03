@@ -125,6 +125,12 @@
                             <TextBlock Grid.Column="1" Text="{Binding LastDiscoverJobsRunText}"
                                        Foreground="#888" FontSize="11" VerticalAlignment="Center" Margin="8,0,0,0"/>
                         </Grid>
+                        <CheckBox Margin="20,4,0,0"
+                                  Content="Known ATS only — skip the AI-fallback companies"
+                                  IsChecked="{Binding DiscoverJobsNativeOnly}"
+                                  IsEnabled="{Binding DoDiscoverJobs}"
+                                  FontSize="11" Foreground="#555"
+                                  ToolTip="Visit only companies already pinned to an ATS with a native adapter (Greenhouse, Lever, Ashby, BambooHR, Workday, Workable, SmartRecruiters, Pinpoint, Rise People, Amazon).&#x0a;Skips ATS detection and the Playwright + AI-extract tail entirely — minutes instead of hours, and no AI quota burn.&#x0a;Trade-off: companies without a pinned ATS are never scanned, so no new ATS gets discovered."/>
                         <Grid Margin="0,4,0,0">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*"/>

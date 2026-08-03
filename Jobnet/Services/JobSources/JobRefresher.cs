@@ -132,12 +132,23 @@ public sealed class JobRefresher : IJobRefresher
         };
     }
 
-    public async Task<JobRefreshReport> RefreshAllAsync(int minDaysSinceLastScan = 0, IProgress<JobRefreshProgress>? progress = null, CancellationToken ct = default, long? runId = null)
+    /// <summary>True when this company will be served by a native ATS adapter rather than the
+    /// Playwright + AI-extract fallback: it has both ats_type and ats_slug pinned, and that
+    /// ats_type resolves to a registered <see cref="IJobSource"/>. The ai_extract source is itself
+    /// registered under that key, so it's excluded explicitly — a company pinned to "ai_extract"
+    /// is not a native one. Mirrors branch 1 of the decision tree in RefreshOneAsync; a company
+    /// where this is false either goes through ATS detection or straight to the AI path.</summary>
+    private bool HasNativeAdapter(Company c) =>
+        !string.IsNullOrEmpty(c.AtsType) && !string.IsNullOrEmpty(c.AtsSlug)
+        && !string.Equals(c.AtsType, "ai_extract", StringComparison.OrdinalIgnoreCase)
+        && _sources.ContainsKey(c.AtsType);
+
+    public async Task<JobRefreshReport> RefreshAllAsync(int minDaysSinceLastScan = 0, IProgress<JobRefreshProgress>? progress = null, CancellationToken ct = default, long? runId = null, bool nativeAtsOnly = false)
     {
         var scanId = StartScanLog("global");
         var errors = new List<string>();
         var added = 0; var updated = 0; var removed = 0;
-        var skipped = 0; var skippedRecent = 0; var failed = 0; var processed = 0;
+        var skipped = 0; var skippedRecent = 0; var skippedNonNative = 0; var failed = 0; var processed = 0;
 
         // Prune URLs that haven't yielded jobs in 30 days. Keeps the cache clean over time.
         var prunedUrls = _urls.DeleteStale(notYieldedDays: 30);
@@ -162,6 +173,17 @@ public sealed class JobRefresher : IJobRefresher
         // dropped: the user explicitly said "never scan this again". Neither group counts against
         // the skipped-recent tally.
         var active = all.Where(c => c.IsActive && !c.IsBlacklisted).ToList();
+
+        // Native-ATS-only mode: drop everything that would fall through to ATS detection or the
+        // Playwright + AI-extract path. Applied before the recency cutoff so the two skip tallies
+        // don't overlap — skippedRecent then only counts companies we'd otherwise have visited.
+        if (nativeAtsOnly)
+        {
+            var native = active.Where(HasNativeAdapter).ToList();
+            skippedNonNative = active.Count - native.Count;
+            active = native;
+        }
+
         var eligible = cutoff.HasValue
             ? active.Where(c => !c.DateLastScan.HasValue || c.DateLastScan.Value <= cutoff.Value).ToList()
             : active.ToList();
@@ -291,6 +313,7 @@ public sealed class JobRefresher : IJobRefresher
             CompaniesProcessed = processed,
             CompaniesSkippedNoAts = skipped,
             CompaniesSkippedRecent = skippedRecent,
+            CompaniesSkippedNonNative = skippedNonNative,
             CompaniesFailed = failed,
             JobsAdded = added, JobsUpdated = updated, JobsRemoved = removed,
             Errors = errors,

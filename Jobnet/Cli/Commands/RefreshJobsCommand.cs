@@ -61,79 +61,23 @@ public sealed class RefreshJobsCommand : ICliCommand
             }
         });
 
-        JobRefreshReport report;
-        if (nativeOnly)
-        {
-            // Iterate native companies ourselves so we get per-step progress AND skip the
-            // AI-extract tail. RefreshAllAsync would include everything; we want to demo just
-            // the JSON-API path.
-            report = RefreshNativeOnly(refresher, companies, skipRecent, CancellationToken.None);
-        }
-        else
-        {
-            report = refresher.RefreshAllAsync(minDaysSinceLastScan: skipRecent, progress: progress,
-                                                ct: CancellationToken.None).GetAwaiter().GetResult();
-        }
+        var report = refresher.RefreshAllAsync(minDaysSinceLastScan: skipRecent, progress: progress,
+                                                ct: CancellationToken.None, nativeAtsOnly: nativeOnly)
+                               .GetAwaiter().GetResult();
 
         Console.WriteLine();
         PrintReport(report);
         return report.CompaniesFailed > 0 ? 1 : 0;
     }
 
-    /// <summary>Refresh only companies that have <c>ats_type</c> + <c>ats_slug</c> set, with
-    /// per-company progress to the console. Used by <c>--native-only</c> to demonstrate the
-    /// JSON-API adapters without grinding through the slow AI-extract tail.</summary>
-    private static JobRefreshReport RefreshNativeOnly(IJobRefresher refresher,
-        ICompanyRepository companies, int skipRecent, CancellationToken ct)
-    {
-        var all = companies.GetAll();
-        var cutoff = skipRecent > 0 ? (DateTime?)DateTime.UtcNow.AddDays(-skipRecent) : null;
-        var eligible = new System.Collections.Generic.List<Jobnet.Models.Company>();
-        foreach (var c in all)
-        {
-            if (string.IsNullOrEmpty(c.AtsType) || string.IsNullOrEmpty(c.AtsSlug)) continue;
-            if (cutoff.HasValue && c.DateLastScan.HasValue && c.DateLastScan.Value > cutoff.Value) continue;
-            eligible.Add(c);
-        }
-
-        var totalProcessed = 0; var totalFailed = 0;
-        var totalAdded = 0; var totalUpdated = 0; var totalRemoved = 0;
-        var errors = new System.Collections.Generic.List<string>();
-        for (var i = 0; i < eligible.Count; i++)
-        {
-            var c = eligible[i];
-            ct.ThrowIfCancellationRequested();
-            Console.Write($"[{i + 1,4}/{eligible.Count}] {c.Name,-30} {c.Domain,-32} via {c.AtsType,-16} ");
-            try
-            {
-                var r = refresher.RefreshAsync(c, ct).GetAwaiter().GetResult();
-                totalProcessed += r.CompaniesProcessed;
-                totalFailed    += r.CompaniesFailed;
-                totalAdded     += r.JobsAdded;
-                totalUpdated   += r.JobsUpdated;
-                totalRemoved   += r.JobsRemoved;
-                errors.AddRange(r.Errors);
-                Console.WriteLine($"+{r.JobsAdded} ~{r.JobsUpdated} -{r.JobsRemoved}");
-            }
-            catch (Exception ex)
-            {
-                totalFailed++;
-                errors.Add($"[{c.Domain}] {ex.GetType().Name}: {ex.Message}");
-                Console.WriteLine($"FAILED ({ex.GetType().Name})");
-            }
-        }
-        return new JobRefreshReport
-        {
-            CompaniesProcessed = totalProcessed, CompaniesFailed = totalFailed,
-            JobsAdded = totalAdded, JobsUpdated = totalUpdated, JobsRemoved = totalRemoved,
-            Errors = errors,
-        };
-    }
-
     private static void PrintReport(JobRefreshReport report)
     {
         Console.WriteLine($"Companies processed:  {report.CompaniesProcessed}");
         Console.WriteLine($"Companies skipped:    {report.CompaniesSkippedNoAts} (no ATS detected)");
+        if (report.CompaniesSkippedNonNative > 0)
+            Console.WriteLine($"                      {report.CompaniesSkippedNonNative} (no native ATS adapter)");
+        if (report.CompaniesSkippedRecent > 0)
+            Console.WriteLine($"                      {report.CompaniesSkippedRecent} (scanned recently)");
         Console.WriteLine($"Companies failed:     {report.CompaniesFailed}");
         Console.WriteLine($"Jobs added:           {report.JobsAdded}");
         Console.WriteLine($"Jobs updated:         {report.JobsUpdated}");

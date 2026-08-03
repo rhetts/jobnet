@@ -18,8 +18,13 @@ public interface IJobRefresher
     /// <see cref="JobRefreshReport.CompaniesSkippedRecent"/>). If <paramref name="progress"/> is
     /// supplied, the refresher reports a tick after each company finishes processing — useful for
     /// driving a live status bar in the UI since this method can run for hours on a full sweep.
-    /// <paramref name="runId"/> threads through to refresh_attempt/api_call_log telemetry.</summary>
-    Task<JobRefreshReport> RefreshAllAsync(int minDaysSinceLastScan = 0, IProgress<JobRefreshProgress>? progress = null, CancellationToken ct = default, long? runId = null);
+    /// <paramref name="runId"/> threads through to refresh_attempt/api_call_log telemetry.
+    /// When <paramref name="nativeAtsOnly"/> is true, only companies already pinned to an ATS we
+    /// have a native adapter for are visited — the Playwright + AI-extract tail is skipped
+    /// entirely, and those companies land in <see cref="JobRefreshReport.CompaniesSkippedNonNative"/>.
+    /// That makes a sweep 10-100x cheaper, at the cost of never discovering an ATS for a company
+    /// that doesn't have one pinned yet.</summary>
+    Task<JobRefreshReport> RefreshAllAsync(int minDaysSinceLastScan = 0, IProgress<JobRefreshProgress>? progress = null, CancellationToken ct = default, long? runId = null, bool nativeAtsOnly = false);
 
     /// <summary>Abandon the company currently being refreshed and move to the next one. Distinct
     /// from cancelling the run: only the current company's work unwinds, and it's counted as
@@ -64,6 +69,10 @@ public sealed class JobRefreshReport
     public int CompaniesProcessed { get; init; }
     public int CompaniesSkippedNoAts { get; init; }
     public int CompaniesSkippedRecent { get; init; }
+
+    /// <summary>Companies passed over because the run was native-ATS-only and they had no
+    /// ats_type/ats_slug backed by a registered adapter. Zero on a normal full sweep.</summary>
+    public int CompaniesSkippedNonNative { get; init; }
     public int CompaniesFailed { get; init; }
     public int JobsAdded { get; init; }
     public int JobsUpdated { get; init; }
