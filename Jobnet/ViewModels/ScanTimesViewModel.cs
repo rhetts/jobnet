@@ -153,7 +153,9 @@ public sealed class ScanTimeRowVm
     public string Domain { get; }
     public int Attempts { get; }
     public long TotalMs { get; }
+    public long AvgMs { get; }
     public long WorstMs { get; }
+    public long CostPerJobMs { get; }
     public int JobsYielded { get; }
     public bool IsBlacklisted { get; }
 
@@ -178,6 +180,7 @@ public sealed class ScanTimeRowVm
         Domain = s.Domain;
         Attempts = s.Attempts;
         TotalMs = s.TotalMs;
+        AvgMs = s.AvgMs;
         WorstMs = s.WorstMs;
         JobsYielded = s.JobsYielded;
         IsBlacklisted = s.IsBlacklisted;
@@ -186,8 +189,9 @@ public sealed class ScanTimeRowVm
         AvgDisplay   = Humanize(s.AvgMs);
         WorstDisplay = Humanize(s.WorstMs);
 
+        CostPerJobMs = s.JobsYielded > 0 ? s.TotalMs / s.JobsYielded : s.TotalMs;
         CostPerJobDisplay = s.JobsYielded > 0
-            ? Humanize(s.TotalMs / s.JobsYielded)
+            ? Humanize(CostPerJobMs)
             : $"{Humanize(s.TotalMs)} / 0";
 
         LastAttemptDisplay = s.LastAttempt is { } t
