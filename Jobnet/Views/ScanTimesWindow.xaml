@@ -64,10 +64,10 @@
                 <DataGridTextColumn Header="Company" Binding="{Binding Name}"   Width="180"/>
                 <DataGridTextColumn Header="Domain"  Binding="{Binding Domain}" Width="180" FontFamily="Consolas"/>
                 <DataGridTextColumn Header="Attempts" Binding="{Binding Attempts}" Width="75"/>
-                <DataGridTextColumn Header="Total"   Binding="{Binding TotalDisplay}" Width="80" FontFamily="Consolas"/>
-                <DataGridTextColumn Header="Avg"     Binding="{Binding AvgDisplay}"   Width="80" FontFamily="Consolas"/>
                 <!-- SortMemberPath points at the raw ms so header-click sorts numerically
                      rather than alphabetically on the humanised string. -->
+                <DataGridTextColumn Header="Total"   Binding="{Binding TotalDisplay}" Width="80" FontFamily="Consolas" SortMemberPath="TotalMs"/>
+                <DataGridTextColumn Header="Avg"     Binding="{Binding AvgDisplay}"   Width="80" FontFamily="Consolas" SortMemberPath="AvgMs"/>
                 <DataGridTemplateColumn Header="Worst" Width="80" SortMemberPath="WorstMs">
                     <DataGridTemplateColumn.CellTemplate>
                         <DataTemplate DataType="{x:Type vm:ScanTimeRowVm}">
@@ -80,7 +80,7 @@
                     </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>
                 <DataGridTextColumn Header="Jobs"     Binding="{Binding JobsYielded}" Width="60"/>
-                <DataGridTextColumn Header="Per job"  Binding="{Binding CostPerJobDisplay}" Width="95" FontFamily="Consolas"/>
+                <DataGridTextColumn Header="Per job"  Binding="{Binding CostPerJobDisplay}" Width="95" FontFamily="Consolas" SortMemberPath="CostPerJobMs"/>
                 <DataGridTextColumn Header="Last run" Binding="{Binding LastAttemptDisplay}" Width="130"/>
                 <DataGridTemplateColumn Header="Actions" Width="*">
                     <DataGridTemplateColumn.CellTemplate>
