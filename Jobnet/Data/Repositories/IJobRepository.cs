@@ -65,8 +65,18 @@ public interface IJobRepository
     /// the greylist never overrides a user's explicit choice. Returns the count of jobs
     /// newly downvoted.</summary>
     int ApplyGreylist(string? rawGreylist);
+
+    /// <summary>Every job's first-seen/removed timestamps, for building a postings-over-time
+    /// chart. Raw pairs — the caller buckets them into a daily series.</summary>
+    IReadOnlyList<PostingHistoryEntry> GetPostingHistory();
 }
 
 /// <summary>30-day cohort churn snapshot. ChurnPct ranges 0-100 (% of cohort that's now inactive).
 /// CohortSize is total jobs in the cohort. Inactive is jobs from that cohort now marked removed.</summary>
 public readonly record struct ChurnStat(int CohortSize, int Inactive, double ChurnPct);
+
+public sealed class PostingHistoryEntry
+{
+    public DateTime FirstSeen { get; set; }
+    public DateTime? Removed { get; set; }
+}

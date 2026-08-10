@@ -451,6 +451,13 @@ public sealed class JobRepository : IJobRepository
         return updated;
     }
 
+    public IReadOnlyList<PostingHistoryEntry> GetPostingHistory()
+    {
+        using var conn = _connections.Open();
+        return conn.Query<PostingHistoryEntry>(
+            "SELECT date_first_seen AS FirstSeen, date_removed AS Removed FROM jobs").ToList();
+    }
+
     // DB text is constrained by a CHECK from migration 001 to ('interesting','not_interesting').
     // The C# enum value was renamed to Approved but DB still stores 'interesting' so we don't
     // have to rebuild the table. Parse maps both spellings just in case a future migration
