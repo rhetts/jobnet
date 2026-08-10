@@ -175,7 +175,37 @@
                 </ScrollViewer>
             </TabItem>
 
-            <!-- TAB 2: API USAGE — bound to the nested ApiUsage VM -->
+            <!-- TAB 2: POSTINGS — active-postings-count line chart from date_first_seen/date_removed -->
+            <TabItem Header="Postings">
+                <StackPanel Margin="10,8">
+                    <TextBlock Style="{StaticResource SectionHeader}" Margin="0,0,0,4" Text="Active postings over time"/>
+                    <TextBlock Foreground="#888" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,10"
+                               Text="Count of active postings per day, from date_first_seen / date_removed. A day with no scan carries the previous count forward rather than showing a gap."/>
+                    <Border BorderBrush="#DDD" BorderThickness="1" Background="White" CornerRadius="3" Padding="12,10">
+                        <StackPanel>
+                            <Grid Margin="0,0,0,6">
+                                <TextBlock Grid.Column="0" Text="{Binding PostingHistoryCurrentLabel}" FontWeight="SemiBold" FontSize="13"/>
+                            </Grid>
+                            <Grid>
+                                <TextBlock Text="{Binding PostingHistoryMaxLabel}" Foreground="#888" FontSize="10"
+                                           HorizontalAlignment="Left" VerticalAlignment="Top"/>
+                                <Canvas Width="640" Height="160" HorizontalAlignment="Left">
+                                    <Line X1="0" Y1="160" X2="640" Y2="160" Stroke="#DDD" StrokeThickness="1"/>
+                                    <Polyline Points="{Binding PostingHistoryPoints}" Stroke="#2A8F4F" StrokeThickness="2"/>
+                                </Canvas>
+                                <TextBlock Text="0" Foreground="#888" FontSize="10"
+                                           HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="0,0,0,-2"/>
+                            </Grid>
+                            <Grid Margin="0,4,0,0" Width="640" HorizontalAlignment="Left">
+                                <TextBlock Text="{Binding PostingHistoryStartLabel}" Foreground="#888" FontSize="10" HorizontalAlignment="Left"/>
+                                <TextBlock Text="{Binding PostingHistoryEndLabel}" Foreground="#888" FontSize="10" HorizontalAlignment="Right"/>
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </TabItem>
+
+            <!-- TAB 3: API USAGE — bound to the nested ApiUsage VM -->
             <TabItem Header="API usage" DataContext="{Binding ApiUsage}">
                 <Grid Margin="10,8">
                     <Grid.RowDefinitions>
@@ -246,7 +276,7 @@
                     </ScrollViewer>
                 </Grid>
             </TabItem>
-            <!-- TAB 3: LOG — tails the last ~500 lines of jobnet.log -->
+            <!-- TAB 4: LOG — tails the last ~500 lines of jobnet.log -->
             <TabItem Header="Log">
                 <Grid Margin="10,8">
                     <Grid.RowDefinitions>

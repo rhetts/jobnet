@@ -4,6 +4,8 @@ using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Windows;
+using System.Windows.Media;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Jobnet.Data.Repositories;
@@ -64,6 +66,19 @@ public partial class StatsViewModel : ObservableObject
 
     [ObservableProperty] private string _rescoreStatus = "";
 
+    /// <summary>Chart geometry for the Postings tab — kept in sync with the Canvas size in
+    /// StatsWindow.xaml (640x160). Computed here rather than in a converter since the VM
+    /// already exposes raw brush/display strings elsewhere in this app (see WorstBrush in
+    /// ScanTimeRowVm) — same pragmatic pattern, just for chart points instead of colors.</summary>
+    private const double PostingChartWidth = 640;
+    private const double PostingChartHeight = 160;
+
+    [ObservableProperty] private PointCollection _postingHistoryPoints = new();
+    [ObservableProperty] private string _postingHistoryMaxLabel = "";
+    [ObservableProperty] private string _postingHistoryStartLabel = "";
+    [ObservableProperty] private string _postingHistoryEndLabel = "";
+    [ObservableProperty] private string _postingHistoryCurrentLabel = "";
+
     [RelayCommand]
     public void Refresh()
     {
@@ -84,6 +99,8 @@ public partial class StatsViewModel : ObservableObject
         foreach (var row in BuildParserBreakdown(active))
             ParserSystems.Add(row);
 
+        BuildPostingHistory();
+
         Queue.Clear();
         foreach (var s in _queue.GetStats())
             Queue.Add(new QueueRow { TaskType = s.TaskType, Status = s.Status, Count = s.Count });
@@ -94,6 +111,47 @@ public partial class StatsViewModel : ObservableObject
         // And reload the log tail. Read with FileShare.ReadWrite | Delete so the running trace
         // listener (which holds the file open for writes) doesn't block us.
         LogText = ReadLogTail(LogPath, maxLines: 500);
+    }
+
+    /// <summary>Builds a daily active-postings-count series from date_first_seen/date_removed —
+    /// the only history we actually record — and projects it into chart-space points. A day
+    /// with no scan just carries the previous count forward, since nothing in the data changed
+    /// that day; this is the best available estimate, not a claim a scan ran daily.</summary>
+    private void BuildPostingHistory()
+    {
+        var history = _jobs.GetPostingHistory();
+        if (history.Count == 0)
+        {
+            PostingHistoryPoints = new PointCollection();
+            PostingHistoryMaxLabel = PostingHistoryStartLabel = PostingHistoryEndLabel = PostingHistoryCurrentLabel = "";
+            return;
+        }
+
+        var startDay = history.Min(h => h.FirstSeen.Date);
+        var endDay = DateTime.UtcNow.Date;
+        var dayCount = (endDay - startDay).Days + 1;
+
+        var counts = new int[dayCount];
+        for (var i = 0; i < dayCount; i++)
+        {
+            var day = startDay.AddDays(i);
+            counts[i] = history.Count(h => h.FirstSeen.Date <= day && (h.Removed is null || h.Removed.Value.Date > day));
+        }
+
+        var maxCount = Math.Max(1, counts.Max());
+        var points = new PointCollection();
+        for (var i = 0; i < dayCount; i++)
+        {
+            var x = dayCount == 1 ? 0 : i * PostingChartWidth / (dayCount - 1);
+            var y = PostingChartHeight - counts[i] / (double)maxCount * PostingChartHeight;
+            points.Add(new Point(x, y));
+        }
+
+        PostingHistoryPoints = points;
+        PostingHistoryMaxLabel = maxCount.ToString();
+        PostingHistoryStartLabel = startDay.ToString("MMM d");
+        PostingHistoryEndLabel = endDay.ToString("MMM d");
+        PostingHistoryCurrentLabel = $"{counts[^1]} active as of {endDay:MMM d}";
     }
 
     private static string ReadLogTail(string path, int maxLines)

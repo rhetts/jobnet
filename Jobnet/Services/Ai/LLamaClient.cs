@@ -294,10 +294,27 @@ public sealed class LLamaClient : IAiClient, IDisposable
 
     private static int ApproxTokens(string text) => string.IsNullOrEmpty(text) ? 0 : Math.Max(1, text.Length / 4);
 
+    /// <summary>Waits for any in-flight inference to release <see cref="_inferenceGate"/> before
+    /// freeing the native context. Freeing tensors while a worker thread is still inside
+    /// <c>InferAsync</c> corrupts native memory instead of throwing a catchable exception — that's
+    /// what made app shutdown hang/crash when a worker was mid-token-generation. Bounded so a wedged
+    /// inference can't block process exit forever; if the gate never frees, the weights are left
+    /// for the OS to reclaim on process exit rather than freed unsafely.</summary>
     public void Dispose()
     {
-        _weights?.Dispose();
-        _weights = null;
-        _inferenceGate.Dispose();
+        var acquired = _inferenceGate.Wait(TimeSpan.FromSeconds(10));
+        try
+        {
+            if (acquired)
+            {
+                _weights?.Dispose();
+                _weights = null;
+            }
+        }
+        finally
+        {
+            if (acquired) _inferenceGate.Release();
+            _inferenceGate.Dispose();
+        }
     }
 }
