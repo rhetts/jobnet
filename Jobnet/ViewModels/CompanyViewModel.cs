@@ -1,3 +1,4 @@
+using System;
 using CommunityToolkit.Mvvm.ComponentModel;
 using Jobnet.Data.Repositories;
 using Jobnet.Models;
@@ -22,6 +23,14 @@ public partial class CompanyViewModel : ObservableObject
     /// jobs ≥30 days old yet — shown as "—" in the UI to signal "not enough history".</summary>
     [ObservableProperty]
     private ChurnStat? _churn;
+
+    /// <summary>Backs the sidebar checkbox. Unchecking hides this company's jobs from the jobs
+    /// list (persisted via <see cref="_onVisibleToggled"/>) without removing the company from
+    /// the sidebar, so it can be re-checked.</summary>
+    [ObservableProperty]
+    private bool _isVisible = true;
+
+    private readonly Action<CompanyViewModel, bool>? _onVisibleToggled;
 
     public string Name => IsAllJobsSentinel ? "All Jobs" : Company!.Name;
 
@@ -60,13 +69,16 @@ public partial class CompanyViewModel : ObservableObject
         }
     }
 
-    public CompanyViewModel(Company company, int activeJobCount, int totalJobCount, ChurnStat? churn = null)
+    public CompanyViewModel(Company company, int activeJobCount, int totalJobCount, ChurnStat? churn = null,
+                             Action<CompanyViewModel, bool>? onVisibleToggled = null)
     {
         Company = company;
         ActiveJobCount = activeJobCount;
         TotalJobCount = totalJobCount;
         Churn = churn;
         IsAllJobsSentinel = false;
+        _isVisible = company.IsVisible;
+        _onVisibleToggled = onVisibleToggled;
     }
 
     private CompanyViewModel(int activeJobCount, int totalJobCount)
@@ -83,4 +95,5 @@ public partial class CompanyViewModel : ObservableObject
     partial void OnChurnChanged(ChurnStat? value) => OnPropertyChanged(nameof(ChurnDisplay));
     partial void OnActiveJobCountChanged(int value) => OnPropertyChanged(nameof(JobCountDisplay));
     partial void OnTotalJobCountChanged(int value)  => OnPropertyChanged(nameof(JobCountDisplay));
+    partial void OnIsVisibleChanged(bool value) => _onVisibleToggled?.Invoke(this, value);
 }

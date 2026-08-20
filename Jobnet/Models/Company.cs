@@ -78,4 +78,11 @@ public sealed class Company
     /// inactive = "retired/acquired, keep history visible", blacklisted = "hide everything".
     /// Reversed via the Blacklist tab in Settings.</summary>
     public bool IsBlacklisted { get; set; }
+
+    /// <summary>When false, this company's jobs are hidden from the jobs list, toggled via the
+    /// checkbox next to its name in the sidebar. The company itself stays in the sidebar either
+    /// way (unlike <see cref="IsBlacklisted"/>) so the checkbox can be re-checked, and scanning
+    /// continues (unlike <see cref="IsActive"/>) — this flag only affects display.
+    /// Defaults to true on insert (see migration 056 default).</summary>
+    public bool IsVisible { get; set; } = true;
 }
