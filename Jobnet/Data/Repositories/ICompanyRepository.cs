@@ -58,6 +58,11 @@ public interface ICompanyRepository
     /// main job view hides every job posted by it. Set to false to bring it back.</summary>
     void SetBlacklisted(int id, bool blacklisted);
 
+    /// <summary>Toggle whether this company's jobs show in the jobs list (the sidebar checkbox).
+    /// Unlike <see cref="SetBlacklisted"/>, the company stays in the sidebar and scanning is
+    /// unaffected — this only controls whether its jobs are displayed.</summary>
+    void SetVisible(int id, bool visible);
+
     /// <summary>Returns one row per active company with the fields the Sources screen needs:
     /// the size category (already bucketed), the website URL, careers URL, and the seed name(s)
     /// it was discovered from. Built in one query so the screen doesn't N+1.</summary>

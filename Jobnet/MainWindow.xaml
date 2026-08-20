@@ -464,12 +464,28 @@
                         <DataTemplate DataType="{x:Type vm:CompanyViewModel}">
                             <Grid Margin="12,8">
                                 <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
                                     <ColumnDefinition Width="18"/>
                                     <ColumnDefinition Width="*"/>
                                     <ColumnDefinition Width="Auto"/>
                                     <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Grid.Column="0"
+                                <CheckBox Grid.Column="0"
+                                          IsChecked="{Binding IsVisible}"
+                                          VerticalAlignment="Center"
+                                          Margin="0,0,6,0"
+                                          ToolTip="Uncheck to hide this company's jobs from the jobs list.">
+                                    <CheckBox.Style>
+                                        <Style TargetType="CheckBox">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsAllJobsSentinel}" Value="True">
+                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </CheckBox.Style>
+                                </CheckBox>
+                                <TextBlock Grid.Column="1"
                                            Text="{Binding InterestGlyph}"
                                            FontSize="13"
                                            VerticalAlignment="Center">
@@ -487,7 +503,7 @@
                                         </Style>
                                     </TextBlock.Style>
                                 </TextBlock>
-                                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                <StackPanel Grid.Column="2" VerticalAlignment="Center">
                                     <StackPanel Orientation="Horizontal">
                                         <TextBlock Text="{Binding Name}">
                                             <TextBlock.Style>
@@ -517,7 +533,7 @@
                                                Foreground="#999"
                                                Visibility="{Binding HasCity, Converter={StaticResource BoolToVis}}"/>
                                 </StackPanel>
-                                <TextBlock Grid.Column="2"
+                                <TextBlock Grid.Column="3"
                                            Text="{Binding JobCountDisplay}"
                                            ToolTip="Active jobs / total jobs ever tracked (active + removed)."
                                            Foreground="#888"
@@ -525,7 +541,7 @@
                                            FontSize="11"
                                            VerticalAlignment="Center"
                                            Margin="6,0,0,0"/>
-                                <TextBlock Grid.Column="3"
+                                <TextBlock Grid.Column="4"
                                            Text="{Binding ChurnDisplay}"
                                            ToolTip="30-day churn rate: % of jobs first seen 30+ days ago that are now inactive. Dash means &quot;not enough history yet&quot;."
                                            Foreground="#AAA"

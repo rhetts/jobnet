@@ -43,6 +43,12 @@ public partial class MainWindowViewModel : ObservableObject
     /// by <see cref="LoadFromDataService"/> after every reload.</summary>
     private HashSet<int> _blacklistedCompanyIds = new();
 
+    /// <summary>Company ids the user has unchecked in the sidebar. Unlike <see cref="_blacklistedCompanyIds"/>,
+    /// the company itself stays visible in the sidebar — only the job-list filter consults this
+    /// set, so unchecked companies' jobs disappear but the checkbox remains there to re-check.
+    /// Refreshed by <see cref="LoadFromDataService"/> after every reload.</summary>
+    private HashSet<int> _hiddenCompanyIds = new();
+
     public ObservableCollection<CompanyViewModel> Companies { get; } = new();
     public ICollectionView CompaniesView { get; }
 
@@ -406,6 +412,7 @@ public partial class MainWindowViewModel : ObservableObject
         var jobs = _data.GetJobs();
         var companyById = companies.ToDictionary(c => c.Id);
         _blacklistedCompanyIds = companies.Where(c => c.IsBlacklisted).Select(c => c.Id).ToHashSet();
+        _hiddenCompanyIds = companies.Where(c => !c.IsVisible).Select(c => c.Id).ToHashSet();
 
         var levelNameById = _levelsRepo?.GetAll().ToDictionary(l => l.Id, l => l.Name) ?? new Dictionary<int, string>();
         var areaNameById  = _areasRepo?.GetAll().ToDictionary(a => a.Id, a => a.Name)  ?? new Dictionary<int, string>();
@@ -460,7 +467,8 @@ public partial class MainWindowViewModel : ObservableObject
             totalJobCounts.TryGetValue(c.Id, out var total);
             churnByCompany.TryGetValue(c.Id, out var churn);
             Companies.Add(new CompanyViewModel(c, active, total,
-                churnByCompany.ContainsKey(c.Id) ? churn : (Jobnet.Data.Repositories.ChurnStat?)null));
+                churnByCompany.ContainsKey(c.Id) ? churn : (Jobnet.Data.Repositories.ChurnStat?)null,
+                onVisibleToggled: OnVisibleToggled));
         }
 
         // Restore selection where possible
@@ -650,6 +658,9 @@ public partial class MainWindowViewModel : ObservableObject
 
         // Blacklist trumps everything — the user said "never show me this company".
         if (_blacklistedCompanyIds.Contains(jvm.Job.CompanyId)) return false;
+
+        // Unchecked in the sidebar — hide this company's jobs but leave it selectable/re-checkable.
+        if (_hiddenCompanyIds.Contains(jvm.Job.CompanyId)) return false;
 
         // Approved jobs live on the Approved-jobs tab — keep them off this one.
         if (jvm.IsApproved) return false;
@@ -1125,6 +1136,26 @@ public partial class MainWindowViewModel : ObservableObject
             RefreshJobsView();
         }
         catch (Exception ex) { StatusBarText = $"Apply toggle failed: {ex.Message}"; }
+    }
+
+    /// <summary>Wired into every CompanyViewModel; persists the sidebar checkbox to is_visible
+    /// and re-runs the JobsView filter so the company's jobs immediately appear/disappear. The
+    /// company row itself is untouched — it stays in the sidebar so the checkbox can be flipped
+    /// back.</summary>
+    private void OnVisibleToggled(CompanyViewModel cvm, bool isVisible)
+    {
+        if (cvm.Company is null || _companiesRepo is null) return;
+        try
+        {
+            _companiesRepo.SetVisible(cvm.Company.Id, isVisible);
+            if (isVisible) _hiddenCompanyIds.Remove(cvm.Company.Id);
+            else _hiddenCompanyIds.Add(cvm.Company.Id);
+            StatusBarText = isVisible
+                ? $"Showing jobs for {cvm.Company.Name}."
+                : $"Hiding jobs for {cvm.Company.Name}.";
+            RefreshJobsView();
+        }
+        catch (Exception ex) { StatusBarText = $"Visibility toggle failed: {ex.Message}"; }
     }
 
     /// <summary>Wired into every JobViewModel; "Expired" on an approved card unapproves the job

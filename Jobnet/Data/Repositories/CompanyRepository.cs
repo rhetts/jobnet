@@ -23,7 +23,7 @@ public sealed class CompanyRepository : ICompanyRepository
                parser_strategy_last_error,
                last_company_parser,
                consecutive_failures, last_success_at, last_refresh_jobs_count,
-               is_blacklisted
+               is_blacklisted, is_visible
         FROM companies";
 
     private readonly IDbConnectionFactory _connections;
@@ -205,6 +205,7 @@ public sealed class CompanyRepository : ICompanyRepository
         LastSuccessAt = ParseUtc(r.LastSuccessAt),
         LastRefreshJobsCount = r.LastRefreshJobsCount,
         IsBlacklisted = r.IsBlacklisted != 0,
+        IsVisible = r.IsVisible != 0,
     };
 
     private static DateTime? ParseUtc(string? value)
@@ -323,6 +324,13 @@ public sealed class CompanyRepository : ICompanyRepository
             new { id, flag = blacklisted ? 1 : 0 });
     }
 
+    public void SetVisible(int id, bool visible)
+    {
+        using var conn = _connections.Open();
+        conn.Execute("UPDATE companies SET is_visible = @flag WHERE id = @id",
+            new { id, flag = visible ? 1 : 0 });
+    }
+
     public IReadOnlyList<CompanySourceRow> GetCompanySourceRows()
     {
         using var conn = _connections.Open();
@@ -408,5 +416,6 @@ public sealed class CompanyRepository : ICompanyRepository
         public string? LastSuccessAt { get; set; }
         public int? LastRefreshJobsCount { get; set; }
         public int IsBlacklisted { get; set; }
+        public int IsVisible { get; set; }
     }
 }
