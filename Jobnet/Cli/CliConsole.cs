@@ -51,8 +51,24 @@ internal static class CliConsole
             consoleWriter = TextWriter.Null;
         }
 
-        var fileWriter = new StreamWriter(LogPath, append: false, new UTF8Encoding(false)) { AutoFlush = true };
-        fileWriter.WriteLine($"=== {DateTime.Now:O} ===");
+        // Append (not overwrite) so a run's output survives the next invocation — this used to
+        // truncate the whole log on every command, so only the very last run was ever visible.
+        // FileShare.ReadWrite | Delete matches the fix already applied to jobnet.log: without it,
+        // a second Jobnet.exe process (concurrent CLI invocation, or a lingering GUI instance)
+        // throws IOException here before the command even runs. Wrapped in try/catch so a file
+        // failure degrades to console-only output instead of crashing CLI startup outright.
+        TextWriter fileWriter;
+        try
+        {
+            var fileStream = new FileStream(LogPath, FileMode.Append, FileAccess.Write,
+                FileShare.ReadWrite | FileShare.Delete);
+            fileWriter = new StreamWriter(fileStream, new UTF8Encoding(false)) { AutoFlush = true };
+            fileWriter.WriteLine($"\n=== {DateTime.Now:O} ===");
+        }
+        catch
+        {
+            fileWriter = TextWriter.Null;
+        }
 
         Console.SetOut(new TeeTextWriter(consoleWriter, fileWriter));
         Console.SetError(Console.Out);

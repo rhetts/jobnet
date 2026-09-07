@@ -11,7 +11,14 @@ internal static class CliRunner
 {
     public static int Run(string[] args)
     {
-        CliConsole.Initialize();
+        try { CliConsole.Initialize(); }
+        catch (Exception ex)
+        {
+            // Initialize() already guards its own file I/O — this only catches something more
+            // fundamental (e.g. LocalApplicationData unavailable). Console output alone still
+            // works via the default Console.Out, so keep going rather than crash unhandled.
+            Console.WriteLine($"Warning: CLI log initialization failed: {ex.GetType().Name}: {ex.Message}");
+        }
 
         var services = BuildServices();
         var commands = DiscoverCommands(services).ToDictionary(c => c.Name, StringComparer.OrdinalIgnoreCase);

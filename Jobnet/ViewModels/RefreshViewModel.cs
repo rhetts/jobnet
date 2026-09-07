@@ -48,9 +48,9 @@ public partial class RefreshViewModel : ObservableObject
     private string _lastRefreshExistingRunText = "";
 
     // LastCompanyProfilesRunText removed — profile generation is continuous via the worker.
-
-    [ObservableProperty]
-    private string _lastReclassifyRunText = "";
+    // LastReclassifyRunText / LastPruneRunText removed — Reclassify/Prune no longer have their
+    // own checkbox; they run automatically as part of "Refresh existing" (see RunMaintenanceAsync).
+    // Still logged individually under run types reclassify_jobs / prune_out_of_area for `runs`.
 
     /// <summary>Compact one-line summary of which AI provider chain each task is using right now.
     /// Shown beneath the Status text in the refresh window so the user can see at a glance whether
@@ -73,9 +73,6 @@ public partial class RefreshViewModel : ObservableObject
     /// ats_* providers also recorded by the tracker). Kept in sync with the AI clients.</summary>
     private static readonly System.Collections.Generic.HashSet<string> AiProviders =
         new(System.StringComparer.OrdinalIgnoreCase) { "gemini", "claude", "groq", "llama" };
-
-    [ObservableProperty]
-    private string _lastPruneRunText = "";
 
     public sealed record SkipDaysOption(string Label, int Days);
     public System.Collections.Generic.IReadOnlyList<SkipDaysOption> SkipDaysOptions { get; } = new SkipDaysOption[]
@@ -106,9 +103,9 @@ public partial class RefreshViewModel : ObservableObject
     // user's last selection survives reopens.
     [ObservableProperty] private bool _doDiscoverJobs = true;
     [ObservableProperty] private bool _doRefreshExisting;
-    [ObservableProperty] private bool _doRegenerateSummaries;
-    [ObservableProperty] private bool _doReclassifyJobs = true;
-    [ObservableProperty] private bool _doPruneOutOfArea = true;
+    // DoRegenerateSummaries / DoReclassifyJobs / DoPruneOutOfArea removed — regenerate-summaries
+    // was already dead (summaries are continuous via SummaryWorker); reclassify and prune now
+    // run automatically whenever DoRefreshExisting does (see RunMaintenanceAsync).
 
     /// <summary>Modifier on the "Discover jobs" step: visit only companies pinned to an ATS we
     /// have a native JSON adapter for, skipping the Playwright + AI-extract tail. Cheap and fast,
@@ -208,9 +205,6 @@ public partial class RefreshViewModel : ObservableObject
 
         _doDiscoverJobs        = _configRepo.GetOrDefault("ui_maint_discover_jobs",        "true")  == "true";
         _doRefreshExisting     = _configRepo.GetOrDefault("ui_maint_refresh_existing",     "false") == "true";
-        _doRegenerateSummaries = _configRepo.GetOrDefault("ui_maint_regen_summaries",      "false") == "true";
-        _doReclassifyJobs      = _configRepo.GetOrDefault("ui_maint_reclassify",           "true")  == "true";
-        _doPruneOutOfArea      = _configRepo.GetOrDefault("ui_maint_prune",                "true")  == "true";
         _discoverJobsNativeOnly= _configRepo.GetOrDefault("ui_maint_discover_jobs_native_only", "false") == "true";
 
         RefreshLastRunTimes();
@@ -228,8 +222,8 @@ public partial class RefreshViewModel : ObservableObject
         // summary + resume-match no longer have a "last run" timestamp — they're continuous
         // background workers now, not one-shot user-triggered runs.
         // company-profile backfill is now continuous via CompanyProfileWorker — no "last run" timestamp.
-        LastReclassifyRunText           = FormatLastRun(_runs.GetLastRunStartedAt("reclassify_jobs"));
-        LastPruneRunText                = FormatLastRun(_runs.GetLastRunStartedAt("prune_out_of_area"));
+        // reclassify_jobs / prune_out_of_area no longer have their own "last run" label — they run
+        // as part of Refresh existing now (still visible individually via `runs`).
     }
 
     private static string FormatLastRun(DateTime? whenUtc)
@@ -363,7 +357,7 @@ public partial class RefreshViewModel : ObservableObject
             : "Cancelled.";
 
     /// <summary>True when at least one maintenance checkbox is selected.</summary>
-    private bool CanRunMaintenance() => !IsBusy && (DoDiscoverJobs || DoRefreshExisting || DoRegenerateSummaries || DoReclassifyJobs || DoPruneOutOfArea);
+    private bool CanRunMaintenance() => !IsBusy && (DoDiscoverJobs || DoRefreshExisting);
 
     /// <summary>Recompute the "Routing — extraction: X · selector_derive: Y" line from current
     /// config. Called from the constructor and at the start of each run so a Settings change
@@ -398,21 +392,6 @@ public partial class RefreshViewModel : ObservableObject
         _configRepo?.Set("ui_maint_refresh_existing", value ? "true" : "false");
         RunMaintenanceCommand?.NotifyCanExecuteChanged();
     }
-    partial void OnDoRegenerateSummariesChanged(bool value)
-    {
-        _configRepo?.Set("ui_maint_regen_summaries", value ? "true" : "false");
-        RunMaintenanceCommand?.NotifyCanExecuteChanged();
-    }
-    partial void OnDoReclassifyJobsChanged(bool value)
-    {
-        _configRepo?.Set("ui_maint_reclassify", value ? "true" : "false");
-        RunMaintenanceCommand?.NotifyCanExecuteChanged();
-    }
-    partial void OnDoPruneOutOfAreaChanged(bool value)
-    {
-        _configRepo?.Set("ui_maint_prune", value ? "true" : "false");
-        RunMaintenanceCommand?.NotifyCanExecuteChanged();
-    }
     partial void OnDiscoverJobsNativeOnlyChanged(bool value)
     {
         // Modifier, not a step — it doesn't affect CanRunMaintenance.
@@ -435,17 +414,19 @@ public partial class RefreshViewModel : ObservableObject
         try
         {
             if (DoDiscoverJobs        && !ct.IsCancellationRequested) await DiscoverJobsAsync();
-            if (DoRefreshExisting     && !ct.IsCancellationRequested) await RefreshExistingAsync();
-            // Summary regenerate-all removed — summaries are generated by SummaryWorker as
-            // new jobs land. DoRegenerateSummaries toggle is now a no-op kept for binding
-            // compatibility until the maintenance UI is refactored.
-            // ReclassifyJobs and PruneOutOfArea are sync and they (a) mutate ObservableCollections
-            // via Completed?.Invoke → LoadFromDataService and (b) run in ~tens of milliseconds
-            // even on hundreds of jobs. Wrapping them in Task.Run pushes the collection mutations
-            // to a worker thread and trips WPF's CollectionView dispatcher check. Just call them
-            // synchronously on the UI thread — the brief block is harmless at this size.
-            if (DoReclassifyJobs      && !ct.IsCancellationRequested) ReclassifyJobs();
-            if (DoPruneOutOfArea      && !ct.IsCancellationRequested) PruneOutOfArea();
+            if (DoRefreshExisting     && !ct.IsCancellationRequested)
+            {
+                await RefreshExistingAsync();
+                // Recategorize and prune no longer have their own checkboxes — they always
+                // follow Refresh existing so newly-backfilled jobs get classified/pruned in the
+                // same pass. Both are sync and (a) mutate ObservableCollections via
+                // Completed?.Invoke → LoadFromDataService and (b) run in ~tens of milliseconds
+                // even on hundreds of jobs. Wrapping them in Task.Run pushes the collection
+                // mutations to a worker thread and trips WPF's CollectionView dispatcher check.
+                // Just call them synchronously on the UI thread — the brief block is harmless.
+                if (!ct.IsCancellationRequested) ReclassifyJobs();
+                if (!ct.IsCancellationRequested) PruneOutOfArea();
+            }
         }
         catch (OperationCanceledException)
         {

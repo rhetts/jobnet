@@ -243,8 +243,25 @@ public partial class App : Application
         }
         catch (Exception ex) { LogException("OnExit.LLamaDispose", ex); }
 
-        Host.StopAsync(TimeSpan.FromSeconds(2)).GetAwaiter().GetResult();
-        Host.Dispose();
+        // Host.Dispose() re-disposes every singleton the container ever resolved — including
+        // the two already disposed explicitly above. That's normally a harmless no-op (their
+        // Dispose methods must tolerate being called twice), but an exception here is thrown
+        // from deep inside WPF's shutdown callback with nothing above us to catch it — it doesn't
+        // crash visibly, it corrupts Application.ShutdownImpl() mid-unwind and leaves Jobnet.exe
+        // running forever after every window closes. Never let a disposal bug take shutdown down
+        // with it again.
+        try
+        {
+            Host.StopAsync(TimeSpan.FromSeconds(2)).GetAwaiter().GetResult();
+        }
+        catch (Exception ex) { LogException("OnExit.HostStopAsync", ex); }
+
+        try
+        {
+            Host.Dispose();
+        }
+        catch (Exception ex) { LogException("OnExit.HostDispose", ex); }
+
         base.OnExit(e);
     }
 
