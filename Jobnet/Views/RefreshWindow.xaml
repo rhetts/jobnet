@@ -137,43 +137,9 @@
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
                             <CheckBox Grid.Column="0"
-                                      Content="Refresh existing — re-fetch detail URLs to backfill missing salary / description"
+                                      Content="Refresh existing — re-fetch detail URLs to backfill missing salary / description, then recategorize jobs and prune out-of-area postings"
                                       IsChecked="{Binding DoRefreshExisting}"/>
                             <TextBlock Grid.Column="1" Text="{Binding LastRefreshExistingRunText}"
-                                       Foreground="#888" FontSize="11" VerticalAlignment="Center" Margin="8,0,0,0"/>
-                        </Grid>
-                        <Grid Margin="0,4,0,0">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
-                            <CheckBox Grid.Column="0"
-                                      Content="Regenerate ALL summaries — overwrites existing (1 AI call per active job)"
-                                      IsChecked="{Binding DoRegenerateSummaries}"
-                                      Foreground="#A03030"/>
-                            <TextBlock Grid.Column="1" Text="{Binding LastRegenerateSummariesRunText}"
-                                       Foreground="#888" FontSize="11" VerticalAlignment="Center" Margin="8,0,0,0"/>
-                        </Grid>
-                        <Grid Margin="0,4,0,0">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
-                            <CheckBox Grid.Column="0"
-                                      Content="Recategorize jobs — re-run title classifier across all active jobs"
-                                      IsChecked="{Binding DoReclassifyJobs}"/>
-                            <TextBlock Grid.Column="1" Text="{Binding LastReclassifyRunText}"
-                                       Foreground="#888" FontSize="11" VerticalAlignment="Center" Margin="8,0,0,0"/>
-                        </Grid>
-                        <Grid Margin="0,4,0,0">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
-                            <CheckBox Grid.Column="0"
-                                      Content="Prune out-of-area — mark jobs outside Vancouver area as removed"
-                                      IsChecked="{Binding DoPruneOutOfArea}"/>
-                            <TextBlock Grid.Column="1" Text="{Binding LastPruneRunText}"
                                        Foreground="#888" FontSize="11" VerticalAlignment="Center" Margin="8,0,0,0"/>
                         </Grid>
 
