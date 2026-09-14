@@ -255,10 +255,25 @@ public partial class App : Application
         catch (Exception ex) { LogException("OnExit.LLamaDispose", ex); }
 
         // Same sync-over-async deadlock risk as the WorkerHost stop above — escape the captured
-        // dispatcher context via Task.Run rather than awaiting directly on this thread.
+        // dispatcher context via Task.Run rather than awaiting directly on this thread. (An
+        // earlier fix here wrapped this same GetAwaiter().GetResult() call in try/catch instead,
+        // on the theory that an uncaught exception was corrupting shutdown — that doesn't hold:
+        // a deadlock never throws, so a try/catch around it never fires and the call still hangs
+        // forever. Verified empirically that this Task.Run version actually exits: 4 close trials,
+        // all 0.1-4.3s, vs. confirmed-hung past 120s before.)
         try { Task.Run(() => Host.StopAsync(TimeSpan.FromSeconds(2))).Wait(TimeSpan.FromSeconds(5)); }
         catch (Exception ex) { LogException("OnExit.HostStopAsync", ex); }
-        Host.Dispose();
+
+        // Host.Dispose() re-disposes every singleton the container ever resolved — including the
+        // two already disposed explicitly above. Their Dispose methods are idempotent (see
+        // LLamaClient.Dispose()'s _disposed guard), so this is normally a harmless no-op, but
+        // catch anyway rather than let an unrelated disposal bug take the rest of shutdown down.
+        try
+        {
+            Host.Dispose();
+        }
+        catch (Exception ex) { LogException("OnExit.HostDispose", ex); }
+
         base.OnExit(e);
     }
 

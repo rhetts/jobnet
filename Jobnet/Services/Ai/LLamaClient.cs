@@ -321,14 +321,16 @@ public sealed class LLamaClient : IAiClient, IDisposable
     /// <c>InferAsync</c> corrupts native memory instead of throwing a catchable exception — that's
     /// what made app shutdown hang/crash when a worker was mid-token-generation. Bounded so a wedged
     /// inference can't block process exit forever; if the gate never frees, the weights are left
-    /// for the OS to reclaim on process exit rather than freed unsafely.</summary>
+    /// for the OS to reclaim on process exit rather than freed unsafely.
+    ///
+    /// Idempotent: App.OnExit disposes this client explicitly (so the bounded wait runs before the
+    /// rest of shutdown), and the DI container disposes every singleton again when the Host itself
+    /// is disposed right after. Without the <see cref="_disposed"/> guard, the second call hit an
+    /// already-disposed <see cref="_inferenceGate"/> and threw ObjectDisposedException — unhandled,
+    /// mid-shutdown, which crashed the shutdown sequence itself and left Jobnet.exe running forever
+    /// after every window closed (see jobnet.log entries 2026-08-20 / 2026-09-01).</summary>
     public void Dispose()
     {
-        // App.OnExit disposes this explicitly (to free GPU memory deterministically before the
-        // window closes), then Host.Dispose() disposes every singleton in the container a second
-        // time — including this one. Without this guard the second call hits _inferenceGate.Wait()
-        // on an already-disposed SemaphoreSlim, throws ObjectDisposedException uncaught inside
-        // Host.Dispose(), and the process never actually terminates.
         if (_disposed) return;
         _disposed = true;
 
