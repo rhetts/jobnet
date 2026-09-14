@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using Dapper;
 
 namespace Jobnet.Data.Repositories;
@@ -41,5 +43,17 @@ public sealed class DirectoryCrawlRepository : IDirectoryCrawlRepository
                 success = success ? 1 : 0,
                 error,
             });
+    }
+
+    public IReadOnlyList<DirectoryCrawlTotal> GetTotalsByUrl()
+    {
+        using var conn = _connections.Open();
+        return conn.Query<DirectoryCrawlTotal>(@"
+            SELECT url AS Url,
+                   SUM(candidates_found) AS CandidatesFound,
+                   SUM(candidates_added) AS CandidatesAdded,
+                   COUNT(*) AS Runs
+            FROM directory_crawls
+            GROUP BY url").ToList();
     }
 }

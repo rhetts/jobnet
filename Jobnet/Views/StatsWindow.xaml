@@ -175,6 +175,94 @@
                 </ScrollViewer>
             </TabItem>
 
+            <!-- TAB: SOURCES — running totals of jobs parsed per company & companies harvested per directory -->
+            <TabItem Header="Sources">
+                <Grid Margin="10,8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="12"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+
+                    <!-- COMPANIES -->
+                    <Grid Grid.Column="0">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+                        <TextBlock Grid.Row="0" Style="{StaticResource SectionHeader}" Margin="0,0,0,4" Text="Companies — active jobs parsed"/>
+                        <Border Grid.Row="1" BorderBrush="#DDD" BorderThickness="1" Background="White" CornerRadius="3">
+                            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="10,6">
+                                <ItemsControl ItemsSource="{Binding CompanySources}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate DataType="{x:Type vm:CompanySourceRow}">
+                                            <Grid Margin="0,2">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Grid.Column="0" Text="{Binding Name}" FontSize="11" Foreground="#444" TextTrimming="CharacterEllipsis"/>
+                                                <TextBlock Grid.Column="1" Text="{Binding JobsActive}" FontFamily="Consolas" FontSize="12" FontWeight="SemiBold" Margin="8,0,0,0"/>
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
+                        </Border>
+                    </Grid>
+
+                    <!-- DIRECTORIES -->
+                    <Grid Grid.Column="2">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+                        <TextBlock Grid.Row="0" Style="{StaticResource SectionHeader}" Margin="0,0,0,4" Text="Directories — companies harvested (all-time)"/>
+                        <Border Grid.Row="1" BorderBrush="#DDD" BorderThickness="1" Background="White" CornerRadius="3">
+                            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="10,6">
+                                <ItemsControl ItemsSource="{Binding DirectorySources}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate DataType="{x:Type vm:DirectorySourceRow}">
+                                            <Grid Margin="0,4">
+                                                <Grid.RowDefinitions>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="Auto"/>
+                                                </Grid.RowDefinitions>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Grid.Row="0" Grid.Column="0" Text="{Binding Name}"
+                                                           FontSize="11" FontWeight="SemiBold" Foreground="#333"
+                                                           TextTrimming="CharacterEllipsis" ToolTip="{Binding Url}">
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock">
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding IsEnabled}" Value="False">
+                                                                    <Setter Property="Foreground" Value="#AAA"/>
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                </TextBlock>
+                                                <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding CompaniesAdded}"
+                                                           FontFamily="Consolas" FontSize="13" FontWeight="SemiBold" Margin="8,0,0,0"/>
+                                                <TextBlock Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" Foreground="#999" FontSize="10">
+                                                    <Run Text="{Binding CandidatesFound, Mode=OneWay}"/>
+                                                    <Run Text=" candidates seen, "/>
+                                                    <Run Text="{Binding Runs, Mode=OneWay}"/>
+                                                    <Run Text=" crawl(s)"/>
+                                                </TextBlock>
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
+                        </Border>
+                    </Grid>
+                </Grid>
+            </TabItem>
+
             <!-- TAB 2: POSTINGS — active-postings-count line chart from date_first_seen/date_removed -->
             <TabItem Header="Postings">
                 <StackPanel Margin="10,8">

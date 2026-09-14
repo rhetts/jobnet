@@ -4,6 +4,7 @@ using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Media;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -23,6 +24,8 @@ public partial class StatsViewModel : ObservableObject
     private readonly ICompanyRepository _companies;
     private readonly IJobRepository _jobs;
     private readonly IJobProcessingQueueRepository _queue;
+    private readonly IDiscoverySeedRepository _seeds;
+    private readonly IDirectoryCrawlRepository _crawls;
     private readonly IAppPaths _paths;
 
     /// <summary>Nested VM that powers the "API usage" tab in the merged Stats window. Exposed
@@ -39,12 +42,15 @@ public partial class StatsViewModel : ObservableObject
     private string _logPath = "";
 
     public StatsViewModel(ICompanyRepository companies, IJobRepository jobs,
-                          IJobProcessingQueueRepository queue, ServiceLimitsViewModel apiUsage,
+                          IJobProcessingQueueRepository queue, IDiscoverySeedRepository seeds,
+                          IDirectoryCrawlRepository crawls, ServiceLimitsViewModel apiUsage,
                           IAppPaths paths)
     {
         _companies = companies;
         _jobs = jobs;
         _queue = queue;
+        _seeds = seeds;
+        _crawls = crawls;
         ApiUsage = apiUsage;
         _paths = paths;
         LogPath = Path.Combine(_paths.DataDirectory, "jobnet.log");
@@ -63,6 +69,13 @@ public partial class StatsViewModel : ObservableObject
 
     public ObservableCollection<ParserSystemRow> ParserSystems { get; } = new();
     public ObservableCollection<QueueRow> Queue { get; } = new();
+
+    /// <summary>Sources tab — every company with its current active-job count, sorted by count desc.</summary>
+    public ObservableCollection<CompanySourceRow> CompanySources { get; } = new();
+
+    /// <summary>Sources tab — every configured discovery_seeds directory with all-time crawl totals
+    /// (candidates seen / companies actually added), sorted by companies-added desc.</summary>
+    public ObservableCollection<DirectorySourceRow> DirectorySources { get; } = new();
 
     [ObservableProperty] private string _rescoreStatus = "";
 
@@ -100,6 +113,17 @@ public partial class StatsViewModel : ObservableObject
             ParserSystems.Add(row);
 
         BuildPostingHistory();
+
+        var jobCounts = _jobs.GetActiveCountsByCompany();
+        CompanySources.Clear();
+        foreach (var c in all
+            .OrderByDescending(c => jobCounts.GetValueOrDefault(c.Id, 0))
+            .ThenBy(c => c.Name, StringComparer.OrdinalIgnoreCase))
+        {
+            CompanySources.Add(new CompanySourceRow { Name = c.Name, JobsActive = jobCounts.GetValueOrDefault(c.Id, 0) });
+        }
+
+        BuildDirectorySources();
 
         Queue.Clear();
         foreach (var s in _queue.GetStats())
@@ -152,6 +176,47 @@ public partial class StatsViewModel : ObservableObject
         PostingHistoryStartLabel = startDay.ToString("MMM d");
         PostingHistoryEndLabel = endDay.ToString("MMM d");
         PostingHistoryCurrentLabel = $"{counts[^1]} active as of {endDay:MMM d}";
+    }
+
+    /// <summary>Joins configured discovery_seeds directories to their all-time crawl totals.
+    /// A single seed can produce multiple exact <c>directory_crawls.url</c> rows — paginated
+    /// sources record one row per "?page=N" — so totals are matched by normalized base URL
+    /// (scheme/www/query/trailing-slash stripped) rather than exact string equality.</summary>
+    private void BuildDirectorySources()
+    {
+        var seeds = _seeds.GetAll();
+        var totals = _crawls.GetTotalsByUrl();
+
+        DirectorySources.Clear();
+        foreach (var seed in seeds)
+        {
+            var baseKey = NormalizeUrlBase(seed.Url);
+            var matched = totals.Where(t => NormalizeUrlBase(t.Url).StartsWith(baseKey, StringComparison.Ordinal)).ToList();
+            DirectorySources.Add(new DirectorySourceRow
+            {
+                Name = seed.Name,
+                Url = seed.Url,
+                IsEnabled = seed.IsEnabled,
+                CandidatesFound = matched.Sum(t => t.CandidatesFound),
+                CompaniesAdded = matched.Sum(t => t.CandidatesAdded),
+                Runs = matched.Sum(t => t.Runs),
+            });
+        }
+
+        var ordered = DirectorySources.OrderByDescending(r => r.CompaniesAdded).ThenBy(r => r.Name, StringComparer.OrdinalIgnoreCase).ToList();
+        DirectorySources.Clear();
+        foreach (var row in ordered) DirectorySources.Add(row);
+    }
+
+    /// <summary>Strips scheme, leading "www.", trailing slash, and any query/fragment so the same
+    /// logical source (e.g. "https://www.foo.com/x/" and "http://foo.com/x?page=2") compares equal.</summary>
+    private static string NormalizeUrlBase(string url)
+    {
+        var u = Regex.Replace(url.Trim(), @"^https?://", "", RegexOptions.IgnoreCase);
+        if (u.StartsWith("www.", StringComparison.OrdinalIgnoreCase)) u = u[4..];
+        var cut = u.IndexOfAny(new[] { '?', '#' });
+        if (cut >= 0) u = u[..cut];
+        return u.TrimEnd('/').ToLowerInvariant();
     }
 
     private static string ReadLogTail(string path, int maxLines)
@@ -258,4 +323,20 @@ public sealed class QueueRow
     public required string TaskType { get; init; }
     public required string Status { get; init; }
     public required int Count { get; init; }
+}
+
+public sealed class CompanySourceRow
+{
+    public required string Name { get; init; }
+    public required int JobsActive { get; init; }
+}
+
+public sealed class DirectorySourceRow
+{
+    public required string Name { get; init; }
+    public required string Url { get; init; }
+    public required bool IsEnabled { get; init; }
+    public required int CandidatesFound { get; init; }
+    public required int CompaniesAdded { get; init; }
+    public required int Runs { get; init; }
 }
