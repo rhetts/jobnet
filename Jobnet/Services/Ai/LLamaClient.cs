@@ -40,6 +40,7 @@ public sealed class LLamaClient : IAiClient, IDisposable
     private LLamaWeights? _weights;
     private ModelParams? _loadedParams;
     private string? _loadedPath;
+    private bool _disposed;
 
     public LLamaClient(IConfigRepository config, IApiUsageTracker usage)
     {
@@ -323,6 +324,14 @@ public sealed class LLamaClient : IAiClient, IDisposable
     /// for the OS to reclaim on process exit rather than freed unsafely.</summary>
     public void Dispose()
     {
+        // App.OnExit disposes this explicitly (to free GPU memory deterministically before the
+        // window closes), then Host.Dispose() disposes every singleton in the container a second
+        // time — including this one. Without this guard the second call hits _inferenceGate.Wait()
+        // on an already-disposed SemaphoreSlim, throws ObjectDisposedException uncaught inside
+        // Host.Dispose(), and the process never actually terminates.
+        if (_disposed) return;
+        _disposed = true;
+
         var acquired = _inferenceGate.Wait(TimeSpan.FromSeconds(10));
         try
         {

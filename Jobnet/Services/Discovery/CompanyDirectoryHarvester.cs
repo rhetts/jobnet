@@ -185,7 +185,7 @@ public sealed class CompanyDirectoryHarvester : ICompanyDirectoryHarvester
                 if (seedId is int okSeedId)
                     _seeds.SetParserResult(okSeedId, customParser.Name, "ok", null, DateTime.UtcNow);
 
-                var sourceHostForParser = CanonicalDomain(fetch.FinalUrl);
+                var sourceHostForParser = DomainResolution.CanonicalDomain(fetch.FinalUrl);
                 await ProcessCandidatesAsync(
                     parsed.Select(p => new Candidate { Name = p.Name, Url = p.Url, City = p.City }).ToList(),
                     sourceType, sourceName, fetch.FinalUrl, sourceHostForParser,
@@ -204,7 +204,7 @@ public sealed class CompanyDirectoryHarvester : ICompanyDirectoryHarvester
         }
 
         var text = HtmlTextExtractor.Extract(fetch.Html, maxChars: 14_000);
-        var anchors = ExtractAnchors(fetch.Html, fetch.FinalUrl, max: 250);
+        var anchors = DomainResolution.ExtractAnchors(fetch.Html, fetch.FinalUrl, max: 250);
         // Track the maximum we saw across pages for diagnostics.
         if ((text?.Length ?? 0) > report.PageTextChars) report.PageTextChars = text?.Length ?? 0;
         if (anchors.Count > report.AnchorsFound) report.AnchorsFound = anchors.Count;
@@ -254,7 +254,7 @@ public sealed class CompanyDirectoryHarvester : ICompanyDirectoryHarvester
         report.CandidatesFound += candidates.Count;
         report.RawAiResponse = response.Text;
 
-        var sourceHost = CanonicalDomain(fetch.FinalUrl);
+        var sourceHost = DomainResolution.CanonicalDomain(fetch.FinalUrl);
         await ProcessCandidatesAsync(candidates, sourceType, sourceName, fetch.FinalUrl, sourceHost,
             report, existing, domainsThisRun, ct);
         return true;
@@ -282,7 +282,7 @@ public sealed class CompanyDirectoryHarvester : ICompanyDirectoryHarvester
                 continue;
             }
 
-            var rawDomain = CanonicalDomain(c.Url!);
+            var rawDomain = DomainResolution.CanonicalDomain(c.Url!);
             string domain;
             string? websiteUrl;
 
@@ -374,31 +374,11 @@ public sealed class CompanyDirectoryHarvester : ICompanyDirectoryHarvester
 
     /// <summary>Fetch a directory profile page via plain HTTP (no JS) and extract the first
     /// plausible outbound company-website anchor. ~10× faster than Playwright for the static
-    /// profile pages we typically resolve against — they don't need a browser render.</summary>
-    private async Task<string?> TryResolveExternalDomainAsync(string profileUrl, string sourceHost, CancellationToken ct)
-    {
-        try
-        {
-            using var resp = await _http.GetAsync(profileUrl, ct);
-            if (!resp.IsSuccessStatusCode) return null;
-            var html = await resp.Content.ReadAsStringAsync(ct);
-            if (string.IsNullOrEmpty(html)) return null;
-            var finalUrl = resp.RequestMessage?.RequestUri?.ToString() ?? profileUrl;
-
-            var anchors = ExtractAnchors(html, finalUrl, max: 80);
-            foreach (var (_, href) in anchors)
-            {
-                var d = CanonicalDomain(href);
-                if (string.IsNullOrEmpty(d)) continue;
-                if (d.Equals(sourceHost, StringComparison.OrdinalIgnoreCase)) continue;
-                // One call now covers what Blocked + SocialUtility used to do separately.
-                if (IsBlockedDomain(d)) continue;
-                return d;
-            }
-        }
-        catch { /* ignore — return null so caller skips this candidate */ }
-        return null;
-    }
+    /// profile pages we typically resolve against — they don't need a browser render. Shared
+    /// with <c>TNetJobBoardIngestor</c> via <see cref="DomainResolution"/> so both apply the
+    /// exact same resolution rules.</summary>
+    private Task<string?> TryResolveExternalDomainAsync(string profileUrl, string sourceHost, CancellationToken ct)
+        => DomainResolution.TryResolveExternalDomainAsync(_http, _filters, profileUrl, sourceHost, ct);
 
     private static List<Candidate> ParseCandidates(string responseText)
     {
@@ -431,57 +411,8 @@ public sealed class CompanyDirectoryHarvester : ICompanyDirectoryHarvester
         return list;
     }
 
-    private static string CanonicalDomain(string website)
-    {
-        try
-        {
-            var u = website.Contains("://", StringComparison.Ordinal) ? website : $"https://{website}";
-            var uri = new Uri(u);
-            var host = uri.Host.ToLowerInvariant();
-            if (host.StartsWith("www.", StringComparison.Ordinal)) host = host.Substring(4);
-            return host;
-        }
-        catch
-        {
-            return "";
-        }
-    }
-
     private static string? StrOrNull(JsonElement obj, string name) =>
         obj.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
-
-    private static readonly System.Text.RegularExpressions.Regex AnchorRe = new(
-        @"<a[^>]+href=[""'](?<href>[^""']+)[""'][^>]*>(?<text>.*?)</a>",
-        System.Text.RegularExpressions.RegexOptions.IgnoreCase
-        | System.Text.RegularExpressions.RegexOptions.Singleline
-        | System.Text.RegularExpressions.RegexOptions.Compiled);
-
-    private static readonly System.Text.RegularExpressions.Regex TagRe =
-        new(@"<[^>]+>", System.Text.RegularExpressions.RegexOptions.Compiled);
-    private static readonly System.Text.RegularExpressions.Regex WsRe =
-        new(@"\s+", System.Text.RegularExpressions.RegexOptions.Compiled);
-
-    private static List<(string Text, string Href)> ExtractAnchors(string html, string baseUrl, int max)
-    {
-        var list = new List<(string, string)>();
-        foreach (System.Text.RegularExpressions.Match m in AnchorRe.Matches(html))
-        {
-            var rawText = TagRe.Replace(m.Groups["text"].Value, " ");
-            var text = WsRe.Replace(System.Net.WebUtility.HtmlDecode(rawText), " ").Trim();
-            var href = m.Groups["href"].Value.Trim();
-            if (string.IsNullOrEmpty(href)) continue;
-            if (href.StartsWith("#") || href.StartsWith("mailto:") || href.StartsWith("tel:")) continue;
-            if (text.Length > 120) text = text.Substring(0, 120);
-            if (!Uri.IsWellFormedUriString(href, UriKind.Absolute))
-            {
-                if (Uri.TryCreate(new Uri(baseUrl), href, out var combined))
-                    href = combined.ToString();
-            }
-            list.Add((text, href));
-            if (list.Count >= max) break;
-        }
-        return list;
-    }
 
     private sealed class Candidate
     {

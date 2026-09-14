@@ -170,6 +170,16 @@ internal static class ServiceRegistration
             client.Timeout = TimeSpan.FromSeconds(15);
             client.DefaultRequestHeaders.UserAgent.ParseAdd("Jobnet/1.0");
         });
+        services.AddHttpClient<JobSources.RecruiteeJobSource>(client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(15);
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("Jobnet/1.0");
+        });
+        services.AddHttpClient<JobSources.AvatureJobSource>(client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(15);
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("Jobnet/1.0");
+        });
         services.AddSingleton<Parsing.SelectorProfileReplayer>();
         services.AddSingleton<Parsing.AiSelectorDeriver>();
         // Hand-written company parsers. Registration order = priority order — more-specific
@@ -183,6 +193,7 @@ internal static class ServiceRegistration
         services.AddSingleton<Parsing.HtmlPatternParsers.IHtmlPatternParser, Parsing.HtmlPatternParsers.CoveoParser>();
         services.AddSingleton<Parsing.HtmlPatternParsers.IHtmlPatternParser, Parsing.HtmlPatternParsers.RobertHalfParser>();
         services.AddSingleton<Parsing.HtmlPatternParsers.IHtmlPatternParser, Parsing.HtmlPatternParsers.AerotekParser>();
+        services.AddSingleton<Parsing.HtmlPatternParsers.IHtmlPatternParser, Parsing.HtmlPatternParsers.ShopifyParser>();
         services.AddSingleton<Parsing.HtmlPatternParsers.HtmlPatternRegistry>();
         services.AddSingleton<JobSources.AiFallbackJobSource>();
         services.AddSingleton<JobSources.IJobSource>(sp => sp.GetRequiredService<JobSources.GreenhouseJobSource>());
@@ -195,8 +206,14 @@ internal static class ServiceRegistration
         services.AddSingleton<JobSources.IJobSource>(sp => sp.GetRequiredService<JobSources.PinpointJobSource>());
         services.AddSingleton<JobSources.IJobSource>(sp => sp.GetRequiredService<JobSources.AmazonJobSource>());
         services.AddSingleton<JobSources.IJobSource>(sp => sp.GetRequiredService<JobSources.RisePeopleJobSource>());
+        services.AddSingleton<JobSources.IJobSource>(sp => sp.GetRequiredService<JobSources.RecruiteeJobSource>());
+        services.AddSingleton<JobSources.IJobSource>(sp => sp.GetRequiredService<JobSources.AvatureJobSource>());
         services.AddSingleton<JobSources.IJobSource>(sp => sp.GetRequiredService<JobSources.AiFallbackJobSource>());
         services.AddSingleton<JobSources.IJobRefresher, JobSources.JobRefresher>();
+
+        // Playwright-backed, not plain HttpClient — see TNetJobBoardIngestor's class doc for why
+        // (bctechnology.com's Cloudflare front blocks .NET's HttpClient regardless of headers).
+        services.AddSingleton<JobBoards.IJobBoardSource, JobBoards.TNetJobBoardIngestor>();
         services.AddHttpClient<JobSources.IJobDetailRefresher, JobSources.JobDetailRefresher>(client =>
         {
             client.Timeout = TimeSpan.FromSeconds(15);

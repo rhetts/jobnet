@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Threading;
 using Jobnet.Data;
@@ -219,10 +220,20 @@ public partial class App : Application
         // Stop the queue workers first — they may be mid-AI-call. The host gives them up to 5s
         // to drain, then signals cancellation and moves on. This must come before Host.StopAsync
         // because the workers depend on services owned by the host.
+        //
+        // Run on a thread-pool thread rather than awaiting directly on this (UI) thread: OnExit
+        // runs on the dispatcher thread, which has a DispatcherSynchronizationContext current.
+        // WorkerHost.StopAsync()'s own `await` (and everything it in turn awaits, several layers
+        // deep into the AI clients) captures that context by default and tries to resume back on
+        // it — but this thread is sitting right here blocked on the result, so that continuation
+        // can never run. StopAsync()'s internal 5s bound never gets a chance to matter because its
+        // *own task never completes* — this is what actually kept Jobnet.exe alive indefinitely
+        // after the main window closed, not any single slow operation. Task.Run has no captured
+        // context, so everything downstream resumes on the thread pool instead of deadlocking here.
         try
         {
-            Host.Services.GetService<Services.Workers.WorkerHost>()?.StopAsync()
-                .GetAwaiter().GetResult();
+            Task.Run(() => Host.Services.GetService<Services.Workers.WorkerHost>()?.StopAsync() ?? Task.CompletedTask)
+                .Wait(TimeSpan.FromSeconds(7));
         }
         catch (Exception ex) { LogException("OnExit.WorkerHostStop", ex); }
 
@@ -243,7 +254,10 @@ public partial class App : Application
         }
         catch (Exception ex) { LogException("OnExit.LLamaDispose", ex); }
 
-        Host.StopAsync(TimeSpan.FromSeconds(2)).GetAwaiter().GetResult();
+        // Same sync-over-async deadlock risk as the WorkerHost stop above — escape the captured
+        // dispatcher context via Task.Run rather than awaiting directly on this thread.
+        try { Task.Run(() => Host.StopAsync(TimeSpan.FromSeconds(2))).Wait(TimeSpan.FromSeconds(5)); }
+        catch (Exception ex) { LogException("OnExit.HostStopAsync", ex); }
         Host.Dispose();
         base.OnExit(e);
     }
