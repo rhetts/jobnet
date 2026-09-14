@@ -6,6 +6,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Jobnet.Data.Repositories;
 using Jobnet.Models;
+using Jobnet.Services.Discovery.DirectoryPatternParsers;
 using Jobnet.Services.Parsing.HtmlPatternParsers;
 
 namespace Jobnet.ViewModels;
@@ -19,9 +20,19 @@ public partial class ParserReportViewModel : ObservableObject
 {
     private readonly ICompanyRepository _companies;
     private readonly HtmlPatternRegistry _parserRegistry;
+    private readonly IDiscoverySeedRepository _seeds;
+    private readonly DirectoryPatternRegistry _directoryParserRegistry;
 
     public ObservableCollection<ParserReportRow> AllRows { get; } = new();
     public ObservableCollection<ParserReportRow> Rows { get; } = new();
+
+    /// <summary>Directories (discovery_seeds) with their custom-parser status, if any. Separate
+    /// from the company rows above since a directory harvest and a company job-refresh are
+    /// different pipelines with different parser registries.</summary>
+    public ObservableCollection<DirectoryParserReportRow> DirectoryRows { get; } = new();
+
+    /// <summary>Comma-separated list of hand-written directory parsers registered in DI.</summary>
+    public string RegisteredDirectoryParsersDisplay { get; }
 
     /// <summary>Filter chip — "(any)" shows everything, the rest match ParserSystem strings.</summary>
     public IReadOnlyList<string> SystemFilters { get; } =
@@ -38,13 +49,19 @@ public partial class ParserReportViewModel : ObservableObject
     [ObservableProperty] private string _selectedStatus = "(any)";
     [ObservableProperty] private string _summary = "";
 
-    public ParserReportViewModel(ICompanyRepository companies, HtmlPatternRegistry parserRegistry)
+    public ParserReportViewModel(ICompanyRepository companies, HtmlPatternRegistry parserRegistry,
+                                  IDiscoverySeedRepository seeds, DirectoryPatternRegistry directoryParserRegistry)
     {
         _companies = companies;
         _parserRegistry = parserRegistry;
+        _seeds = seeds;
+        _directoryParserRegistry = directoryParserRegistry;
         RegisteredParsersDisplay = _parserRegistry.Names.Count == 0
             ? "(none registered)"
             : string.Join(", ", _parserRegistry.Names);
+        RegisteredDirectoryParsersDisplay = _directoryParserRegistry.Names.Count == 0
+            ? "(none registered)"
+            : string.Join(", ", _directoryParserRegistry.Names);
         Refresh();
     }
 
@@ -54,6 +71,10 @@ public partial class ParserReportViewModel : ObservableObject
         AllRows.Clear();
         foreach (var c in _companies.GetAll())
             AllRows.Add(new ParserReportRow(c));
+
+        DirectoryRows.Clear();
+        foreach (var s in _seeds.GetAll())
+            DirectoryRows.Add(new DirectoryParserReportRow(s));
 
         ApplyFilters();
     }
@@ -172,5 +193,51 @@ public sealed class ParserReportRow
             : "—";
 
         LastError = c.ParserStrategyLastError;
+    }
+}
+
+/// <summary>One row in the Parser Report's Directories section. Built once from a
+/// <see cref="DiscoverySeed"/> snapshot, same replace-wholesale-on-Refresh convention as
+/// <see cref="ParserReportRow"/>.</summary>
+public sealed class DirectoryParserReportRow
+{
+    public int Id { get; }
+    public string Name { get; }
+    public string Url { get; }
+    public string Parser { get; }
+    public string StatusBadge { get; }
+    public string StatusBrush { get; }
+    public string LastResultDisplay { get; }
+    public string? LastError { get; }
+
+    public DirectoryParserReportRow(DiscoverySeed s)
+    {
+        Id = s.Id;
+        Name = s.Name;
+        Url = s.Url;
+
+        if (string.IsNullOrWhiteSpace(s.CustomParserName))
+        {
+            Parser = "(none)";
+            StatusBadge = "AI extract";
+            StatusBrush = "#1976D2";
+        }
+        else
+        {
+            Parser = s.CustomParserName!;
+            StatusBadge = s.CustomParserLastResult switch
+            {
+                "ok" => "ok",
+                "error" => "error",
+                _ => "ok",
+            };
+            StatusBrush = StatusBadge == "error" ? "#C44" : "#2A8F4F";
+        }
+
+        LastResultDisplay = s.CustomParserLastResultAt is { } r
+            ? $"{s.CustomParserLastResult ?? "—"} ({r.ToLocalTime():yyyy-MM-dd HH:mm})"
+            : "—";
+
+        LastError = s.CustomParserLastError;
     }
 }

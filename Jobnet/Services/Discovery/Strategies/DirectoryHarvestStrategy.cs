@@ -10,6 +10,7 @@ public sealed class DirectoryHarvestStrategy : IDiscoveryStrategy
     private readonly string _url;
     private readonly string _sourceType;
     private readonly int _maxPages;
+    private readonly int? _seedId;
 
     public string Name { get; }
     public string Description { get; }
@@ -17,7 +18,8 @@ public sealed class DirectoryHarvestStrategy : IDiscoveryStrategy
     public DirectoryHarvestStrategy(string name, string description, string url,
                                      ICompanyDirectoryHarvester harvester,
                                      string sourceType = "directory",
-                                     int maxPages = 1)
+                                     int maxPages = 1,
+                                     int? seedId = null)
     {
         Name = name;
         Description = description;
@@ -25,11 +27,12 @@ public sealed class DirectoryHarvestStrategy : IDiscoveryStrategy
         _harvester = harvester;
         _sourceType = sourceType;
         _maxPages = maxPages;
+        _seedId = seedId;
     }
 
     public async Task<StrategyReport> RunAsync(CancellationToken ct = default)
     {
-        var r = await _harvester.HarvestAsync(_url, Name, _sourceType, _maxPages, ct);
+        var r = await _harvester.HarvestAsync(_url, Name, _sourceType, _maxPages, ct, _seedId);
         var rep = new StrategyReport
         {
             CandidatesExamined = r.CandidatesFound,

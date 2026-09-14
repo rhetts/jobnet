@@ -7,6 +7,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
 using Jobnet.Services.JobSources;
+using Jobnet.Services.JobBoards;
 using Jobnet.Services.Classification;
 using Jobnet.Services.Discovery;
 using Jobnet.Services.Discovery.Strategies;
@@ -112,10 +113,17 @@ public partial class RefreshViewModel : ObservableObject
     /// but it never discovers an ATS for a company that doesn't have one yet.</summary>
     [ObservableProperty] private bool _discoverJobsNativeOnly;
 
+    /// <summary>Extra phase of the "Discover jobs" step: also pull postings straight from
+    /// multi-employer job-board feeds (e.g. T-Net/BC Technology), resolving or creating the
+    /// posting company as needed. Independent of <see cref="DiscoverJobsNativeOnly"/> — it never
+    /// touches the per-company ATS/careers sweep at all.</summary>
+    [ObservableProperty] private bool _includeJobBoards;
+
     private readonly IConfigRepository _configRepo;
     private readonly ICompanyRepository _companiesRepo;
     private readonly Jobnet.Services.Profiling.ICompanyProfiler _profiler;
     private readonly IJobRefresher _refresher;
+    private readonly IJobBoardSource _jobBoardSource;
     private readonly IJobDetailRefresher _detailRefresher;
     private readonly IJobSummarizer _summarizer;
     private readonly IJobReclassifier _reclassifier;
@@ -148,7 +156,7 @@ public partial class RefreshViewModel : ObservableObject
 
     public RefreshViewModel(IDiscoveryService discovery, ICompanyDirectoryHarvester harvester,
                              IDiscoveryStrategyProvider strategyProvider,
-                             IJobRefresher refresher,
+                             IJobRefresher refresher, IJobBoardSource jobBoardSource,
                              IJobDetailRefresher detailRefresher, IJobSummarizer summarizer,
                              IJobReclassifier reclassifier, IJobRepository jobs,
                              IResumeMatcher resume,
@@ -163,6 +171,7 @@ public partial class RefreshViewModel : ObservableObject
         _harvester = harvester;
         _strategyProvider = strategyProvider;
         _refresher = refresher;
+        _jobBoardSource = jobBoardSource;
         _detailRefresher = detailRefresher;
         _summarizer = summarizer;
         _reclassifier = reclassifier;
@@ -206,6 +215,7 @@ public partial class RefreshViewModel : ObservableObject
         _doDiscoverJobs        = _configRepo.GetOrDefault("ui_maint_discover_jobs",        "true")  == "true";
         _doRefreshExisting     = _configRepo.GetOrDefault("ui_maint_refresh_existing",     "false") == "true";
         _discoverJobsNativeOnly= _configRepo.GetOrDefault("ui_maint_discover_jobs_native_only", "false") == "true";
+        _includeJobBoards     = _configRepo.GetOrDefault("ui_maint_discover_jobs_include_boards", "false") == "true";
 
         RefreshLastRunTimes();
     }
@@ -396,6 +406,11 @@ public partial class RefreshViewModel : ObservableObject
     {
         // Modifier, not a step — it doesn't affect CanRunMaintenance.
         _configRepo?.Set("ui_maint_discover_jobs_native_only", value ? "true" : "false");
+    }
+    partial void OnIncludeJobBoardsChanged(bool value)
+    {
+        // Modifier, not a step — it doesn't affect CanRunMaintenance.
+        _configRepo?.Set("ui_maint_discover_jobs_include_boards", value ? "true" : "false");
     }
 
     /// <summary>Run every checked maintenance step in order. Each step manages its own run_log row;
@@ -654,12 +669,44 @@ public partial class RefreshViewModel : ObservableObject
                          (r.CompaniesSkippedRecent > 0 ? $"{r.CompaniesSkippedRecent} skipped (recent), " : "") +
                          $"{r.JobsAdded} added, {r.JobsUpdated} updated, {r.JobsRemoved} marked removed."
                          + (r.Errors.Count > 0 ? $"  First error: {r.Errors[0]}" : "");
-            _runs.FinishRun(runId, r.Errors.Count == 0 ? "completed" : "partial",
-                examined: r.CompaniesProcessed, added: r.JobsAdded, updated: r.JobsUpdated,
+
+            var boardsAdded = 0; var boardsUpdated = 0; var boardsErrors = 0;
+            if (IncludeJobBoards && !ct.IsCancellationRequested)
+            {
+                StatusText = $"{_jobBoardSource.Name}: pulling postings from job-board feeds...";
+                var stepId = _runs.StartStep(runId, _jobBoardSource.Name);
+                try
+                {
+                    var br = await Task.Run(() => _jobBoardSource.IngestAsync(ct), ct).ConfigureAwait(true);
+                    boardsAdded = br.JobsAdded; boardsUpdated = br.JobsUpdated; boardsErrors = br.Errors.Count;
+                    _runs.FinishStep(stepId, status: br.Errors.Count == 0 ? "completed" : "partial",
+                        examined: br.RowsExamined, added: br.JobsAdded, updated: br.JobsUpdated,
+                        failed: br.Errors.Count,
+                        errorMessage: br.Errors.Count == 0 ? null : string.Join(" | ", br.Errors.Take(3)));
+                    StatusText += $"  Boards: {br.CompaniesCreated} companies added, " +
+                                  $"{br.JobsAdded} jobs added, {br.JobsUpdated} updated" +
+                                  (br.SkippedUnmatchedCompany > 0 ? $", {br.SkippedUnmatchedCompany} unmatched" : "") +
+                                  (br.Errors.Count > 0 ? $"  First error: {br.Errors[0]}" : "");
+                }
+                catch (OperationCanceledException)
+                {
+                    _runs.FinishStep(stepId, status: "cancelled");
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    boardsErrors = 1;
+                    _runs.FinishStep(stepId, status: "failed", errorMessage: $"{ex.GetType().Name}: {ex.Message}");
+                    StatusText += $"  Boards failed: {ex.GetType().Name}: {ex.Message}";
+                }
+            }
+
+            _runs.FinishRun(runId, (r.Errors.Count + boardsErrors) == 0 ? "completed" : "partial",
+                examined: r.CompaniesProcessed, added: r.JobsAdded + boardsAdded, updated: r.JobsUpdated + boardsUpdated,
                 // Both skip reasons roll into the one run_log column — the scope string
                 // ("...+native-only") is what tells them apart after the fact.
                 skipped: r.CompaniesSkippedRecent + r.CompaniesSkippedNonNative,
-                failed: r.JobsRemoved, errorCount: r.Errors.Count,
+                failed: r.JobsRemoved, errorCount: r.Errors.Count + boardsErrors,
                 notes: r.Errors.Count == 0 ? null : string.Join(" | ", r.Errors.Take(5)));
             Completed?.Invoke();
         }

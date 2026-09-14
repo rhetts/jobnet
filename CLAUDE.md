@@ -41,6 +41,16 @@ an authorship boundary and must not be described as one.
   in filename order by `MigrationRunner` and tracked in `schema_migrations`. Use
   `INSERT OR IGNORE` for new config keys so user edits are never clobbered.
 
+## The CLI is for the agent, not the user
+
+The user only ever interacts with this app through the GUI. `Jobnet.exe <command>`
+is a diagnostic/automation surface for Claude sessions to inspect and fix the DB
+directly — never propose a CLI command as something the user should run, and
+never design a new feature as "add a CLI command" when the user actually wants
+it available from the GUI. If a new capability is meant for the user, it needs a
+button/checkbox in the relevant window (Refresh/Discover, Filters, etc.), not
+just a `Cli/Commands/*Command.cs` entry.
+
 ## Build
 
 - The running app locks `bin\Debug\net8.0-windows\Jobnet.exe`. Compilation still

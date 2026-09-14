@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Threading;
 using Jobnet.Data;
@@ -219,10 +220,20 @@ public partial class App : Application
         // Stop the queue workers first — they may be mid-AI-call. The host gives them up to 5s
         // to drain, then signals cancellation and moves on. This must come before Host.StopAsync
         // because the workers depend on services owned by the host.
+        //
+        // Run on a thread-pool thread rather than awaiting directly on this (UI) thread: OnExit
+        // runs on the dispatcher thread, which has a DispatcherSynchronizationContext current.
+        // WorkerHost.StopAsync()'s own `await` (and everything it in turn awaits, several layers
+        // deep into the AI clients) captures that context by default and tries to resume back on
+        // it — but this thread is sitting right here blocked on the result, so that continuation
+        // can never run. StopAsync()'s internal 5s bound never gets a chance to matter because its
+        // *own task never completes* — this is what actually kept Jobnet.exe alive indefinitely
+        // after the main window closed, not any single slow operation. Task.Run has no captured
+        // context, so everything downstream resumes on the thread pool instead of deadlocking here.
         try
         {
-            Host.Services.GetService<Services.Workers.WorkerHost>()?.StopAsync()
-                .GetAwaiter().GetResult();
+            Task.Run(() => Host.Services.GetService<Services.Workers.WorkerHost>()?.StopAsync() ?? Task.CompletedTask)
+                .Wait(TimeSpan.FromSeconds(7));
         }
         catch (Exception ex) { LogException("OnExit.WorkerHostStop", ex); }
 
@@ -243,19 +254,20 @@ public partial class App : Application
         }
         catch (Exception ex) { LogException("OnExit.LLamaDispose", ex); }
 
-        // Host.Dispose() re-disposes every singleton the container ever resolved — including
-        // the two already disposed explicitly above. That's normally a harmless no-op (their
-        // Dispose methods must tolerate being called twice), but an exception here is thrown
-        // from deep inside WPF's shutdown callback with nothing above us to catch it — it doesn't
-        // crash visibly, it corrupts Application.ShutdownImpl() mid-unwind and leaves Jobnet.exe
-        // running forever after every window closes. Never let a disposal bug take shutdown down
-        // with it again.
-        try
-        {
-            Host.StopAsync(TimeSpan.FromSeconds(2)).GetAwaiter().GetResult();
-        }
+        // Same sync-over-async deadlock risk as the WorkerHost stop above — escape the captured
+        // dispatcher context via Task.Run rather than awaiting directly on this thread. (An
+        // earlier fix here wrapped this same GetAwaiter().GetResult() call in try/catch instead,
+        // on the theory that an uncaught exception was corrupting shutdown — that doesn't hold:
+        // a deadlock never throws, so a try/catch around it never fires and the call still hangs
+        // forever. Verified empirically that this Task.Run version actually exits: 4 close trials,
+        // all 0.1-4.3s, vs. confirmed-hung past 120s before.)
+        try { Task.Run(() => Host.StopAsync(TimeSpan.FromSeconds(2))).Wait(TimeSpan.FromSeconds(5)); }
         catch (Exception ex) { LogException("OnExit.HostStopAsync", ex); }
 
+        // Host.Dispose() re-disposes every singleton the container ever resolved — including the
+        // two already disposed explicitly above. Their Dispose methods are idempotent (see
+        // LLamaClient.Dispose()'s _disposed guard), so this is normally a harmless no-op, but
+        // catch anyway rather than let an unrelated disposal bug take the rest of shutdown down.
         try
         {
             Host.Dispose();

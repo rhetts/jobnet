@@ -131,6 +131,12 @@
                                   IsEnabled="{Binding DoDiscoverJobs}"
                                   FontSize="11" Foreground="#555"
                                   ToolTip="Visit only companies already pinned to an ATS with a native adapter (Greenhouse, Lever, Ashby, BambooHR, Workday, Workable, SmartRecruiters, Pinpoint, Rise People, Amazon).&#x0a;Skips ATS detection and the Playwright + AI-extract tail entirely — minutes instead of hours, and no AI quota burn.&#x0a;Trade-off: companies without a pinned ATS are never scanned, so no new ATS gets discovered."/>
+                        <CheckBox Margin="20,4,0,0"
+                                  Content="Include job boards — pull postings from multi-employer feeds (BC Technology / T-Net)"
+                                  IsChecked="{Binding IncludeJobBoards}"
+                                  IsEnabled="{Binding DoDiscoverJobs}"
+                                  FontSize="11" Foreground="#555"
+                                  ToolTip="Also ingests postings directly from job-board pages that list many employers at once, instead of only visiting each company's own careers page.&#x0a;Resolves each posting's employer against known companies, or creates a new one when it can find that employer's real website.&#x0a;Vancouver-area postings only."/>
                         <Grid Margin="0,4,0,0">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*"/>
