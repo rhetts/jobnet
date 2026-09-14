@@ -38,7 +38,8 @@ public sealed class DiscoveryStrategyProvider : IDiscoveryStrategyProvider
                 s.Url,
                 _harvester,
                 sourceType: "directory",
-                maxPages: s.MaxPages)).ToList();
+                maxPages: s.MaxPages,
+                seedId: s.Id)).ToList();
     }
 
     public IReadOnlyList<IDiscoveryStrategy> GetBoardStrategies()

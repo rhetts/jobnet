@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using Jobnet.Models;
 
@@ -11,4 +12,9 @@ public interface IDiscoverySeedRepository
     void Update(int id, string name, string url, string? description, bool isEnabled, int sortOrder, int maxPages = 1);
     void Delete(int id);
     void SetEnabled(int id, bool isEnabled);
+
+    /// <summary>Records the outcome of a custom <c>IDirectoryPatternParser</c> attempt for this
+    /// seed. <paramref name="result"/> is "ok" or "error"; <paramref name="error"/> should be
+    /// null on success (clears any previously recorded error).</summary>
+    void SetParserResult(int id, string parserName, string result, string? error, DateTime whenUtc);
 }

@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using Jobnet.Data.Repositories;
 using Jobnet.Models;
 using Jobnet.Services.Ai;
+using Jobnet.Services.Discovery.DirectoryPatternParsers;
 using Jobnet.Services.Playwright;
 using Jobnet.Services.Profiling;
 
@@ -14,8 +15,12 @@ namespace Jobnet.Services.Discovery;
 
 public interface ICompanyDirectoryHarvester
 {
+    /// <summary><paramref name="seedId"/> is the owning <c>discovery_seeds</c> row id, when this
+    /// harvest was triggered from a configured seed rather than an ad-hoc CLI URL — pass it so a
+    /// custom-parser success/failure gets recorded on that row and shows up on the Parser Report
+    /// screen. Null for ad-hoc harvests (e.g. <c>harvest-directory</c> CLI, aggregator boards).</summary>
     Task<HarvestReport> HarvestAsync(string url, string sourceName = "(custom)", string sourceType = "directory",
-                                       int maxPages = 1, CancellationToken ct = default);
+                                       int maxPages = 1, CancellationToken ct = default, int? seedId = null);
 }
 
 public sealed class HarvestReport
@@ -44,6 +49,8 @@ public sealed class CompanyDirectoryHarvester : ICompanyDirectoryHarvester
     private readonly ICompanyRepository _companies;
     private readonly ICompanyDiscoveryRepository _sightings;
     private readonly IDirectoryCrawlRepository _crawls;
+    private readonly IDiscoverySeedRepository _seeds;
+    private readonly DirectoryPatternRegistry _directoryParsers;
     private readonly IConfigRepository _config;
     private readonly System.Net.Http.HttpClient _http;
     private readonly Filters.FilterRuleProvider _filters;
@@ -52,6 +59,8 @@ public sealed class CompanyDirectoryHarvester : ICompanyDirectoryHarvester
                                        ICompanyRepository companies,
                                        ICompanyDiscoveryRepository sightings,
                                        IDirectoryCrawlRepository crawls,
+                                       IDiscoverySeedRepository seeds,
+                                       DirectoryPatternRegistry directoryParsers,
                                        IConfigRepository config,
                                        Filters.FilterRuleProvider filters,
                                        System.Net.Http.HttpClient http)
@@ -61,6 +70,8 @@ public sealed class CompanyDirectoryHarvester : ICompanyDirectoryHarvester
         _companies = companies;
         _sightings = sightings;
         _crawls = crawls;
+        _seeds = seeds;
+        _directoryParsers = directoryParsers;
         _config = config;
         _filters = filters;
         _http = http;
@@ -73,15 +84,14 @@ public sealed class CompanyDirectoryHarvester : ICompanyDirectoryHarvester
 
     public async Task<HarvestReport> HarvestAsync(string url, string sourceName = "(custom)",
                                                    string sourceType = "directory",
-                                                   int maxPages = 1, CancellationToken ct = default)
+                                                   int maxPages = 1, CancellationToken ct = default,
+                                                   int? seedId = null)
     {
         var report = new HarvestReport { SourceUrl = url };
 
-        if (!_ai.IsConfigured)
-        {
-            report.Errors.Add("AI provider not configured.");
-            return report;
-        }
+        // A custom parser can fully serve a page with no AI involved at all, so this check can't
+        // gate the whole harvest the way it used to — it only matters once we actually need AI
+        // (no custom parser matched, or one matched but threw). Moved into HarvestSinglePageAsync.
 
         // Shared state across pages so cross-page dedup works.
         var existing = _companies.GetAll().Select(c => c.Domain).ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -113,7 +123,7 @@ public sealed class CompanyDirectoryHarvester : ICompanyDirectoryHarvester
             var sw = System.Diagnostics.Stopwatch.StartNew();
 
             var pageOk = await HarvestSinglePageAsync(pageUrl, sourceName, sourceType,
-                                                       report, existing, domainsThisRun, ct);
+                                                       report, existing, domainsThisRun, seedId, ct);
 
             sw.Stop();
             var pageCands = report.CandidatesFound - beforeCands;
@@ -141,6 +151,7 @@ public sealed class CompanyDirectoryHarvester : ICompanyDirectoryHarvester
                                                      HarvestReport report,
                                                      HashSet<string> existing,
                                                      HashSet<string> domainsThisRun,
+                                                     int? seedId,
                                                      CancellationToken ct)
     {
         PlaywrightFetchResult fetch;
@@ -157,6 +168,39 @@ public sealed class CompanyDirectoryHarvester : ICompanyDirectoryHarvester
         {
             report.Errors.Add($"[{url}] Page fetch failed: {fetch.Error ?? "(empty)"}");
             return false;
+        }
+
+        // Try a hand-written parser before ever touching AI. A match that succeeds serves the
+        // page entirely deterministically, for free. A match that throws is a real break (the
+        // site's template changed) — log it clearly, record it on the owning seed so it surfaces
+        // on the Parser Report screen, and fall through to AI so the crawl still produces
+        // something instead of just failing outright.
+        var customParser = _directoryParsers.ResolveFor(url, fetch.Html);
+        if (customParser is not null)
+        {
+            try
+            {
+                var parsed = customParser.Parse(fetch.Html, fetch.FinalUrl);
+                report.CandidatesFound += parsed.Count;
+                if (seedId is int okSeedId)
+                    _seeds.SetParserResult(okSeedId, customParser.Name, "ok", null, DateTime.UtcNow);
+
+                var sourceHostForParser = CanonicalDomain(fetch.FinalUrl);
+                await ProcessCandidatesAsync(
+                    parsed.Select(p => new Candidate { Name = p.Name, Url = p.Url, City = p.City }).ToList(),
+                    sourceType, sourceName, fetch.FinalUrl, sourceHostForParser,
+                    report, existing, domainsThisRun, ct);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                DirectoryParserLogger.LogFailure(customParser.Name, sourceName, url, ex);
+                report.Errors.Add($"[{url}] Custom parser '{customParser.Name}' failed: {ex.GetType().Name}: {ex.Message} — falling back to AI.");
+                if (seedId is int errSeedId)
+                    _seeds.SetParserResult(errSeedId, customParser.Name, "error",
+                        $"{ex.GetType().Name}: {ex.Message}", DateTime.UtcNow);
+                // Fall through to the AI path below.
+            }
         }
 
         var text = HtmlTextExtractor.Extract(fetch.Html, maxChars: 14_000);
@@ -211,17 +255,30 @@ public sealed class CompanyDirectoryHarvester : ICompanyDirectoryHarvester
         report.RawAiResponse = response.Text;
 
         var sourceHost = CanonicalDomain(fetch.FinalUrl);
+        await ProcessCandidatesAsync(candidates, sourceType, sourceName, fetch.FinalUrl, sourceHost,
+            report, existing, domainsThisRun, ct);
+        return true;
+    }
 
+    /// <summary>Dedup/filter/insert logic shared by both the custom-parser path and the AI path —
+    /// same candidates in, same rules applied, regardless of which extractor produced them.</summary>
+    private async Task ProcessCandidatesAsync(IReadOnlyList<Candidate> candidates, string sourceType,
+                                               string sourceName, string finalUrl, string sourceHost,
+                                               HarvestReport report, HashSet<string> existing,
+                                               HashSet<string> domainsThisRun, CancellationToken ct)
+    {
         foreach (var c in candidates)
         {
             if (string.IsNullOrWhiteSpace(c.Name))
             {
                 report.CompaniesSkippedFiltered++;
+                report.Errors.Add("[filtered] (unnamed candidate) — no name");
                 continue;
             }
             if (string.IsNullOrWhiteSpace(c.Url))
             {
                 report.CompaniesSkippedFiltered++;
+                report.Errors.Add($"[filtered] {c.Name} — no url");
                 continue;
             }
 
@@ -232,6 +289,7 @@ public sealed class CompanyDirectoryHarvester : ICompanyDirectoryHarvester
             if (string.IsNullOrEmpty(rawDomain))
             {
                 report.CompaniesSkippedFiltered++;
+                report.Errors.Add($"[filtered] {c.Name} — unparseable url: {c.Url}");
                 continue;
             }
 
@@ -241,6 +299,7 @@ public sealed class CompanyDirectoryHarvester : ICompanyDirectoryHarvester
                 if (string.IsNullOrEmpty(resolved))
                 {
                     report.CompaniesSkippedFiltered++;
+                    report.Errors.Add($"[filtered] {c.Name} — profile page {c.Url} on source host, no external link resolved");
                     continue;
                 }
                 domain = resolved;
@@ -255,6 +314,7 @@ public sealed class CompanyDirectoryHarvester : ICompanyDirectoryHarvester
             if (IsBlockedDomain(domain))
             {
                 report.CompaniesSkippedFiltered++;
+                report.Errors.Add($"[filtered] {c.Name} ({domain}) — blocked by filter rule");
                 continue;
             }
 
@@ -262,7 +322,7 @@ public sealed class CompanyDirectoryHarvester : ICompanyDirectoryHarvester
             {
                 var existingId = _companies.GetByDomain(domain)?.Id ?? 0;
                 if (existingId > 0)
-                    _sightings.Record(existingId, sourceType, sourceName, fetch.FinalUrl, runId: null);
+                    _sightings.Record(existingId, sourceType, sourceName, finalUrl, runId: null);
                 report.CompaniesSkippedExisting++;
                 continue;
             }
@@ -279,15 +339,14 @@ public sealed class CompanyDirectoryHarvester : ICompanyDirectoryHarvester
                 Domain = domain,
                 WebsiteUrl = websiteUrl,
                 City = string.IsNullOrWhiteSpace(c.City) ? null : c.City.Trim(),
-                Notes = $"Harvested from {fetch.FinalUrl}",
+                Notes = $"Harvested from {finalUrl}",
                 DateDiscovered = DateTime.UtcNow,
             };
             var newId = _companies.Insert(company);
             existing.Add(domain);
-            _sightings.Record(newId, sourceType, sourceName, fetch.FinalUrl, runId: null);
+            _sightings.Record(newId, sourceType, sourceName, finalUrl, runId: null);
             report.CompaniesAdded++;
         }
-        return true;
     }
 
     /// <summary>Build the URL for page N.

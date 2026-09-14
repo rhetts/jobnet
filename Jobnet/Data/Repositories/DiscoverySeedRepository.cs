@@ -13,7 +13,11 @@ public sealed class DiscoverySeedRepository : IDiscoverySeedRepository
                is_enabled AS IsEnabled,
                sort_order AS SortOrder,
                max_pages  AS MaxPages,
-               date_added AS DateAdded
+               date_added AS DateAdded,
+               custom_parser_name AS CustomParserName,
+               custom_parser_last_result AS CustomParserLastResult,
+               custom_parser_last_error AS CustomParserLastError,
+               custom_parser_last_result_at AS CustomParserLastResultAt
         FROM discovery_seeds";
 
     private readonly IDbConnectionFactory _connections;
@@ -75,6 +79,19 @@ public sealed class DiscoverySeedRepository : IDiscoverySeedRepository
             new { id, v = isEnabled ? 1 : 0 });
     }
 
+    public void SetParserResult(int id, string parserName, string result, string? error, DateTime whenUtc)
+    {
+        using var conn = _connections.Open();
+        conn.Execute(@"
+            UPDATE discovery_seeds SET
+                custom_parser_name = @parserName,
+                custom_parser_last_result = @result,
+                custom_parser_last_error = @error,
+                custom_parser_last_result_at = @when
+            WHERE id = @id",
+            new { id, parserName, result, error, when = whenUtc.ToString("o") });
+    }
+
     private static DiscoverySeed Map(SeedRow r) => new()
     {
         Id = r.Id,
@@ -85,6 +102,11 @@ public sealed class DiscoverySeedRepository : IDiscoverySeedRepository
         SortOrder = r.SortOrder,
         MaxPages = r.MaxPages <= 0 ? 1 : r.MaxPages,
         DateAdded = string.IsNullOrEmpty(r.DateAdded) ? DateTime.MinValue : DateTime.Parse(r.DateAdded).ToUniversalTime(),
+        CustomParserName = r.CustomParserName,
+        CustomParserLastResult = r.CustomParserLastResult,
+        CustomParserLastError = r.CustomParserLastError,
+        CustomParserLastResultAt = string.IsNullOrEmpty(r.CustomParserLastResultAt)
+            ? null : DateTime.Parse(r.CustomParserLastResultAt).ToUniversalTime(),
     };
 
     private sealed class SeedRow
@@ -97,5 +119,9 @@ public sealed class DiscoverySeedRepository : IDiscoverySeedRepository
         public int SortOrder { get; set; }
         public int MaxPages { get; set; } = 1;
         public string? DateAdded { get; set; }
+        public string? CustomParserName { get; set; }
+        public string? CustomParserLastResult { get; set; }
+        public string? CustomParserLastError { get; set; }
+        public string? CustomParserLastResultAt { get; set; }
     }
 }
