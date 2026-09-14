@@ -380,12 +380,14 @@
                         <TextBlock Style="{StaticResource FieldLabel}" Text="Groq API key"/>
                         <TextBox Text="{Binding GroqApiKey, UpdateSourceTrigger=PropertyChanged}"/>
                         <TextBlock Style="{StaticResource HintText}"
-                                   Text="Free key at https://console.groq.com — free tier: 30 RPM, ~1K RPD for llama-3.3-70b-versatile. No credit card."/>
+                                   Text="Free key at https://console.groq.com — free tier: 30 RPM, ~1K RPD. No credit card."/>
 
                         <TextBlock Style="{StaticResource FieldLabel}" Text="Groq model"/>
-                        <TextBox Text="{Binding GroqModel, UpdateSourceTrigger=PropertyChanged}"/>
-                        <TextBlock Style="{StaticResource HintText}"
-                                   Text="Default: llama-3.3-70b-versatile (most capable). For higher RPD try llama-3.1-8b-instant."/>
+                        <ComboBox IsEditable="True"
+                                  ItemsSource="{Binding GroqModels}"
+                                  Text="{Binding GroqModel, UpdateSourceTrigger=PropertyChanged}"/>
+                        <TextBlock Style="{StaticResource HintText}" TextWrapping="Wrap"
+                                   Text="Groq retires model ids without redirects — llama-3.3-70b-versatile 404s as of 2026-09. Default: openai/gpt-oss-120b (most capable of what's currently live). Pick from the list or type an id Groq added since; check https://console.groq.com/docs/models if unsure what's current."/>
 
                         <TextBlock Style="{StaticResource FieldLabel}" Text="Claude API key"/>
                         <TextBox Text="{Binding ClaudeApiKey, UpdateSourceTrigger=PropertyChanged}"/>

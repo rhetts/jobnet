@@ -46,13 +46,29 @@ public partial class SettingsViewModel : ObservableObject
         "gemini-2.5-pro",
     };
 
+    /// <summary>Text-chat-capable models on Groq's current catalog (queried live against
+    /// GET /openai/v1/models — audio/speech/guard-classifier-only models excluded). Groq
+    /// retires model ids over time with no redirect (llama-3.3-70b-versatile 404s as of
+    /// 2026-09), so this list needs an occasional re-check against the live catalog rather
+    /// than being treated as permanent. The ComboBox is editable so a user can still type an
+    /// id we haven't enumerated yet.</summary>
+    public System.Collections.Generic.IReadOnlyList<string> GroqModels { get; } = new[]
+    {
+        "openai/gpt-oss-120b",
+        "openai/gpt-oss-20b",
+        "qwen/qwen3.8-27b",
+        "qwen/qwen3.6-27b",
+        "groq/compound",
+        "groq/compound-mini",
+    };
+
     [ObservableProperty] private string _aiMode = "Online";
     [ObservableProperty] private string _geminiApiKey = string.Empty;
     [ObservableProperty] private string _geminiModel = "gemini-2.5-flash";
     [ObservableProperty] private string _claudeApiKey = string.Empty;
     [ObservableProperty] private string _claudeModel = "claude-haiku-4-5";
     [ObservableProperty] private string _groqApiKey = string.Empty;
-    [ObservableProperty] private string _groqModel = "llama-3.3-70b-versatile";
+    [ObservableProperty] private string _groqModel = "openai/gpt-oss-120b";
     [ObservableProperty] private string _llamaModelPath = string.Empty;
     [ObservableProperty] private string _llamaGpuLayers = "0";
     [ObservableProperty] private string _llamaContextSize = "4096";
@@ -145,7 +161,7 @@ public partial class SettingsViewModel : ObservableObject
         ClaudeApiKey            = _config.GetOrDefault("claude_api_key", "");
         ClaudeModel             = _config.GetOrDefault("claude_model", "claude-haiku-4-5");
         GroqApiKey              = _config.GetOrDefault("groq_api_key", "");
-        GroqModel               = _config.GetOrDefault("groq_model", "llama-3.3-70b-versatile");
+        GroqModel               = _config.GetOrDefault("groq_model", "openai/gpt-oss-120b");
         ClaudeExtractionPrompt  = _config.GetOrDefault("claude_extraction_prompt", "");
         SelectorParserEnabled   = string.Equals(_config.GetOrDefault("selector_parser_enabled", "true"),
                                                   "true", StringComparison.OrdinalIgnoreCase);
@@ -207,7 +223,7 @@ public partial class SettingsViewModel : ObservableObject
         _config.Set("claude_api_key",            ClaudeApiKey ?? "");
         _config.Set("claude_model",              ClaudeModel ?? "claude-haiku-4-5");
         _config.Set("groq_api_key",              GroqApiKey ?? "");
-        _config.Set("groq_model",                GroqModel ?? "llama-3.3-70b-versatile");
+        _config.Set("groq_model",                GroqModel ?? "openai/gpt-oss-120b");
         _config.Set("claude_extraction_prompt",  ClaudeExtractionPrompt ?? "");
         _config.Set("selector_parser_enabled",   SelectorParserEnabled ? "true" : "false");
 

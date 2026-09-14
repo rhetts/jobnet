@@ -79,7 +79,18 @@ public sealed class LLamaClient : IAiClient, IDisposable
         var executor = new StatelessExecutor(weights, _loadedParams!);
 
         var maxOut = maxTokens ?? int.Parse(_config.GetOrDefault("llama_max_tokens", "1024"));
-        var prompt = BuildPrompt(system, userMessage);
+
+        // Oversized input (e.g. a directory-harvest page + anchor list built for cloud providers'
+        // much larger context windows) makes llama_decode fail outright rather than just truncating
+        // its own attention — there's no graceful degradation inside llama.cpp for an over-budget
+        // prompt. Reserve room for the chat-template scaffolding and the output, then truncate the
+        // user message (the large, variable-size part) to whatever's left. Keeps the system prompt
+        // intact since that's small and carries the task instructions.
+        var ctxSize = (int)(_loadedParams!.ContextSize ?? 4096);
+        var scaffoldTokens = ApproxTokens(BuildPrompt(system, ""));
+        var budget = Math.Max(256, ctxSize - scaffoldTokens - maxOut);
+        var userForPrompt = TruncateToApproxTokens(userMessage, budget);
+        var prompt = BuildPrompt(system, userForPrompt);
 
         _usage.RecordCall(Provider);
 
@@ -293,6 +304,16 @@ public sealed class LLamaClient : IAiClient, IDisposable
     }
 
     private static int ApproxTokens(string text) => string.IsNullOrEmpty(text) ? 0 : Math.Max(1, text.Length / 4);
+
+    /// <summary>Truncates from the tail, keeping the start of the message — for the "directory"
+    /// task that's the page text and the first anchors, which matter more than whatever's at the
+    /// bottom of a long page. Approximate (chars/4), same convention as <see cref="ApproxTokens"/>;
+    /// erring a little short of the real budget is fine, erring over is what crashes llama_decode.</summary>
+    private static string TruncateToApproxTokens(string text, int approxTokenBudget)
+    {
+        var charBudget = Math.Max(0, approxTokenBudget * 4);
+        return text.Length <= charBudget ? text : text.Substring(0, charBudget);
+    }
 
     /// <summary>Waits for any in-flight inference to release <see cref="_inferenceGate"/> before
     /// freeing the native context. Freeing tensors while a worker thread is still inside

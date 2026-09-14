@@ -41,7 +41,7 @@ public sealed class GroqClient : IAiClient
         if (string.IsNullOrWhiteSpace(apiKey))
             throw new AiUnavailableException("Groq API key is not configured. Set groq_api_key in Settings (free key at https://console.groq.com).");
 
-        var model = _config.GetOrDefault("groq_model", "llama-3.3-70b-versatile");
+        var model = _config.GetOrDefault("groq_model", "openai/gpt-oss-120b");
         var cap = maxTokens ?? int.Parse(_config.GetOrDefault("groq_max_tokens", "1024"));
 
         var messages = new List<object>();
