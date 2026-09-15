@@ -273,6 +273,14 @@ public sealed class JobRepository : IJobRepository
             .ToDictionary(r => r.CompanyId, r => r.Count);
     }
 
+    public IReadOnlyList<int> GetActiveCompanyIdsWithSourceStage(string sourceStage)
+    {
+        using var conn = _connections.Open();
+        return conn.Query<int>(
+            "SELECT DISTINCT company_id FROM jobs WHERE is_active = 1 AND source_stage = @sourceStage",
+            new { sourceStage }).ToList();
+    }
+
     public Dictionary<int, ChurnStat> GetChurnRate30dByCompany()
     {
         using var conn = _connections.Open();

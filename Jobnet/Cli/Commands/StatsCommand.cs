@@ -17,9 +17,11 @@ public sealed class StatsCommand : ICliCommand
 
     public int Run(string[] args, IServiceProvider services)
     {
+        var jobRepo = services.GetRequiredService<IJobRepository>();
         var companies = services.GetRequiredService<ICompanyRepository>().GetAll();
-        var jobs = services.GetRequiredService<IJobRepository>().GetAll(includeRemoved: true);
+        var jobs = jobRepo.GetAll(includeRemoved: true);
         var queue = services.GetRequiredService<IJobProcessingQueueRepository>().GetStats();
+        var jobBoardCompanyIds = jobRepo.GetActiveCompanyIdsWithSourceStage("jobboard_tnet").ToHashSet();
 
         var active = companies.Where(c => c.IsActive).ToList();
         var activeJobs = jobs.Count(j => j.IsActive);
@@ -49,7 +51,7 @@ public sealed class StatsCommand : ICliCommand
 
         Console.WriteLine("=== Companies by extraction system ===");
         var grouped = active
-            .Select(Classify)
+            .Select(c => Classify(c, jobBoardCompanyIds))
             .GroupBy(s => s)
             .OrderByDescending(g => g.Count())
             .ThenBy(g => g.Key)
@@ -59,12 +61,18 @@ public sealed class StatsCommand : ICliCommand
         return 0;
     }
 
-    private static string Classify(Company c)
+    private static string Classify(Company c, System.Collections.Generic.HashSet<int> jobBoardCompanyIds)
     {
         if (!string.IsNullOrEmpty(c.AtsType) && !string.IsNullOrEmpty(c.AtsSlug))
             return $"native: {c.AtsType}";
         if (!string.IsNullOrWhiteSpace(c.LastCompanyParser))
             return $"hand-written: {c.LastCompanyParser}";
+        // Same fallthrough gap as ParserReportViewModel: a company with no native ATS/hand-written
+        // parser of its own can still be fully deterministic if it's served by a job-board ingest
+        // (T-Net/BC Technology) rather than a per-company refresh — that pipeline sets neither
+        // ats_type nor LastCompanyParser on the company row.
+        if (jobBoardCompanyIds.Contains(c.Id))
+            return "job board: jobboard_tnet";
         if (!string.IsNullOrWhiteSpace(c.ParserStrategy) && !c.ParserStrategyDisabled)
             return "cached selectors";
         if (c.DateLastScan is null)

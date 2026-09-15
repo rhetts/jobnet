@@ -199,6 +199,7 @@ internal static class ServiceRegistration
         services.AddSingleton<Parsing.HtmlPatternParsers.IHtmlPatternParser, Parsing.HtmlPatternParsers.RobertHalfParser>();
         services.AddSingleton<Parsing.HtmlPatternParsers.IHtmlPatternParser, Parsing.HtmlPatternParsers.AerotekParser>();
         services.AddSingleton<Parsing.HtmlPatternParsers.IHtmlPatternParser, Parsing.HtmlPatternParsers.ShopifyParser>();
+        services.AddSingleton<Parsing.HtmlPatternParsers.IHtmlPatternParser, Parsing.HtmlPatternParsers.SwimRecruitingParser>();
         services.AddSingleton<Parsing.HtmlPatternParsers.HtmlPatternRegistry>();
         services.AddSingleton<JobSources.AiFallbackJobSource>();
         services.AddSingleton<JobSources.IJobSource>(sp => sp.GetRequiredService<JobSources.GreenhouseJobSource>());

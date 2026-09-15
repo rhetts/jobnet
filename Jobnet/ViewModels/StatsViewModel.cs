@@ -108,8 +108,9 @@ public partial class StatsViewModel : ObservableObject
         JobsWithSummary = jobs.Count(j => j.IsActive && !string.IsNullOrWhiteSpace(j.Summary));
         JobsWithResumeMatch = jobs.Count(j => j.IsActive && j.ResumeMatchScore.HasValue);
 
+        var jobBoardCompanyIds = _jobs.GetActiveCompanyIdsWithSourceStage("jobboard_tnet").ToHashSet();
         ParserSystems.Clear();
-        foreach (var row in BuildParserBreakdown(active))
+        foreach (var row in BuildParserBreakdown(active, jobBoardCompanyIds))
             ParserSystems.Add(row);
 
         BuildPostingHistory();
@@ -287,10 +288,11 @@ public partial class StatsViewModel : ObservableObject
     /// <summary>Group active companies by extraction-system label. Same precedence as
     /// ParserReportViewModel: native ATS (specific) → hand-written → cached selectors →
     /// AI extract → never-scanned. Ordered by company count desc within the report.</summary>
-    private static IEnumerable<ParserSystemRow> BuildParserBreakdown(IReadOnlyList<Company> active)
+    private static IEnumerable<ParserSystemRow> BuildParserBreakdown(
+        IReadOnlyList<Company> active, HashSet<int> jobBoardCompanyIds)
     {
         return active
-            .Select(c => Classify(c))
+            .Select(c => Classify(c, jobBoardCompanyIds))
             .GroupBy(s => s)
             .Select(g => new ParserSystemRow { System = g.Key, Count = g.Count() })
             .OrderByDescending(r => r.Count)
@@ -298,12 +300,17 @@ public partial class StatsViewModel : ObservableObject
             .ToList();
     }
 
-    private static string Classify(Company c)
+    private static string Classify(Company c, HashSet<int> jobBoardCompanyIds)
     {
         if (!string.IsNullOrEmpty(c.AtsType) && !string.IsNullOrEmpty(c.AtsSlug))
             return $"native: {c.AtsType}";
         if (!string.IsNullOrWhiteSpace(c.LastCompanyParser))
             return $"hand-written: {c.LastCompanyParser}";
+        // Same fallthrough gap as ParserReportViewModel: a job-board-sourced company (T-Net/BC
+        // Technology) sets neither ats_type nor LastCompanyParser, so without this check it fell
+        // through to "AI extract" despite zero AI involvement.
+        if (jobBoardCompanyIds.Contains(c.Id))
+            return "job board: jobboard_tnet";
         if (!string.IsNullOrWhiteSpace(c.ParserStrategy) && !c.ParserStrategyDisabled)
             return "cached selectors";
         if (c.DateLastScan is null)
