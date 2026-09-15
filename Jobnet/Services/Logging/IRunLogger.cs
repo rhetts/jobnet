@@ -59,6 +59,12 @@ public interface IRunLogger
     /// <summary>Most recent started_at for any run of the given type. Returns null if none recorded.</summary>
     System.DateTime? GetLastRunStartedAt(string runType);
 
+    /// <summary>Most recent finished_at of a *successfully completed* step with this exact name,
+    /// across any run. Used to throttle steps that aren't their own top-level run type (e.g. a
+    /// job-board ingest nested inside "Discover jobs") the same way <see cref="GetLastRunStartedAt(string)"/>
+    /// throttles whole runs. Returns null if the step has never completed.</summary>
+    System.DateTime? GetLastStepFinishedAt(string stepName);
+
     /// <summary>Mark any run/step rows that are still "running" as "interrupted" and backfill
     /// their aggregate counts from completed step rows. Call once on application startup so
     /// process kills / crashes don't leave the history page showing forever-running entries.

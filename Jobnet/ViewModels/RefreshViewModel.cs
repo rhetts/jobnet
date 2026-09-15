@@ -671,7 +671,18 @@ public partial class RefreshViewModel : ObservableObject
                          + (r.Errors.Count > 0 ? $"  First error: {r.Errors[0]}" : "");
 
             var boardsAdded = 0; var boardsUpdated = 0; var boardsErrors = 0;
-            if (IncludeJobBoards && !ct.IsCancellationRequested)
+            // Same "Discover jobs throttle" dropdown that gates the per-company sweep above also
+            // gates this — a job-board ingest is its own multi-minute, ~1250-row Playwright crawl
+            // with no throttle of its own otherwise, so back-to-back "Discover jobs" clicks were
+            // re-running it in full every time regardless of skipDays.
+            var lastBoardsRun = _runs.GetLastStepFinishedAt(_jobBoardSource.Name);
+            var boardsDue = skipDays <= 0 || lastBoardsRun is null
+                            || lastBoardsRun.Value <= DateTime.UtcNow.AddDays(-skipDays);
+            if (IncludeJobBoards && !boardsDue)
+            {
+                StatusText += $"  Boards: skipped (last ran {FormatLastRun(lastBoardsRun)}).";
+            }
+            else if (IncludeJobBoards && !ct.IsCancellationRequested)
             {
                 StatusText = $"{_jobBoardSource.Name}: pulling postings from job-board feeds...";
                 var stepId = _runs.StartStep(runId, _jobBoardSource.Name);

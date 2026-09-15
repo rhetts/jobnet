@@ -227,6 +227,17 @@ public sealed class RunLogger : IRunLogger
         return string.IsNullOrEmpty(iso) ? null : DateTime.Parse(iso).ToUniversalTime();
     }
 
+    public DateTime? GetLastStepFinishedAt(string stepName)
+    {
+        using var conn = _connections.Open();
+        var iso = conn.ExecuteScalar<string?>(@"
+            SELECT finished_at FROM run_step_log
+            WHERE step_name = @stepName AND status = 'completed' AND finished_at IS NOT NULL
+            ORDER BY finished_at DESC LIMIT 1",
+            new { stepName });
+        return string.IsNullOrEmpty(iso) ? null : DateTime.Parse(iso).ToUniversalTime();
+    }
+
     public int CleanupDanglingRuns()
     {
         using var conn = _connections.Open();
