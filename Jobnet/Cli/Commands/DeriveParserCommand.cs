@@ -87,6 +87,8 @@ public sealed class DeriveParserCommand : ICliCommand
         Console.WriteLine($"  success:        {fetch.Success}");
         Console.WriteLine($"  html size:      {fetch.Html?.Length ?? 0} chars");
         Console.WriteLine($"  network reqs:   {fetch.NetworkRequests.Count}");
+        foreach (var req in fetch.NetworkRequests)
+            Console.WriteLine($"    {req.Method,-6} {req.ResourceType,-10} {req.Url}");
         if (!fetch.Success || string.IsNullOrEmpty(fetch.Html))
         {
             Console.WriteLine($"  error:          {fetch.Error ?? "(unknown)"}");
