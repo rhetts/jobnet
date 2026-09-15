@@ -180,6 +180,11 @@ internal static class ServiceRegistration
             client.Timeout = TimeSpan.FromSeconds(15);
             client.DefaultRequestHeaders.UserAgent.ParseAdd("Jobnet/1.0");
         });
+        services.AddHttpClient<JobSources.EightfoldJobSource>(client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(15);
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("Jobnet/1.0");
+        });
         services.AddSingleton<Parsing.SelectorProfileReplayer>();
         services.AddSingleton<Parsing.AiSelectorDeriver>();
         // Hand-written company parsers. Registration order = priority order — more-specific
@@ -208,6 +213,7 @@ internal static class ServiceRegistration
         services.AddSingleton<JobSources.IJobSource>(sp => sp.GetRequiredService<JobSources.RisePeopleJobSource>());
         services.AddSingleton<JobSources.IJobSource>(sp => sp.GetRequiredService<JobSources.RecruiteeJobSource>());
         services.AddSingleton<JobSources.IJobSource>(sp => sp.GetRequiredService<JobSources.AvatureJobSource>());
+        services.AddSingleton<JobSources.IJobSource>(sp => sp.GetRequiredService<JobSources.EightfoldJobSource>());
         services.AddSingleton<JobSources.IJobSource>(sp => sp.GetRequiredService<JobSources.AiFallbackJobSource>());
         services.AddSingleton<JobSources.IJobRefresher, JobSources.JobRefresher>();
 

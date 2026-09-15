@@ -679,10 +679,22 @@ public partial class RefreshViewModel : ObservableObject
                 {
                     var br = await Task.Run(() => _jobBoardSource.IngestAsync(ct), ct).ConfigureAwait(true);
                     boardsAdded = br.JobsAdded; boardsUpdated = br.JobsUpdated; boardsErrors = br.Errors.Count;
+                    // Skip-reason breakdown goes in the same free-text slot as errors — it's the
+                    // only place `runs show` surfaces per-step text, and this isn't a real error:
+                    // without it, "0 added" reads as "nothing happened" when actually most of the
+                    // feed was legitimately dropped (out-of-area, or an employer name that doesn't
+                    // match any known company).
+                    var skipNote = (br.SkippedOutOfArea > 0 || br.SkippedUnmatchedCompany > 0)
+                        ? $"{br.SkippedOutOfArea} out of area, {br.SkippedUnmatchedCompany} unmatched company"
+                        : null;
+                    var stepMessage = br.Errors.Count > 0
+                        ? string.Join(" | ", br.Errors.Take(3))
+                        : skipNote;
                     _runs.FinishStep(stepId, status: br.Errors.Count == 0 ? "completed" : "partial",
                         examined: br.RowsExamined, added: br.JobsAdded, updated: br.JobsUpdated,
+                        skipped: br.SkippedOutOfArea + br.SkippedUnmatchedCompany,
                         failed: br.Errors.Count,
-                        errorMessage: br.Errors.Count == 0 ? null : string.Join(" | ", br.Errors.Take(3)));
+                        errorMessage: stepMessage);
                     StatusText += $"  Boards: {br.CompaniesCreated} companies added, " +
                                   $"{br.JobsAdded} jobs added, {br.JobsUpdated} updated" +
                                   (br.SkippedUnmatchedCompany > 0 ? $", {br.SkippedUnmatchedCompany} unmatched" : "") +
