@@ -28,6 +28,12 @@ public interface IJobRepository
     void SetInterestLevel(int id, InterestLevel level);
     Dictionary<int, int> GetActiveCountsByCompany();
 
+    /// <summary>Distinct company ids with at least one active job whose <c>source_stage</c>
+    /// matches. Used by the Parser Report to recognize companies actually served by a pipeline
+    /// that doesn't set ats_type/LastCompanyParser (e.g. the T-Net job-board ingest) — without
+    /// this they fall through to the "AI extract" bucket despite zero AI involvement.</summary>
+    IReadOnlyList<int> GetActiveCompanyIdsWithSourceStage(string sourceStage);
+
     /// <summary>Per-company 30-day churn rate: for each company, returns the percentage of
     /// jobs first seen 30+ days ago that are now inactive (0-100). null when the cohort is
     /// empty (company too new — needs at least one job ≥30 days old to be meaningful).

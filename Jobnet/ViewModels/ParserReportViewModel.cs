@@ -19,6 +19,7 @@ namespace Jobnet.ViewModels;
 public partial class ParserReportViewModel : ObservableObject
 {
     private readonly ICompanyRepository _companies;
+    private readonly IJobRepository _jobs;
     private readonly HtmlPatternRegistry _parserRegistry;
     private readonly IDiscoverySeedRepository _seeds;
     private readonly DirectoryPatternRegistry _directoryParserRegistry;
@@ -36,7 +37,7 @@ public partial class ParserReportViewModel : ObservableObject
 
     /// <summary>Filter chip — "(any)" shows everything, the rest match ParserSystem strings.</summary>
     public IReadOnlyList<string> SystemFilters { get; } =
-        new[] { "(any)", "native ATS", "hand-written", "selectors", "AI extract", "unknown" };
+        new[] { "(any)", "native ATS", "hand-written", "job board", "selectors", "AI extract", "unknown" };
 
     /// <summary>Comma-separated list of hand-written parsers registered in DI. Surfaced in the
     /// window header so the user can see what patterns are wired in without digging into code.</summary>
@@ -49,10 +50,12 @@ public partial class ParserReportViewModel : ObservableObject
     [ObservableProperty] private string _selectedStatus = "(any)";
     [ObservableProperty] private string _summary = "";
 
-    public ParserReportViewModel(ICompanyRepository companies, HtmlPatternRegistry parserRegistry,
+    public ParserReportViewModel(ICompanyRepository companies, IJobRepository jobs,
+                                  HtmlPatternRegistry parserRegistry,
                                   IDiscoverySeedRepository seeds, DirectoryPatternRegistry directoryParserRegistry)
     {
         _companies = companies;
+        _jobs = jobs;
         _parserRegistry = parserRegistry;
         _seeds = seeds;
         _directoryParserRegistry = directoryParserRegistry;
@@ -68,9 +71,11 @@ public partial class ParserReportViewModel : ObservableObject
     [RelayCommand]
     public void Refresh()
     {
+        var jobBoardCompanyIds = _jobs.GetActiveCompanyIdsWithSourceStage("jobboard_tnet").ToHashSet();
+
         AllRows.Clear();
         foreach (var c in _companies.GetAll())
-            AllRows.Add(new ParserReportRow(c));
+            AllRows.Add(new ParserReportRow(c, jobBoardCompanyIds.Contains(c.Id)));
 
         DirectoryRows.Clear();
         foreach (var s in _seeds.GetAll())
@@ -129,7 +134,7 @@ public sealed class ParserReportRow
     public bool IsDisabled { get; }
     public string DisabledToggleLabel { get; }
 
-    public ParserReportRow(Company c)
+    public ParserReportRow(Company c, bool isJobBoardSourced = false)
     {
         Id = c.Id;
         Name = c.Name;
@@ -152,6 +157,17 @@ public sealed class ParserReportRow
             ParserSystem = "hand-written";
             StatusBadge = c.LastCompanyParser!;
             StatusBrush = "#1f9d55";   // green — these are the cheapest, most reliable matches
+        }
+        // Same idea, different pipeline: a company with no native ATS/hand-written parser of its
+        // own can still be entirely deterministic if its active jobs came from a job-board ingest
+        // (T-Net/BC Technology) rather than a per-company refresh at all — that pipeline doesn't
+        // set ats_type or LastCompanyParser, so without this check these fell through to "AI
+        // extract" despite zero AI involvement.
+        else if (isJobBoardSourced)
+        {
+            ParserSystem = "job board";
+            StatusBadge = "jobboard_tnet";
+            StatusBrush = "#1f9d55";
         }
         else if (c.ParserStrategyDisabled)
         {
