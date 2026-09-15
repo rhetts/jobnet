@@ -616,15 +616,21 @@ public sealed class JobRefresher : IJobRefresher
 
         // Auto-clear stale slug at threshold. ConsecutiveFailures was just incremented if this
         // refresh was empty/failed, so the threshold check uses the *new* expected value (+1).
+        // Covers ParseException as well as Http4xx: a wrong subdomain guess on a platform like
+        // BambooHR doesn't necessarily 404 — it can resolve to someone else's real tenant (200 OK)
+        // or return a generic HTML error page (also 200 OK) instead of the expected JSON, which
+        // fails deserialization and is classified as ParseException, not Http4xx. An audit found
+        // several companies stuck this way indefinitely because the original condition only ever
+        // looked at Http4xx.
         var projectedFailures = (totalSeen == 0 || stageHadFailure)
             ? company.ConsecutiveFailures + 1 : 0;
         if (projectedFailures >= StaleSlugThreshold
             && !string.IsNullOrEmpty(company.AtsSlug)
-            && lastStageResult == Logging.AttemptResult.Http4xx)
+            && lastStageResult is Logging.AttemptResult.Http4xx or Logging.AttemptResult.ParseException)
         {
             _companies.ClearAtsSlug(company.Id,
-                $"{projectedFailures} consecutive 4xx (last HTTP {lastStageHttp})");
-            errors.Add($"[{company.Domain}] cleared stale {company.AtsType} slug '{company.AtsSlug}' after {projectedFailures} 4xx failures");
+                $"{projectedFailures} consecutive {lastStageResult} (last HTTP {lastStageHttp})");
+            errors.Add($"[{company.Domain}] cleared stale {company.AtsType} slug '{company.AtsSlug}' after {projectedFailures} {lastStageResult} failures");
         }
 
         // 0-yield drift: previously productive, now empty (and not a network failure). Likely the

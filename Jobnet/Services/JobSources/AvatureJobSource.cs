@@ -20,15 +20,21 @@ namespace Jobnet.Services.JobSources;
 /// <c>careers.lululemon.com</c>, confirmed via <c>curl</c> — the HTML contains "avature" but the
 /// domain is fully custom).
 ///
-/// What's stable across the TPT template (confirmed empirically against Lululemon's live portal,
-/// no JS execution needed — plain HTTP GET returns the full server-rendered result list):
+/// What's stable across the TPT template (confirmed empirically against Lululemon's and EA's live
+/// portals, no JS execution needed — plain HTTP GET returns the full server-rendered result list):
 /// <list type="bullet">
-/// <item>Search results page: <c>GET {basePath}/SearchCareer/?{filters}&amp;jobRecordsPerPage=10&amp;jobOffset=N</c>
+/// <item>Search results page: <c>GET {endpointPath}?{filters}&amp;jobRecordsPerPage=N&amp;jobOffset=N</c>
 ///   — filters and pagination both work as a plain, stateless querystring GET (no cookies/session
-///   needed, no POST required despite the on-page form using method="post").</item>
-/// <item><c>jobRecordsPerPage</c> is accepted but silently capped at 10 by the server regardless
-///   of the value requested — confirmed by requesting 50 and 100 and always getting 10 rows back.
-///   Pagination must loop via <c>jobOffset</c>.</item>
+///   needed, no POST required despite the on-page form using method="post"). <c>{endpointPath}</c>
+///   itself is NOT standard across tenants — Lululemon's is <c>/en_US/careers/SearchCareer</c>, EA's
+///   is <c>/en_US/careers/Home</c> — so, unlike an earlier version of this class, the endpoint path
+///   is not hardcoded here; it's part of the stored slug (see below).</item>
+/// <item>Lululemon silently caps <c>jobRecordsPerPage</c> at 10 regardless of the value requested;
+///   EA's actually honours a requested 20. Pagination must loop via <c>jobOffset</c> either way —
+///   confirmed on EA's real filtered URL that consecutive offsets return different postings, not
+///   a repeat of page 1 (an earlier blind unfiltered crawl attempt looked like it wasn't paginating
+///   at all and wrongly concluded EA had zero Vancouver postings — it was hitting the wrong
+///   endpoint/params, not a real empty result).</item>
 /// <item>Each result renders as <c>&lt;article class="article article--result"&gt;</c> containing:
 ///   <code>
 ///   &lt;h3 class="article__header__text__title..."&gt;&lt;a href="https://.../JobDetail/{slug}/{numericId}"&gt;{title}&lt;/a&gt;&lt;/h3&gt;
@@ -45,14 +51,15 @@ namespace Jobnet.Services.JobSources;
 ///   retail-floor postings) rather than a true count.</item>
 /// </list>
 ///
-/// Because per-tenant field customization means filter query-param names are NOT standard across
-/// Avature deployments (Lululemon's own Country/Business-Unit filters are form fields "1173" /
-/// "6744" — ids Avature assigned when this customer's form was built), the slug carries the whole
-/// path+query a human has already worked out for that tenant, following the same
+/// Because both the endpoint path itself AND the filter query-param names are entirely per-tenant
+/// (Lululemon's Country/Business-Unit filters are form fields "1173"/"6744"; EA's Country filter
+/// is field "8171", which also needs a companion "8171_format" + "listFilterMode" param to actually
+/// apply — ids/params Avature assigned when each customer's form was built), the slug carries the
+/// whole host+path+query a human has already worked out for that tenant, following the same
 /// "encode-what-varies" convention as <see cref="WorkdayJobSource"/> (host+site) and
 /// <see cref="AmazonJobSource"/> (filter key=value pairs) elsewhere in this file group:
 /// <code>
-/// ats_slug = "{host}{basePath}/SearchCareer[?{filter-query-string}]"
+/// ats_slug = "{host}{endpointPath}[?{filter-query-string}]"
 /// </code>
 /// e.g. for Lululemon, restricting to Canada (country field 1173=15150) and Store Support Centre
 /// (business unit field 6744=436 — Lululemon's corporate/tech HQ, analogous to how
@@ -62,8 +69,14 @@ namespace Jobnet.Services.JobSources;
 /// careers.lululemon.com/en_US/careers/SearchCareer?1173=15150&amp;6744=436
 /// </code>
 /// That combination returned 80 real, mostly-corporate/tech Vancouver-HQ postings when tested
-/// directly (vs. "999+" with no filter). <c>jobRecordsPerPage</c>/<c>jobOffset</c> are appended by
-/// this class per page and must not be included in the stored slug.
+/// directly (vs. "999+" with no filter). For EA, restricting to Canada (country field 8171, value
+/// 10577 — found by using the site's own filter UI and reading the resulting URL, not guessed):
+/// <code>
+/// jobs.ea.com/en_US/careers/Home?8171=[10577]&amp;8171_format=5683&amp;listFilterMode=1
+/// </code>
+/// returned 159 real Canada-wide postings (many in Vancouver) vs. 332 worldwide unfiltered.
+/// <c>jobRecordsPerPage</c>/<c>jobOffset</c> are appended by this class per page and must not be
+/// included in the stored slug.
 /// </summary>
 public sealed class AvatureJobSource : IJobSource
 {
@@ -106,7 +119,7 @@ public sealed class AvatureJobSource : IJobSource
         for (var page = 0; page < MaxPages && offset < declaredTotal; page++)
         {
             var sep = string.IsNullOrEmpty(query) ? "?" : "&";
-            var url = $"https://{baseUrl}/SearchCareer/{query}{sep}jobRecordsPerPage={PageSize}&jobOffset={offset}";
+            var url = $"https://{baseUrl}{query}{sep}jobRecordsPerPage={PageSize}&jobOffset={offset}";
 
             await _rateLimiter.WaitAsync(Provider, ct);
             _usage.RecordCall(Provider);
@@ -132,10 +145,12 @@ public sealed class AvatureJobSource : IJobSource
         return results;
     }
 
-    /// <summary>Splits a stored slug of the form <c>host/path/SearchCareer[?query]</c> into the
-    /// base (host+path, no trailing "/SearchCareer" and no query) and the query string (including
-    /// the leading '?', or empty). Pulled out so <see cref="ParsePage"/>/tests can hand in a slug
-    /// without a live HTTP call.</summary>
+    /// <summary>Splits a stored slug of the form <c>host/endpointPath[?query]</c> into the base
+    /// (host+full endpoint path, no query) and the query string (including the leading '?', or
+    /// empty). The endpoint path is tenant-specific (Lululemon: <c>/SearchCareer</c>, EA:
+    /// <c>/Home</c>) so, unlike an earlier version of this method, nothing is stripped from it —
+    /// whatever path the slug names is hit as-is. Pulled out so <see cref="ParsePage"/>/tests can
+    /// hand in a slug without a live HTTP call.</summary>
     public static (string BaseUrl, string Query) SplitSlug(string slug)
     {
         var s = slug.Trim();
@@ -143,8 +158,6 @@ public sealed class AvatureJobSource : IJobSource
         var query = qIdx >= 0 ? s[qIdx..] : string.Empty;
         var path = qIdx >= 0 ? s[..qIdx] : s;
         path = path.TrimEnd('/');
-        if (path.EndsWith("/SearchCareer", StringComparison.OrdinalIgnoreCase))
-            path = path[..^"/SearchCareer".Length];
         return (path, query);
     }
 
