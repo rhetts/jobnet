@@ -119,13 +119,15 @@ public sealed class PlaywrightFetcher : IPlaywrightFetcher, IAsyncDisposable
                 var status = response?.Status ?? 0;
                 var finalUrl = page.Url;
                 var html = await page.ContentAsync();
+                var success = status > 0 && status < 400;
 
                 return new PlaywrightFetchResult
                 {
                     FinalUrl = finalUrl,
                     HttpStatus = status,
                     Html = html,
-                    Success = status > 0 && status < 400,
+                    Success = success,
+                    Error = success ? null : $"HTTP {status} for {finalUrl}",
                     NetworkRequests = SnapshotRequests(requests, requestsLock),
                 };
             }

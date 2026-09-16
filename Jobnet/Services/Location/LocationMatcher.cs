@@ -35,6 +35,9 @@ public static class LocationMatcher
         "remote, bc", "remote bc",
         "remote, north america", "remote - north america", "remote north america",
         "remote, na", "remote, usa & canada", "us & canada", "us/canada", "u.s. & canada",
+        // Bare region tag with no city/country qualifier (e.g. Ashby's plain "North America"
+        // location) — same treatment as bare " canada " above: no negative signal, so keep it.
+        " north america ",
     };
 
     // Cities that are clearly NOT Vancouver area. Used to detect "definitely elsewhere"
