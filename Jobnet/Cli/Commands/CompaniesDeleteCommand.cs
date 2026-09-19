@@ -80,6 +80,12 @@ public sealed class CompaniesDeleteCommand : ICliCommand
             "DELETE FROM job_areas WHERE job_id IN (SELECT id FROM jobs WHERE company_id IN @ids)",
             new { ids }, tx);
         conn.Execute("DELETE FROM jobs WHERE company_id IN @ids", new { ids }, tx);
+        // page_fetches, refresh_attempt and ai_extraction_decisions reference companies(id) without
+        // ON DELETE CASCADE, so they must be cleared explicitly or the companies delete below fails
+        // with a foreign key violation. company_urls and company_discoveries do cascade.
+        conn.Execute("DELETE FROM page_fetches WHERE company_id IN @ids", new { ids }, tx);
+        conn.Execute("DELETE FROM refresh_attempt WHERE company_id IN @ids", new { ids }, tx);
+        conn.Execute("DELETE FROM ai_extraction_decisions WHERE company_id IN @ids", new { ids }, tx);
         conn.Execute("DELETE FROM companies WHERE id IN @ids", new { ids }, tx);
         tx.Commit();
     }

@@ -252,17 +252,24 @@ public sealed class AtsDetector : IAtsDetector
             // **The big win**: scan captured XHR/fetch URLs for ATS API patterns.
             // Many JS-rendered careers pages load jobs from an ATS API in the background;
             // the API URL is in the network log even when it's invisible in the DOM.
+            // Observed network traffic is the strongest signal we have, but it's still just what
+            // the page's own JS called — not proof the endpoint currently answers for real data.
+            // A company can leave a dead XHR call in its bundle long after disabling the public
+            // API or migrating away, so verify before trusting it (same reasoning as the redirect
+            // and HTML-fingerprint checks in ProbeUrlAsync).
             foreach (var req in rendered.NetworkRequests)
             {
                 foreach (var (pattern, ats) in UrlPatterns)
                 {
                     var m = pattern.Match(req.Url);
-                    if (m.Success)
+                    if (!m.Success) continue;
+                    var slug = SlugFromMatch(m, ats);
+                    if (await VerifySlugAsync(ats, slug, ct))
                     {
                         return new AtsDetectionResult
                         {
                             AtsType = ats,
-                            AtsSlug = SlugFromMatch(m, ats),
+                            AtsSlug = slug,
                             ResolvedCareersUrl = rendered.FinalUrl,
                             Source = "playwright_network",
                             Notes = $"caught via observed XHR to {req.Url}"
@@ -278,14 +285,18 @@ public sealed class AtsDetector : IAtsDetector
                     var atsType = req.Url.Contains("greenhouse.io") ? "greenhouse"
                                 : req.Url.Contains("lever.co")       ? "lever"
                                 : "ashby";
-                    return new AtsDetectionResult
+                    var slug = apiMatch.Groups["slug"].Value.ToLowerInvariant();
+                    if (await VerifySlugAsync(atsType, slug, ct))
                     {
-                        AtsType = atsType,
-                        AtsSlug = apiMatch.Groups["slug"].Value.ToLowerInvariant(),
-                        ResolvedCareersUrl = rendered.FinalUrl,
-                        Source = "playwright_network_api",
-                        Notes = $"ATS API endpoint observed: {req.Url}"
-                    };
+                        return new AtsDetectionResult
+                        {
+                            AtsType = atsType,
+                            AtsSlug = slug,
+                            ResolvedCareersUrl = rendered.FinalUrl,
+                            Source = "playwright_network_api",
+                            Notes = $"ATS API endpoint observed: {req.Url}"
+                        };
+                    }
                 }
             }
 
@@ -295,12 +306,14 @@ public sealed class AtsDetector : IAtsDetector
             foreach (var (pattern, ats) in UrlPatterns)
             {
                 var m = pattern.Match(rendered.FinalUrl);
-                if (m.Success)
+                if (!m.Success) continue;
+                var slug = SlugFromMatch(m, ats);
+                if (await VerifySlugAsync(ats, slug, ct))
                 {
                     return new AtsDetectionResult
                     {
                         AtsType = ats,
-                        AtsSlug = SlugFromMatch(m, ats),
+                        AtsSlug = slug,
                         ResolvedCareersUrl = rendered.FinalUrl,
                         Source = "playwright_redirect",
                     };
@@ -311,12 +324,14 @@ public sealed class AtsDetector : IAtsDetector
             foreach (var (pattern, ats) in HtmlPatterns)
             {
                 var m = pattern.Match(rendered.Html);
-                if (m.Success)
+                if (!m.Success) continue;
+                var slug = SlugFromMatch(m, ats);
+                if (await VerifySlugAsync(ats, slug, ct))
                 {
                     return new AtsDetectionResult
                     {
                         AtsType = ats,
-                        AtsSlug = SlugFromMatch(m, ats),
+                        AtsSlug = slug,
                         ResolvedCareersUrl = rendered.FinalUrl,
                         Source = "playwright_html",
                     };
@@ -364,7 +379,10 @@ public sealed class AtsDetector : IAtsDetector
             "greenhouse"      => $"https://boards-api.greenhouse.io/v1/boards/{slug}/jobs",
             "lever"           => $"https://api.lever.co/v0/postings/{slug}?mode=json&limit=1",
             "ashby"           => $"https://api.ashbyhq.com/posting-api/job-board/{slug}",
-            "workable"        => $"https://{slug}.workable.com/api/v3/jobs",
+            // Must match the endpoint WorkableJobSource.cs actually fetches from — the old
+            // "{slug}.workable.com/api/v3/jobs" guess 404s for every tenant on the modern
+            // apply.workable.com/{slug} URL style, silently rejecting valid matches (found via Humi).
+            "workable"        => $"https://apply.workable.com/api/v1/widget/accounts/{slug}",
             "smartrecruiters" => $"https://api.smartrecruiters.com/v1/companies/{slug}/postings?limit=1",
             "pinpoint"        => $"https://{slug}.pinpointhq.com/postings.json",
             "risepeople"      => $"https://gateway.risepeople.com/applicant_tracking/public/careers?company_uri={slug}&language=en",
@@ -481,16 +499,20 @@ public sealed class AtsDetector : IAtsDetector
         using var _ = response;
         var finalUrl = response.RequestMessage?.RequestUri?.ToString() ?? url;
 
-        // Try URL pattern first
+        // Try URL pattern first. A redirect landing on a recognized ATS host is a strong signal,
+        // but not proof the board is still live — companies leave stale links/redirects in place
+        // after disabling public API access or moving off the ATS entirely. Verify before trusting it.
         foreach (var (pattern, ats) in UrlPatterns)
         {
             var m = pattern.Match(finalUrl);
-            if (m.Success)
+            if (!m.Success) continue;
+            var slug = SlugFromMatch(m, ats);
+            if (await VerifySlugAsync(ats, slug, ct))
             {
                 return new AtsDetectionResult
                 {
                     AtsType = ats,
-                    AtsSlug = SlugFromMatch(m, ats),
+                    AtsSlug = slug,
                     ResolvedCareersUrl = finalUrl,
                     Source = "redirect",
                 };
@@ -511,15 +533,19 @@ public sealed class AtsDetector : IAtsDetector
             return new AtsDetectionResult { Source = "none", Notes = $"could not read body of {finalUrl}" };
         }
 
+        // Same reasoning as the redirect check above: an embedded widget src is what the company's
+        // own page still references, not proof the ATS's public API still answers for it.
         foreach (var (pattern, ats) in HtmlPatterns)
         {
             var m = pattern.Match(body);
-            if (m.Success)
+            if (!m.Success) continue;
+            var slug = SlugFromMatch(m, ats);
+            if (await VerifySlugAsync(ats, slug, ct))
             {
                 return new AtsDetectionResult
                 {
                     AtsType = ats,
-                    AtsSlug = SlugFromMatch(m, ats),
+                    AtsSlug = slug,
                     ResolvedCareersUrl = finalUrl,
                     Source = "html_fingerprint",
                 };
