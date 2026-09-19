@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.RegularExpressions;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Jobnet.Models;
@@ -186,11 +187,48 @@ public partial class JobViewModel : ObservableObject
     }
     public bool HasSummary => !string.IsNullOrWhiteSpace(Job.Summary);
 
-    /// <summary>Job's posted location, or company HQ city as fallback.</summary>
+    /// <summary>Job's posted location, or company HQ city as fallback, with the trailing country
+    /// token stripped (e.g. "Vancouver, BC, Canada" → "Vancouver, BC").</summary>
     public string CityDisplay =>
-        !string.IsNullOrWhiteSpace(Job.Location) ? Job.Location!
-        : (CompanyCity ?? "");
+        StripCountry(!string.IsNullOrWhiteSpace(Job.Location) ? Job.Location! : (CompanyCity ?? ""));
     public bool HasCity => !string.IsNullOrWhiteSpace(CityDisplay);
+
+    // Matches a comma-preceded country name/abbreviation, as long as it isn't glued to another
+    // word (so "Canada-Remote" / "US-Remote" survive untouched — those describe a work mode, not
+    // a plain trailing country). Deliberately excludes bare "CA", which is ambiguous with California.
+    private static readonly Regex CountrySuffixRe = new(
+        @",\s*(Canada|United States|United Kingdom|USA|US|CAN|UK)(?![A-Za-z0-9-])",
+        RegexOptions.IgnoreCase);
+
+    private static string StripCountry(string location) =>
+        string.IsNullOrEmpty(location) ? location : CountrySuffixRe.Replace(location, "").Trim();
+
+    /// <summary>City line + score + posting age + on-site/employment type, all on one line.
+    /// Replaces the old separate MetaLine row — remote/employment type is only appended when it
+    /// was actually extracted (not "unknown"), since most sources never fill it in.</summary>
+    public string CityMetaDisplay
+    {
+        get
+        {
+            var parts = new List<string>();
+            if (HasCity) parts.Add(CityDisplay);
+            parts.Add($"Score {CompositeScore}");
+            parts.Add($"{FormatAge(Job.DateFirstSeen)} old");
+            var type = OnSiteFullTimeDisplay();
+            if (!string.IsNullOrEmpty(type)) parts.Add(type);
+            return string.Join(" · ", parts);
+        }
+    }
+
+    private string OnSiteFullTimeDisplay()
+    {
+        var remoteKnown = !string.IsNullOrWhiteSpace(Job.RemoteType) && !string.Equals(Job.RemoteType, "unknown", StringComparison.OrdinalIgnoreCase);
+        var empKnown = !string.IsNullOrWhiteSpace(Job.EmploymentType) && !string.Equals(Job.EmploymentType, "unknown", StringComparison.OrdinalIgnoreCase);
+        if (remoteKnown && empKnown) return $"{Capitalize(Job.RemoteType!)} · {Capitalize(Job.EmploymentType!)}";
+        if (remoteKnown) return Capitalize(Job.RemoteType!);
+        if (empKnown) return Capitalize(Job.EmploymentType!);
+        return "";
+    }
 
     /// <summary>First comma-separated token of the location, used for city filtering and bucketing.
     /// Falls back to company HQ city, then "Unknown".</summary>
@@ -211,20 +249,6 @@ public partial class JobViewModel : ObservableObject
         InterestLevel.NotInteresting => "✗",
         _                            => " "
     };
-
-    public string MetaLine
-    {
-        get
-        {
-            var remote = Capitalize(Job.RemoteType ?? "unknown");
-            var emp    = Capitalize(Job.EmploymentType ?? "unknown");
-            var age    = FormatAge(Job.DateFirstSeen);
-            var status = Job.IsActive ? "" : $" · Removed {FormatAge(Job.DateRemoved ?? DateTime.UtcNow)} ago";
-            var salary = FormatSalary();
-            var salaryPart = string.IsNullOrEmpty(salary) ? "" : $" · {salary}";
-            return $"{remote} · {emp} · Score {CompositeScore} · {age} old{salaryPart}{status}";
-        }
-    }
 
     public string SalaryDisplay => FormatSalary();
 
