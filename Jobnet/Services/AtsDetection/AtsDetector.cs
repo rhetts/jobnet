@@ -379,7 +379,10 @@ public sealed class AtsDetector : IAtsDetector
             "greenhouse"      => $"https://boards-api.greenhouse.io/v1/boards/{slug}/jobs",
             "lever"           => $"https://api.lever.co/v0/postings/{slug}?mode=json&limit=1",
             "ashby"           => $"https://api.ashbyhq.com/posting-api/job-board/{slug}",
-            "workable"        => $"https://{slug}.workable.com/api/v3/jobs",
+            // Must match the endpoint WorkableJobSource.cs actually fetches from — the old
+            // "{slug}.workable.com/api/v3/jobs" guess 404s for every tenant on the modern
+            // apply.workable.com/{slug} URL style, silently rejecting valid matches (found via Humi).
+            "workable"        => $"https://apply.workable.com/api/v1/widget/accounts/{slug}",
             "smartrecruiters" => $"https://api.smartrecruiters.com/v1/companies/{slug}/postings?limit=1",
             "pinpoint"        => $"https://{slug}.pinpointhq.com/postings.json",
             "risepeople"      => $"https://gateway.risepeople.com/applicant_tracking/public/careers?company_uri={slug}&language=en",
