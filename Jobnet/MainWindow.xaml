@@ -42,7 +42,7 @@
             <Border Background="White"
                     BorderBrush="#E5E5E5"
                     BorderThickness="1"
-                    Padding="14,12"
+                    Padding="14,7"
                     CornerRadius="3"
                     Cursor="Hand"
                     MouseLeftButtonUp="JobCard_MouseLeftButtonUp"
@@ -131,60 +131,10 @@
                             <Run Text=" — " Foreground="#888"/>
                             <Run Text="{Binding CompanyName, Mode=OneWay}" Foreground="#666"/>
                         </TextBlock>
-                        <TextBlock Text="{Binding CityDisplay}"
+                        <TextBlock Text="{Binding CityMetaDisplay}"
                                    Foreground="#666"
                                    FontSize="12"
-                                   Margin="0,2,0,0"
-                                   Visibility="{Binding HasCity, Converter={StaticResource BoolToVis}}"/>
-                        <StackPanel Orientation="Horizontal" Margin="0,3,0,0">
-                            <Border CornerRadius="2"
-                                    Padding="6,1"
-                                    Margin="0,0,6,0"
-                                    Background="#FFF4D6"
-                                    BorderBrush="#E5B564"
-                                    BorderThickness="1"
-                                    Visibility="{Binding IsAgency, Converter={StaticResource BoolToVis}}"
-                                    ToolTip="Posted by a recruitment agency, not the hiring company directly.">
-                                <TextBlock Text="Agency"
-                                           FontSize="10" FontWeight="SemiBold"
-                                           Foreground="#7A5810"/>
-                            </Border>
-                            <Border CornerRadius="2"
-                                    Padding="6,1"
-                                    Margin="0,0,6,0"
-                                    Background="#E3F2FD"
-                                    Visibility="{Binding HasResumeMatch, Converter={StaticResource BoolToVis}}"
-                                    ToolTip="{Binding ResumeMatchReason}">
-                                <TextBlock Text="{Binding ResumeMatchDisplay}"
-                                           FontSize="11" FontWeight="SemiBold"
-                                           Foreground="#0D47A1"/>
-                            </Border>
-                            <TextBlock Text="{Binding MetaLine}"
-                                       Foreground="#888"
-                                       FontSize="12"/>
-                            <!-- Technology chips. Only rendered when the matcher tagged at least one. -->
-                            <ItemsControl ItemsSource="{Binding Technologies}" Margin="0,4,0,0">
-                                <ItemsControl.ItemsPanel>
-                                    <ItemsPanelTemplate>
-                                        <WrapPanel/>
-                                    </ItemsPanelTemplate>
-                                </ItemsControl.ItemsPanel>
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate>
-                                        <Border Background="#F0F4F8"
-                                                BorderBrush="#C8D5E2"
-                                                BorderThickness="1"
-                                                CornerRadius="3"
-                                                Padding="6,1"
-                                                Margin="0,0,4,3">
-                                            <TextBlock Text="{Binding}"
-                                                       FontSize="10"
-                                                       Foreground="#4A5C6E"/>
-                                        </Border>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
-                        </StackPanel>
+                                   Margin="0,1,0,0"/>
                     </StackPanel>
                     <StackPanel Grid.Column="2" Grid.Row="0"
                                 Orientation="Vertical"
@@ -218,7 +168,7 @@
                         <!-- TAB 1 action row: Approve + Downvote (hidden when card is approved).
                              Expand toggle was removed — single-click on the card body handles it
                              via JobCard_MouseLeftButtonUp in MainWindow.xaml.cs. -->
-                        <StackPanel Orientation="Horizontal" Margin="0,6,0,0" HorizontalAlignment="Right">
+                        <StackPanel Orientation="Horizontal" Margin="0,4,0,0" HorizontalAlignment="Right">
                             <StackPanel.Style>
                                 <Style TargetType="StackPanel">
                                     <Style.Triggers>
@@ -261,7 +211,7 @@
                         </StackPanel>
 
                         <!-- TAB 2 action row: Expired + Applied (only visible when card is approved) -->
-                        <StackPanel Orientation="Horizontal" Margin="0,6,0,0" HorizontalAlignment="Right">
+                        <StackPanel Orientation="Horizontal" Margin="0,4,0,0" HorizontalAlignment="Right">
                             <StackPanel.Style>
                                 <Style TargetType="StackPanel">
                                     <Setter Property="Visibility" Value="Collapsed"/>
@@ -306,8 +256,8 @@
                         </StackPanel>
                     </StackPanel>
                     <Border Grid.Column="1" Grid.Row="1" Grid.ColumnSpan="2"
-                            Margin="0,8,0,0"
-                            Padding="10,8"
+                            Margin="0,6,0,0"
+                            Padding="10,6"
                             Background="#F7F7F8"
                             BorderBrush="#E5E5E5"
                             BorderThickness="1"
@@ -317,12 +267,12 @@
                             <TextBlock Text="{Binding ClassificationLine}"
                                        Foreground="#555"
                                        FontSize="11"
-                                       Margin="0,0,0,6"/>
+                                       Margin="0,0,0,4"/>
                             <TextBlock Text="{Binding ExpandedText}"
                                        TextWrapping="Wrap"
                                        Foreground="#333"
                                        FontSize="12"/>
-                            <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                            <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
                                 <Button Command="{Binding DataContext.OpenJobInBrowserCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                                         CommandParameter="{Binding}"
                                         Background="Transparent"
@@ -813,7 +763,7 @@
                         <Style TargetType="ListBoxItem">
                             <Setter Property="Padding" Value="0"/>
                             <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
-                            <Setter Property="Margin" Value="16,8,16,0"/>
+                            <Setter Property="Margin" Value="16,3,16,0"/>
                             <Setter Property="BorderThickness" Value="0"/>
                         </Style>
                     </ListBox.ItemContainerStyle>
@@ -840,7 +790,7 @@
                                 <Style TargetType="ListBoxItem">
                                     <Setter Property="Padding" Value="0"/>
                                     <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
-                                    <Setter Property="Margin" Value="16,8,16,0"/>
+                                    <Setter Property="Margin" Value="16,3,16,0"/>
                                     <Setter Property="BorderThickness" Value="0"/>
                                 </Style>
                             </ListBox.ItemContainerStyle>
