@@ -595,15 +595,23 @@ public sealed class JobRefresher : IJobRefresher
             else updated++;
         }
 
-        // Mark previously-active jobs that no longer appear as removed
-        var existingActiveIds = _jobs.GetActiveIdsForCompany(company.Id);
+        // Mark previously-active jobs that no longer appear as removed — but only when the fetch
+        // stage actually succeeded. A failed fetch (network blip, ATS outage, transient block)
+        // yields zero jobs same as a real "nothing posted" result, and without this guard every
+        // one of the company's active jobs gets wrongly wiped. Found via a Workday platform-wide
+        // maintenance outage that zeroed out Aritzia, Avigilon, Clio, Mastercard and TELUS in one
+        // refresh pass — the postings were still live, only the fetch had failed.
         var removedCount = 0;
-        foreach (var id in existingActiveIds)
+        if (!stageHadFailure)
         {
-            if (!seenJobIds.Contains(id))
+            var existingActiveIds = _jobs.GetActiveIdsForCompany(company.Id);
+            foreach (var id in existingActiveIds)
             {
-                _jobs.MarkRemoved(id, DateTime.UtcNow);
-                removedCount++;
+                if (!seenJobIds.Contains(id))
+                {
+                    _jobs.MarkRemoved(id, DateTime.UtcNow);
+                    removedCount++;
+                }
             }
         }
 
