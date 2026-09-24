@@ -185,6 +185,10 @@ internal static class ServiceRegistration
             client.Timeout = TimeSpan.FromSeconds(15);
             client.DefaultRequestHeaders.UserAgent.ParseAdd("Jobnet/1.0");
         });
+        // No AddHttpClient here — SiSystemsJobSource shells out to curl.exe instead of using
+        // HttpClient (see the class doc comment for why) and only needs the usage/rate-limit
+        // services, registered elsewhere.
+        services.AddSingleton<JobSources.SiSystemsJobSource>();
         services.AddSingleton<Parsing.SelectorProfileReplayer>();
         services.AddSingleton<Parsing.AiSelectorDeriver>();
         // Hand-written company parsers. Registration order = priority order — more-specific
@@ -215,6 +219,7 @@ internal static class ServiceRegistration
         services.AddSingleton<JobSources.IJobSource>(sp => sp.GetRequiredService<JobSources.RecruiteeJobSource>());
         services.AddSingleton<JobSources.IJobSource>(sp => sp.GetRequiredService<JobSources.AvatureJobSource>());
         services.AddSingleton<JobSources.IJobSource>(sp => sp.GetRequiredService<JobSources.EightfoldJobSource>());
+        services.AddSingleton<JobSources.IJobSource>(sp => sp.GetRequiredService<JobSources.SiSystemsJobSource>());
         services.AddSingleton<JobSources.IJobSource>(sp => sp.GetRequiredService<JobSources.AiFallbackJobSource>());
         services.AddSingleton<JobSources.IJobRefresher, JobSources.JobRefresher>();
 
