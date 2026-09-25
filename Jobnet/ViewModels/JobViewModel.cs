@@ -165,8 +165,10 @@ public partial class JobViewModel : ObservableObject
     public bool HasResumeMatch => Job.ResumeMatchScore.HasValue;
     public string ResumeMatchDisplay => Job.ResumeMatchScore.HasValue ? $"Match {Job.ResumeMatchScore.Value}" : "";
     public string ResumeMatchReason => Job.ResumeMatchReason ?? "";
-    /// <summary>Used by the JobsView sort: prefer resume score when present, else composite score.</summary>
-    public int SortKey => Job.ResumeMatchScore ?? CompositeScore;
+    /// <summary>Used by the JobsView sort: resume match descending. Jobs without a resume match
+    /// yet (never scored, or scoring failed) sink below any real match score rather than falling
+    /// back to composite score — match is now the only sort signal shown or used.</summary>
+    public int SortKey => Job.ResumeMatchScore ?? -1;
 
     /// <summary>Glyph for the expand/collapse toggle.</summary>
     public string ExpandGlyph => IsExpanded ? "▾" : "▸";
@@ -203,16 +205,17 @@ public partial class JobViewModel : ObservableObject
     private static string StripCountry(string location) =>
         string.IsNullOrEmpty(location) ? location : CountrySuffixRe.Replace(location, "").Trim();
 
-    /// <summary>City line + score + posting age + on-site/employment type, all on one line.
-    /// Replaces the old separate MetaLine row — remote/employment type is only appended when it
-    /// was actually extracted (not "unknown"), since most sources never fill it in.</summary>
+    /// <summary>City line + posting age + on-site/employment type, all on one line. Replaces the
+    /// old separate MetaLine row — remote/employment type is only appended when it was actually
+    /// extracted (not "unknown"), since most sources never fill it in. Composite score is
+    /// deliberately not shown here — it reads as a personal-fit claim ("you're a 100% match")
+    /// when it's really just a seniority/category sort key; resume match is the real fit signal.</summary>
     public string CityMetaDisplay
     {
         get
         {
             var parts = new List<string>();
             if (HasCity) parts.Add(CityDisplay);
-            parts.Add($"Score {CompositeScore}");
             parts.Add($"{FormatAge(Job.DateFirstSeen)} old");
             var type = OnSiteFullTimeDisplay();
             if (!string.IsNullOrEmpty(type)) parts.Add(type);
