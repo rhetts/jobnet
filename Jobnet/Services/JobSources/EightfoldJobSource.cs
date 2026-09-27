@@ -75,9 +75,12 @@ public sealed class EightfoldJobSource : IJobSource
         var results = new List<RawJobPosting>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
+        // The server caps each page at 10 positions whatever `num` asks for, so step `start` by the
+        // number actually returned and stop at the reported `count` — a short page is not the end.
+        var start = 0;
+        var complete = false;
         for (var page = 0; page < MaxPages; page++)
         {
-            var start = page * PageSize;
             var url = $"https://{host}/api/pcsx/search?{query}" +
                       $"&query=&start={start}&num={PageSize}&filter_include_remote=1";
 
@@ -90,7 +93,7 @@ public sealed class EightfoldJobSource : IJobSource
 
             var payload = await resp.Content.ReadFromJsonAsync<Response>(cancellationToken: ct);
             var positions = payload?.Data?.Positions ?? new();
-            if (positions.Count == 0) break;
+            if (positions.Count == 0) { complete = true; break; }
 
             foreach (var p in positions)
             {
@@ -110,8 +113,15 @@ public sealed class EightfoldJobSource : IJobSource
                 });
             }
 
-            if (positions.Count < PageSize) break; // short page — last one
+            start += positions.Count;
+            if (payload?.Data?.Count is not int count || start >= count) { complete = true; break; }
         }
+
+        // Ran out of pages with more still coming — a truncated list would make the refresher
+        // close every posting past the cap, so fail the fetch instead.
+        if (!complete)
+            throw new InvalidOperationException(
+                $"Eightfold slug '{slug}' exceeded {MaxPages} pages; result would be truncated");
 
         return results;
     }
@@ -140,6 +150,7 @@ public sealed class EightfoldJobSource : IJobSource
     public sealed class DataObj
     {
         [JsonPropertyName("positions")] public List<Position>? Positions { get; set; }
+        [JsonPropertyName("count")]     public int? Count { get; set; }
     }
 
     public sealed class Position

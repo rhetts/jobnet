@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Json;
 using System.Text.Json.Serialization;
@@ -47,7 +48,12 @@ public sealed class AshbyJobSource : IJobSource
                 Title = j.Title!,
                 Url = j.JobUrl ?? j.ApplyUrl,
                 Location = j.Location,
-                RemoteType = GuessRemoteType(j.IsRemote, j.Location),
+                SecondaryLocations = j.SecondaryLocations?
+                    .Select(s => s.Location)
+                    .Where(l => !string.IsNullOrEmpty(l))
+                    .Select(l => l!)
+                    .ToList(),
+                RemoteType = GuessRemoteType(j.WorkplaceType, j.IsRemote, j.Location),
                 EmploymentType = j.EmploymentType?.ToLowerInvariant(),
                 Department = j.Department ?? j.Team,
                 DescriptionSnippet = SnippetCleaner.Clean(j.DescriptionPlain, maxChars: 500),
@@ -56,8 +62,15 @@ public sealed class AshbyJobSource : IJobSource
         return results;
     }
 
-    private static string GuessRemoteType(bool? isRemote, string? location)
+    private static string GuessRemoteType(string? workplaceType, bool? isRemote, string? location)
     {
+        // workplaceType is authoritative: Ashby sets isRemote=true on Hybrid postings too.
+        switch (workplaceType?.ToLowerInvariant())
+        {
+            case "remote": return "remote";
+            case "hybrid": return "hybrid";
+            case "onsite": case "on-site": return "on-site";
+        }
         if (isRemote == true) return "remote";
         if (!string.IsNullOrEmpty(location))
         {
@@ -82,10 +95,17 @@ public sealed class AshbyJobSource : IJobSource
         [JsonPropertyName("jobUrl")]           public string? JobUrl { get; set; }
         [JsonPropertyName("applyUrl")]         public string? ApplyUrl { get; set; }
         [JsonPropertyName("location")]         public string? Location { get; set; }
+        [JsonPropertyName("secondaryLocations")] public List<SecondaryLocation>? SecondaryLocations { get; set; }
         [JsonPropertyName("isRemote")]         public bool? IsRemote { get; set; }
+        [JsonPropertyName("workplaceType")]    public string? WorkplaceType { get; set; }
         [JsonPropertyName("employmentType")]   public string? EmploymentType { get; set; }
         [JsonPropertyName("department")]       public string? Department { get; set; }
         [JsonPropertyName("team")]             public string? Team { get; set; }
         [JsonPropertyName("descriptionPlain")] public string? DescriptionPlain { get; set; }
+    }
+
+    private sealed class SecondaryLocation
+    {
+        [JsonPropertyName("location")] public string? Location { get; set; }
     }
 }

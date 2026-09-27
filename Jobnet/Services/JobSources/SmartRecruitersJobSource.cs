@@ -52,6 +52,7 @@ public sealed class SmartRecruitersJobSource : IJobSource
     {
         var all = new List<RawJobPosting>();
         var offset = 0;
+        var complete = false;
         for (var page = 0; page < MaxPages; page++)
         {
             ct.ThrowIfCancellationRequested();
@@ -70,8 +71,13 @@ public sealed class SmartRecruitersJobSource : IJobSource
 
             var total = payload?.TotalFound ?? 0;
             offset += PageLimit;
-            if (batch.Count == 0 || offset >= total) break;
+            if (batch.Count == 0 || offset >= total) { complete = true; break; }
         }
+        // Ran out of pages with more still coming — a truncated list would make the refresher
+        // close every posting past the cap, so fail the fetch instead.
+        if (!complete)
+            throw new InvalidOperationException(
+                $"SmartRecruiters slug '{slug}' exceeded {MaxPages} pages; result would be truncated");
         return all;
     }
 

@@ -48,6 +48,12 @@ public sealed class LeverJobSource : IJobSource
                 Title = j.Text!,
                 Url = j.HostedUrl ?? j.ApplyUrl,
                 Location = j.Categories?.Location,
+                // allLocations includes the primary one; the Vancouver-area gate accepts a posting
+                // if any of them match (e.g. primary "Palo Alto" + a Vancouver secondary).
+                SecondaryLocations = j.Categories?.AllLocations?
+                    .Where(l => !string.IsNullOrEmpty(l) && l != j.Categories?.Location)
+                    .Select(l => l!)
+                    .ToList(),
                 RemoteType = GuessRemoteType(j.Categories?.Location, j.WorkplaceType),
                 EmploymentType = j.Categories?.Commitment?.ToLowerInvariant(),
                 Department = j.Categories?.Department ?? j.Categories?.Team,
@@ -107,6 +113,7 @@ public sealed class LeverJobSource : IJobSource
     {
         [JsonPropertyName("commitment")] public string? Commitment { get; set; }
         [JsonPropertyName("location")]   public string? Location { get; set; }
+        [JsonPropertyName("allLocations")] public List<string?>? AllLocations { get; set; }
         [JsonPropertyName("team")]       public string? Team { get; set; }
         [JsonPropertyName("department")] public string? Department { get; set; }
     }

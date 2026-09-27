@@ -422,7 +422,7 @@ public sealed class JobRefresher : IJobRefresher
                                       jobs.Count == 0 ? Logging.AttemptResult.Empty : Logging.AttemptResult.Success,
                                       null, jobs.Count, sw2.ElapsedMilliseconds, null);
                 }
-                catch (Exception ex)
+                catch (Exception ex) when (ex is not OperationCanceledException)
                 {
                     sw2.Stop();
                     stageHadFailure = true;
@@ -443,7 +443,10 @@ public sealed class JobRefresher : IJobRefresher
             var departmentUrls = cachedUrls.Where(u => u.Kind == UrlKind.Department).Take(10).ToList();
             var rootUrls = cachedUrls.Where(u => u.Kind == UrlKind.CareersRoot).Take(2).ToList();
 
-            var urlsToTry = jobListUrls.Concat(departmentUrls).Concat(rootUrls).ToList();
+            // URLs differing only by #fragment are the same page — fetch it once.
+            var urlsToTry = jobListUrls.Concat(departmentUrls).Concat(rootUrls)
+                .DistinctBy(u => u.Url.Split('#')[0], StringComparer.OrdinalIgnoreCase)
+                .ToList();
             if (urlsToTry.Count == 0)
             {
                 var startUrl = company.CareersUrl ?? company.WebsiteUrl ?? $"https://{company.Domain}/careers";
@@ -502,6 +505,9 @@ public sealed class JobRefresher : IJobRefresher
                     catch (Exception ex) when (ex is not OperationCanceledException)
                     {
                         sw4.Stop();
+                        // A URL that threw may have held jobs no other URL lists — don't let the
+                        // removal pass close them on a partial result.
+                        stageHadFailure = true;
                         _urls.RecordFailure(company.Id, u.Url);
                         _runs.LogAttempt(runId, company.Id, Logging.AttemptStage.CachedUrl, u.Kind.ToString(),
                                           Logging.AttemptResult.ParseException, null, 0, sw4.ElapsedMilliseconds,
@@ -541,7 +547,11 @@ public sealed class JobRefresher : IJobRefresher
 
             // Vancouver-area gate: skip jobs whose location is clearly elsewhere.
             // Blank/unknown locations pass through (handled inside LocationMatcher).
-            if (!LocationMatcher.IsVancouverArea(r.Location)) continue;
+            // A posting can also be pinned to a Vancouver-area city only via SecondaryLocations
+            // (e.g. Ashby postings whose primary "location" is the HQ city) — accept those too.
+            var isVancouverArea = LocationMatcher.IsVancouverArea(r.Location)
+                || (r.SecondaryLocations?.Any(LocationMatcher.IsVancouverArea) ?? false);
+            if (!isVancouverArea) continue;
 
             var hashKey = $"{sourceType}:{company.Id}:{r.NativeId}";
             var classified = _classifier.Classify(r.Title, r.Department);
