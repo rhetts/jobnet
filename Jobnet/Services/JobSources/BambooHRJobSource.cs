@@ -74,7 +74,8 @@ public sealed class BambooHRJobSource : IJobSource
                 NativeId = j.Id!,
                 Title = j.JobOpeningName!,
                 Url = $"https://{slug}.bamboohr.com/careers/{j.Id}",
-                Location = FormatLocation(j.Location),
+                // Some postings leave `location` null and only fill `atsLocation`.
+                Location = FormatLocation(j.Location) ?? FormatLocation(j.AtsLocation),
                 RemoteType = ResolveRemoteType(j),
                 EmploymentType = NormalizeEmployment(j.EmploymentStatusLabel),
                 Department = j.DepartmentLabel,
@@ -89,7 +90,8 @@ public sealed class BambooHRJobSource : IJobSource
         if (loc is null) return null;
         var parts = new List<string>(2);
         if (!string.IsNullOrWhiteSpace(loc.City))  parts.Add(loc.City!);
-        if (!string.IsNullOrWhiteSpace(loc.State)) parts.Add(loc.State!);
+        var region = !string.IsNullOrWhiteSpace(loc.State) ? loc.State : loc.Province;
+        if (!string.IsNullOrWhiteSpace(region))    parts.Add(region!);
         return parts.Count == 0 ? null : string.Join(", ", parts);
     }
 
@@ -131,6 +133,7 @@ public sealed class BambooHRJobSource : IJobSource
         [JsonPropertyName("departmentLabel")]          public string? DepartmentLabel { get; set; }
         [JsonPropertyName("employmentStatusLabel")]    public string? EmploymentStatusLabel { get; set; }
         [JsonPropertyName("location")]                 public LocationObj? Location { get; set; }
+        [JsonPropertyName("atsLocation")]              public LocationObj? AtsLocation { get; set; }
         [JsonPropertyName("isRemote")]                 public bool? IsRemote { get; set; }
         [JsonPropertyName("locationType")]             public string? LocationType { get; set; }
     }
@@ -139,5 +142,6 @@ public sealed class BambooHRJobSource : IJobSource
     {
         [JsonPropertyName("city")]  public string? City { get; set; }
         [JsonPropertyName("state")] public string? State { get; set; }
+        [JsonPropertyName("province")] public string? Province { get; set; }
     }
 }

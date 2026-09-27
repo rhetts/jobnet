@@ -115,6 +115,7 @@ public sealed class AvatureJobSource : IJobSource
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var offset = 0;
         var declaredTotal = int.MaxValue; // unknown until the first page tells us
+        var complete = false;
 
         for (var page = 0; page < MaxPages && offset < declaredTotal; page++)
         {
@@ -132,15 +133,23 @@ public sealed class AvatureJobSource : IJobSource
             var (postings, total) = ParsePage(html, baseUrl);
             if (total.HasValue) declaredTotal = total.Value;
 
-            if (postings.Count == 0) break; // ran off the end (or offset lands past the real total)
+            if (postings.Count == 0) { complete = true; break; } // ran off the end (or offset lands past the real total)
 
             foreach (var p in postings)
             {
                 if (seen.Add(p.NativeId)) results.Add(p);
             }
 
-            offset += PageSize;
+            // Step by what the page actually held: some tenants (EA) ignore jobRecordsPerPage and
+            // return 20 cards, so stepping by PageSize re-fetched half of every page.
+            offset += postings.Count;
         }
+
+        // Ran out of pages with more still coming — a truncated list would make the refresher
+        // close every posting past the cap, so fail the fetch instead.
+        if (!complete && offset < declaredTotal)
+            throw new InvalidOperationException(
+                $"Avature slug '{slug}' exceeded {MaxPages} pages; result would be truncated");
 
         return results;
     }

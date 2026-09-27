@@ -595,7 +595,8 @@ public sealed class AiFallbackJobSource : IJobSource
         {
             var rawText = TagRe.Replace(m.Groups["text"].Value, " ");
             var text = WsRe.Replace(System.Net.WebUtility.HtmlDecode(rawText), " ").Trim();
-            var href = m.Groups["href"].Value.Trim();
+            // Attribute values arrive HTML-escaped ("?a=1&amp;b=2") — decode before resolving.
+            var href = System.Net.WebUtility.HtmlDecode(m.Groups["href"].Value).Trim();
             if (string.IsNullOrEmpty(text) || string.IsNullOrEmpty(href)) continue;
             if (href.StartsWith("#") || href.StartsWith("mailto:") || href.StartsWith("tel:")) continue;
             if (text.Length > 120) text = text.Substring(0, 120);

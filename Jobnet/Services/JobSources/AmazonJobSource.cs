@@ -71,6 +71,7 @@ public sealed class AmazonJobSource : IJobSource
 
         var results = new List<RawJobPosting>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var complete = false;
         for (var page = 0; page < MaxPages; page++)
         {
             ct.ThrowIfCancellationRequested();
@@ -88,7 +89,7 @@ public sealed class AmazonJobSource : IJobSource
 
             var payload = await resp.Content.ReadFromJsonAsync<Response>(cancellationToken: ct);
             var batch = payload?.Jobs ?? new();
-            if (batch.Count == 0) break;
+            if (batch.Count == 0) { complete = true; break; }
 
             foreach (var j in batch)
             {
@@ -113,8 +114,13 @@ public sealed class AmazonJobSource : IJobSource
             }
 
             // If we got fewer than a full page, we're at the end. Saves a final empty request.
-            if (batch.Count < PageLimit) break;
+            if (batch.Count < PageLimit) { complete = true; break; }
         }
+        // Ran out of pages with more still coming — a truncated list would make the refresher
+        // close every posting past the cap, so fail the fetch instead.
+        if (!complete)
+            throw new InvalidOperationException(
+                $"Amazon slug '{slug}' exceeded {MaxPages} pages; result would be truncated");
         return results;
     }
 

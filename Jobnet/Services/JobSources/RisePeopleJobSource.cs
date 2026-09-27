@@ -23,23 +23,18 @@ namespace Jobnet.Services.JobSources;
 /// for the public job-listing read. The careers endpoint is anonymously accessible — works
 /// even with the <c>Origin</c> header stripped.
 ///
-/// Response shape:
+/// Response shape (confirmed against the live <c>rise</c> board, 2026-09-26):
 /// <code>
-/// { "settings": { "organization_name": "...", "uri_path": "..." },
+/// { "settings": { ... },
 ///   "departments": [
-///     { "name": "Engineering",
-///       "postings": [
-///         { "id": "...", "title": "...", "location": "...",
-///           "remote_type": "onsite|hybrid|remote", "employment_type": "...",
-///           "url_path": "/en/posting/...", "summary": "..." } ] } ] }
+///     { "title": "R&amp;D - Product",
+///       "positions": [
+///         { "id": 16402, "title": "...", "city": "Vancouver", "province": "BC",
+///           "country": "Canada", "remote_position": true, "job_type": ["FULL_TIME"] } ] } ] }
 /// </code>
-///
-/// Posting fields are mapped defensively via <see cref="JsonElement"/> because both
-/// in-DB Rise customers currently have 0 active postings, so the exact field-name set is
-/// inferred from the Rise frontend (which I read out of the bundle) rather than confirmed
-/// against live data. When a posting first surfaces, tighten the DTO with whatever the
-/// real schema turns out to be — the JsonElement reads will return null for unknown fields
-/// rather than crashing, so we won't lose anything in the meantime.
+/// The list carries no URL; the SPA's posting route is <c>/{company_uri}/{lang}/{position id}</c>.
+/// Fields are still read via <see cref="JsonElement"/> so an unexpected shape yields nulls
+/// rather than failing the batch.
 ///
 /// Slug = the <c>company_uri</c> segment from the URL (e.g. <c>foresightcanada</c>,
 /// <c>settle-smart-technologies-sb</c>).
@@ -80,34 +75,33 @@ public sealed class RisePeopleJobSource : IJobSource
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var d in depts)
         {
-            if (d.Postings is null) continue;
-            foreach (var p in d.Postings)
+            var positions = d.Positions ?? d.Postings;
+            if (positions is null) continue;
+            var deptName = !string.IsNullOrWhiteSpace(d.Title) ? d.Title
+                         : !string.IsNullOrWhiteSpace(d.Name) ? d.Name : null;
+            foreach (var p in positions)
             {
                 var id = ReadString(p, "id") ?? ReadString(p, "uuid");
                 var title = ReadString(p, "title") ?? ReadString(p, "name");
                 if (string.IsNullOrEmpty(id) || string.IsNullOrEmpty(title)) continue;
                 if (!seen.Add(id)) continue;   // dedupe across departments
 
-                var urlPath = ReadString(p, "url_path") ?? ReadString(p, "path");
-                var location = ReadString(p, "location") ?? ReadString(p, "city");
-                var remote = ReadString(p, "remote_type") ?? ReadString(p, "workplace_type");
-                var employment = ReadString(p, "employment_type") ?? ReadString(p, "schedule_type");
-                var summary = ReadString(p, "summary") ?? ReadString(p, "description")
-                                                       ?? ReadString(p, "description_short");
+                var locParts = new[] { ReadString(p, "city"), ReadString(p, "province"), ReadString(p, "country") }
+                    .Where(x => !string.IsNullOrWhiteSpace(x)).ToList();
+                var location = locParts.Count > 0 ? string.Join(", ", locParts) : ReadString(p, "location");
+                var isRemote = ReadBool(p, "remote_position");
+                var employment = ReadFirstString(p, "job_type") ?? ReadString(p, "employment_type");
 
                 results.Add(new RawJobPosting
                 {
                     NativeId = id!,
                     Title = title!.Trim(),
-                    Url = !string.IsNullOrEmpty(urlPath)
-                          ? (urlPath!.StartsWith("http") ? urlPath
-                             : $"https://careers.risepeople.com/{slug}{(urlPath.StartsWith("/") ? "" : "/")}{urlPath}")
-                          : $"https://careers.risepeople.com/{slug}/en",
+                    Url = $"https://careers.risepeople.com/{slug}/en/{Uri.EscapeDataString(id!)}",
                     Location = location,
-                    RemoteType = NormalizeRemote(remote, location),
+                    RemoteType = isRemote == true ? "remote" : NormalizeRemote(null, location),
                     EmploymentType = NormalizeEmployment(employment),
-                    Department = !string.IsNullOrWhiteSpace(d.Name) ? d.Name : null,
-                    DescriptionSnippet = SnippetCleaner.Clean(summary, maxChars: 500),
+                    Department = deptName,
+                    DescriptionSnippet = null,   // not in the list payload
                 });
             }
         }
@@ -143,6 +137,23 @@ public sealed class RisePeopleJobSource : IJobSource
         }
     }
 
+    private static bool? ReadBool(JsonElement obj, string name) =>
+        obj.ValueKind == JsonValueKind.Object && obj.TryGetProperty(name, out var v)
+            && v.ValueKind is JsonValueKind.True or JsonValueKind.False
+            ? v.GetBoolean() : null;
+
+    /// <summary>First string of an array field (Rise's <c>job_type</c> is e.g. <c>["FULL_TIME"]</c>),
+    /// or the field itself if it's a plain string.</summary>
+    private static string? ReadFirstString(JsonElement obj, string name)
+    {
+        if (obj.ValueKind != JsonValueKind.Object || !obj.TryGetProperty(name, out var v)) return null;
+        if (v.ValueKind == JsonValueKind.String) return v.GetString();
+        if (v.ValueKind == JsonValueKind.Array)
+            foreach (var e in v.EnumerateArray())
+                if (e.ValueKind == JsonValueKind.String) return e.GetString();
+        return null;
+    }
+
     private static string NormalizeRemote(string? remoteType, string? location)
     {
         var hay = ((remoteType ?? "") + " " + (location ?? "")).ToLowerInvariant();
@@ -170,7 +181,9 @@ public sealed class RisePeopleJobSource : IJobSource
 
     public sealed class Department
     {
-        [JsonPropertyName("name")]     public string? Name { get; set; }
-        [JsonPropertyName("postings")] public List<JsonElement>? Postings { get; set; }
+        [JsonPropertyName("title")]     public string? Title { get; set; }
+        [JsonPropertyName("name")]      public string? Name { get; set; }
+        [JsonPropertyName("positions")] public List<JsonElement>? Positions { get; set; }
+        [JsonPropertyName("postings")]  public List<JsonElement>? Postings { get; set; }
     }
 }

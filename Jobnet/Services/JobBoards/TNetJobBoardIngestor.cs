@@ -42,6 +42,10 @@ public sealed class TNetJobBoardIngestor : IJobBoardSource
     private const string SourceHost = "bctechnology.com";
     private const int MaxPages = 25;
 
+    /// <summary>How long a "profile has no website link" result is trusted before the profile is
+    /// re-checked (the employer may add one). Resolved domains are reused indefinitely.</summary>
+    private static readonly TimeSpan UnmatchedRetryAfter = TimeSpan.FromDays(14);
+
     private readonly IPlaywrightFetcher _fetcher;
     private readonly ICompanyRepository _companies;
     private readonly IJobRepository _jobs;
@@ -49,11 +53,14 @@ public sealed class TNetJobBoardIngestor : IJobBoardSource
     private readonly ITechnologyMatcher _techMatcher;
     private readonly ITechnologyRepository _techs;
     private readonly Filters.FilterRuleProvider _filters;
+    private readonly IJobBoardCompanyMapRepository _companyMap;
 
     public TNetJobBoardIngestor(IPlaywrightFetcher fetcher, ICompanyRepository companies, IJobRepository jobs,
                                  IJobClassifier classifier, ITechnologyMatcher techMatcher,
-                                 ITechnologyRepository techs, Filters.FilterRuleProvider filters)
+                                 ITechnologyRepository techs, Filters.FilterRuleProvider filters,
+                                 IJobBoardCompanyMapRepository companyMap)
     {
+        _companyMap = companyMap;
         _fetcher = fetcher;
         _companies = companies;
         _jobs = jobs;
@@ -78,6 +85,10 @@ public sealed class TNetJobBoardIngestor : IJobBoardSource
             .GroupBy(c => c.Name, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.First().Id, StringComparer.OrdinalIgnoreCase);
         var seenNativeIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        // Employers whose profile fetch failed this run (Cloudflare hiccup, timeout). Not cached
+        // in the DB since it says nothing about the employer, but don't retry it for every one
+        // of their postings within the same run.
+        var failedLookupsThisRun = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         for (var page = 1; page <= MaxPages; page++)
         {
@@ -112,6 +123,7 @@ public sealed class TNetJobBoardIngestor : IJobBoardSource
             if (rows.Length == 0) break; // past the last page
 
             result.PagesProcessed = page;
+            var newIdsOnPage = 0;
 
             foreach (var row in rows)
             {
@@ -126,6 +138,7 @@ public sealed class TNetJobBoardIngestor : IJobBoardSource
                 if (!idMatch.Success) continue; // not a real posting link — skip, don't guess
                 var nativeId = idMatch.Groups["id"].Value;
                 if (!seenNativeIds.Add(nativeId)) continue; // same posting seen on an earlier page
+                newIdsOnPage++;
 
                 var title = CleanTitle(anchor!.TextContent);
                 if (string.IsNullOrWhiteSpace(title)) continue;
@@ -148,12 +161,7 @@ public sealed class TNetJobBoardIngestor : IJobBoardSource
 
                 if (!byName.TryGetValue(companyName, out var companyId))
                 {
-                    var profileUrl = cityAnchor is null ? null
-                        : new Uri(new Uri(SearchUrl), cityAnchor.GetAttribute("href") ?? "").ToString();
-
-                    var domain = profileUrl is null ? null
-                        : await TryResolveExternalDomainAsync(profileUrl, ct);
-
+                    var domain = await ResolveCompanyDomainAsync(companyName, cityAnchor, failedLookupsThisRun, ct);
                     if (domain is null)
                     {
                         result.SkippedUnmatchedCompany++;
@@ -209,6 +217,11 @@ public sealed class TNetJobBoardIngestor : IJobBoardSource
                 _techs.SetForJob(id, techIds);
             }
 
+            // Nothing new on this page: the site served rows we've already seen (it repeats the
+            // same results for every page= value past the real end). Every earlier run walked all
+            // 25 pages this way, ~30s of rate-limited Playwright each, for the same ~50 postings.
+            if (newIdsOnPage == 0) break;
+
             // Page came back short of a full page of rows — almost certainly the last page.
             if (rows.Length < 40) break;
         }
@@ -219,12 +232,15 @@ public sealed class TNetJobBoardIngestor : IJobBoardSource
     /// <summary>Same rule <see cref="DomainResolution.TryResolveExternalDomainAsync"/> applies
     /// (first non-source-host, non-blocked outbound anchor on the profile page), but via
     /// Playwright — same Cloudflare wall as the search page itself.</summary>
-    private async Task<string?> TryResolveExternalDomainAsync(string profileUrl, CancellationToken ct)
+    /// <summary>Returns <c>Fetched=false</c> when the profile page couldn't be loaded (transient),
+    /// vs <c>Fetched=true, Domain=null</c> when it loaded but has no usable outbound link — only
+    /// the latter is worth caching.</summary>
+    private async Task<(bool Fetched, string? Domain)> TryResolveExternalDomainAsync(string profileUrl, CancellationToken ct)
     {
         try
         {
             var fetch = await _fetcher.FetchAsync(profileUrl, ct);
-            if (!fetch.Success || string.IsNullOrEmpty(fetch.Html)) return null;
+            if (!fetch.Success || string.IsNullOrEmpty(fetch.Html)) return (false, null);
 
             var anchors = DomainResolution.ExtractAnchors(fetch.Html, fetch.FinalUrl, max: 80);
             foreach (var (_, href) in anchors)
@@ -233,11 +249,39 @@ public sealed class TNetJobBoardIngestor : IJobBoardSource
                 if (string.IsNullOrEmpty(d)) continue;
                 if (d.Equals(SourceHost, StringComparison.OrdinalIgnoreCase)) continue;
                 if (_filters.Current.IsHostBlocked(d, Models.FilterScope.Discovery)) continue;
-                return d;
+                return (true, d);
             }
+            return (true, null);
         }
         catch (Exception) when (ct.IsCancellationRequested == false) { /* ignore — skip this row */ }
-        return null;
+        return (false, null);
+    }
+
+    /// <summary>Employer name -> website domain, via the <c>jobboard_company_map</c> cache first and
+    /// the employer's T-Net profile page only on a miss (or once a cached "no website" result is
+    /// older than <see cref="UnmatchedRetryAfter"/>). Null means skip the row.</summary>
+    private async Task<string?> ResolveCompanyDomainAsync(string companyName, AngleSharp.Dom.IElement? cityAnchor,
+                                                          HashSet<string> failedLookupsThisRun, CancellationToken ct)
+    {
+        var cached = _companyMap.Get(Name, companyName);
+        if (cached is not null
+            && (cached.Domain is not null || DateTime.UtcNow - cached.ResolvedAtUtc < UnmatchedRetryAfter))
+            return cached.Domain;
+
+        if (failedLookupsThisRun.Contains(companyName)) return null;
+
+        var profileUrl = cityAnchor is null ? null
+            : new Uri(new Uri(SearchUrl), cityAnchor.GetAttribute("href") ?? "").ToString();
+        if (profileUrl is null) return null;
+
+        var (fetched, domain) = await TryResolveExternalDomainAsync(profileUrl, ct);
+        if (!fetched)
+        {
+            failedLookupsThisRun.Add(companyName);
+            return null;
+        }
+        _companyMap.Save(Name, companyName, domain);
+        return domain;
     }
 
     private static string CleanTitle(string? text)

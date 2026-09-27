@@ -1,11 +1,14 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Json;
 using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Jobnet.Services.ApiUsage;
+using Jobnet.Services.Location;
 using Jobnet.Services.RateLimit;
 
 namespace Jobnet.Services.JobSources;
@@ -40,9 +43,10 @@ public sealed class WorkdayJobSource : IJobSource
     /// <summary>Workday caps page size at 20. Asking for more is silently truncated.</summary>
     private const int PageLimit = 20;
 
-    /// <summary>Hard ceiling on pagination to bound a misconfigured tenant. The biggest known
-    /// public Workday boards are ~5K postings; we'd hit the ceiling well before any of them.</summary>
-    private const int MaxPages = 50;
+    /// <summary>Hard ceiling on pagination to bound a misconfigured tenant (150 pages = 3000
+    /// postings; Mastercard alone is ~1050). Exceeding it throws rather than returning a
+    /// truncated list.</summary>
+    private const int MaxPages = 150;
 
     private readonly HttpClient _http;
     private readonly IApiUsageTracker _usage;
@@ -75,46 +79,123 @@ public sealed class WorkdayJobSource : IJobSource
         var endpoint = $"https://{host}/wday/cxs/{tenant}/{site}/jobs";
         var siteBase = $"https://{host}/{site}";
 
+        // First, an unfiltered page-0 request: it carries the tenant's facet tree, which is the
+        // only way to learn its location facet ids. If it has one, re-query filtered to the
+        // Vancouver-area values so we don't page through a global board (Mastercard: ~1050
+        // postings, ~17 in the area) just to drop almost everything at the location gate.
+        var first = await PostPageAsync(endpoint, slug, new Dictionary<string, object>(), 0, 0, ct);
+        var areaFacet = PickAreaLocationFacet(first?.Facets);
+        IReadOnlyList<string>? inAreaLocations = null;
+        var applied = new Dictionary<string, object>();
+        if (areaFacet is { } f)
+        {
+            // Tenant has a location facet but nothing in the area: a real empty result.
+            if (f.Ids.Count == 0) return new List<RawJobPosting>();
+            applied[f.Parameter] = f.Ids;
+            inAreaLocations = f.Descriptors;
+            first = null; // page 0 must be re-fetched with the filter applied
+        }
+
         var all = new List<RawJobPosting>();
         var offset = 0;
-        for (var page = 0; page < MaxPages; page++)
+        var total = 0;
+        for (var page = 0; ; page++)
         {
-            ct.ThrowIfCancellationRequested();
-            await _rateLimiter.WaitAsync(Provider, ct);
-            _usage.RecordCall(Provider);
+            // Hitting the ceiling means we'd return a truncated list, and the refresher would
+            // close every posting past it. Fail the fetch instead so nothing gets closed.
+            if (page >= MaxPages)
+                throw new InvalidOperationException(
+                    $"Workday slug '{slug}' exceeded {MaxPages} pages ({MaxPages * PageLimit} postings); result would be truncated");
 
-            using var req = new HttpRequestMessage(HttpMethod.Post, endpoint)
-            {
-                Content = JsonContent.Create(new SearchRequest
-                {
-                    AppliedFacets = new System.Collections.Generic.Dictionary<string, object>(),
-                    Limit = PageLimit,
-                    Offset = offset,
-                    SearchText = "",
-                }),
-            };
-            req.Headers.Add("Accept", "application/json");
-
-            using var resp = await _http.SendAsync(req, ct);
-            if (!resp.IsSuccessStatusCode)
-                throw new HttpRequestException($"Workday HTTP {(int)resp.StatusCode} for slug '{slug}' (page {page + 1})");
-
-            var payload = await resp.Content.ReadFromJsonAsync<Response>(cancellationToken: ct);
-            var batch = ParseBatch(payload, siteBase);
+            var payload = page == 0 && first is not null
+                ? first
+                : await PostPageAsync(endpoint, slug, applied, offset, page, ct);
+            var batch = ParseBatch(payload, siteBase, inAreaLocations);
             all.AddRange(batch);
 
-            var total = payload?.Total ?? 0;
+            // Workday only reports `total` on the first page (offset=0) -- later pages return
+            // total=0 -- so capture it once. Reading it per page stopped every tenant at 40.
+            if (page == 0) total = payload?.Total ?? 0;
             offset += PageLimit;
-            // Stop when we've reached `total`, or when the batch was short (Workday's signal
-            // there are no more pages), or when an empty page comes back.
+            // Stop when we've reached `total`, or when an empty page comes back.
             if (batch.Count == 0 || offset >= total) break;
         }
         return all;
     }
 
+    private async Task<Response?> PostPageAsync(string endpoint, string slug, Dictionary<string, object> appliedFacets,
+                                                int offset, int page, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        await _rateLimiter.WaitAsync(Provider, ct);
+        _usage.RecordCall(Provider);
+
+        using var req = new HttpRequestMessage(HttpMethod.Post, endpoint)
+        {
+            Content = JsonContent.Create(new SearchRequest
+            {
+                AppliedFacets = appliedFacets,
+                Limit = PageLimit,
+                Offset = offset,
+                SearchText = "",
+            }),
+        };
+        req.Headers.Add("Accept", "application/json");
+
+        using var resp = await _http.SendAsync(req, ct);
+        if (!resp.IsSuccessStatusCode)
+            throw new HttpRequestException($"Workday HTTP {(int)resp.StatusCode} for slug '{slug}' (page {page + 1})");
+        return await resp.Content.ReadFromJsonAsync<Response>(cancellationToken: ct);
+    }
+
+    /// <summary>Location facet parameters, most specific first. Most tenants expose
+    /// <c>locations</c> (nested under <c>locationMainGroup</c>); some (TELUS/LifeWorks) only a
+    /// flat <c>City</c>. Country/region facets are deliberately not used: too coarse to match
+    /// the per-city location gate.</summary>
+    private static readonly string[] LocationFacetParams = { "locations", "City" };
+
+    /// <summary>Pulled out for unit testing. Finds the tenant's city-level location facet and
+    /// returns the values that pass <see cref="LocationMatcher.IsVancouverArea"/>, the same rule
+    /// the refresher's location gate applies to each posting, so filtering server-side keeps the
+    /// same set (plus multi-location postings the gate can't see into). Returns null when the
+    /// tenant has no recognisable location facet, meaning: don't filter.</summary>
+    public static (string Parameter, List<string> Ids, List<string> Descriptors)? PickAreaLocationFacet(List<Facet>? facets)
+    {
+        if (facets is null) return null;
+        var flat = new List<Facet>();
+        void Walk(List<Facet>? fs)
+        {
+            if (fs is null) return;
+            foreach (var f in fs)
+            {
+                if (!string.IsNullOrEmpty(f.FacetParameter)) flat.Add(f);
+                Walk(f.Values);
+            }
+        }
+        Walk(facets);
+
+        foreach (var param in LocationFacetParams)
+        {
+            var facet = flat.FirstOrDefault(f => f.FacetParameter == param
+                                              && f.Values is { Count: > 0 }
+                                              && f.Values.All(v => v.Id is not null));
+            if (facet is null) continue;
+            var matches = facet.Values!
+                .Where(v => !string.IsNullOrWhiteSpace(v.Descriptor) && LocationMatcher.IsVancouverArea(v.Descriptor))
+                .ToList();
+            return (param, matches.Select(v => v.Id!).ToList(), matches.Select(v => v.Descriptor!).ToList());
+        }
+        return null;
+    }
+
     /// <summary>Pulled out for unit testing — parse one already-deserialised page into postings.
-    /// <paramref name="siteBase"/> is the URL the postings' externalPath is relative to.</summary>
-    public static IReadOnlyList<RawJobPosting> ParseBatch(Response? payload, string siteBase)
+    /// <paramref name="siteBase"/> is the URL the postings' externalPath is relative to.
+    /// <paramref name="inAreaLocations"/>, when set, are the Vancouver-area location facet values
+    /// the page was filtered by: a multi-site posting ("2 Locations", "X, More...") gets them as
+    /// <see cref="RawJobPosting.SecondaryLocations"/> so the location gate keeps it, since the
+    /// filter already guarantees it's in one of them.</summary>
+    public static IReadOnlyList<RawJobPosting> ParseBatch(Response? payload, string siteBase,
+                                                          IReadOnlyList<string>? inAreaLocations = null)
     {
         var items = payload?.JobPostings ?? new();
         var results = new List<RawJobPosting>(items.Count);
@@ -134,6 +215,8 @@ public sealed class WorkdayJobSource : IJobSource
                 Title = j.Title!,
                 Url = siteBase.TrimEnd('/') + j.ExternalPath,
                 Location = j.LocationsText,
+                SecondaryLocations = inAreaLocations is not null && IsMultiLocation(j.LocationsText)
+                    ? inAreaLocations : null,
                 RemoteType = GuessRemoteType(j.LocationsText),
                 EmploymentType = "unknown",   // Workday's search results don't include this; the
                                               // per-posting detail page does. Leaving as unknown
@@ -166,6 +249,13 @@ public sealed class WorkdayJobSource : IJobSource
         return externalPath;
     }
 
+    private static readonly Regex MultiLocationRe =
+        // "2 Locations" on most tenants; Motorola shows the first one plus "More..." instead.
+        new(@"^\s*\d+\s+Locations\s*$|,\s*More\.\.\.\s*$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    private static bool IsMultiLocation(string? locationsText) =>
+        locationsText is not null && MultiLocationRe.IsMatch(locationsText);
+
     private static string GuessRemoteType(string? locationsText)
     {
         if (string.IsNullOrEmpty(locationsText)) return "unknown";
@@ -187,6 +277,18 @@ public sealed class WorkdayJobSource : IJobSource
     {
         [JsonPropertyName("total")]       public int? Total { get; set; }
         [JsonPropertyName("jobPostings")] public List<Posting>? JobPostings { get; set; }
+        [JsonPropertyName("facets")]      public List<Facet>? Facets { get; set; }
+    }
+
+    /// <summary>One node of Workday's facet tree. Group nodes carry <c>facetParameter</c> +
+    /// child <c>values</c>; leaf values carry <c>id</c> + <c>descriptor</c> + <c>count</c>.</summary>
+    public sealed class Facet
+    {
+        [JsonPropertyName("facetParameter")] public string? FacetParameter { get; set; }
+        [JsonPropertyName("descriptor")]     public string? Descriptor { get; set; }
+        [JsonPropertyName("id")]             public string? Id { get; set; }
+        [JsonPropertyName("count")]          public int? Count { get; set; }
+        [JsonPropertyName("values")]         public List<Facet>? Values { get; set; }
     }
 
     public sealed class Posting

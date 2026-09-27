@@ -23,6 +23,7 @@ internal static class ServiceRegistration
         services.AddSingleton<IJobProcessingQueueRepository, JobProcessingQueueRepository>();
         services.AddSingleton<ICompanyRepository, CompanyRepository>();
         services.AddSingleton<ICompanyUrlsRepository, CompanyUrlsRepository>();
+        services.AddSingleton<IJobBoardCompanyMapRepository, JobBoardCompanyMapRepository>();
         services.AddSingleton<IJobRepository, JobRepository>();
         services.AddSingleton<ILevelRepository, LevelRepository>();
         services.AddSingleton<IAreaRepository, AreaRepository>();

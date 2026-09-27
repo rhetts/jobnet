@@ -54,7 +54,10 @@ public static class SnippetCleaner
     {
         if (string.IsNullOrWhiteSpace(raw)) return null;
 
-        var s = TagRe.Replace(raw, " ");
+        // Decode before stripping too: some ATSes (Greenhouse) send entity-escaped markup
+        // ("&lt;p&gt;"), whose tags only become visible after one decode.
+        var s = System.Net.WebUtility.HtmlDecode(raw);
+        s = TagRe.Replace(s, " ");
         s = System.Net.WebUtility.HtmlDecode(s);
         s = WhitespaceRe.Replace(s, " ").Trim();
         if (s.Length == 0) return null;
