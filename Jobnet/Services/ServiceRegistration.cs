@@ -189,6 +189,15 @@ internal static class ServiceRegistration
         // HttpClient (see the class doc comment for why) and only needs the usage/rate-limit
         // services, registered elsewhere.
         services.AddSingleton<JobSources.SiSystemsJobSource>();
+        services.AddHttpClient<JobSources.DayforceJobSource>(client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(15);
+            client.DefaultRequestHeaders.UserAgent.ParseAdd(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+            // Needs the CSRF cookie the /api/auth/csrf GET sets to carry over to the search POSTs
+            // that follow on this same HttpClient — SocketsHttpHandler's default UseCookies=true
+            // handles that with no extra config.
+        });
         services.AddSingleton<Parsing.SelectorProfileReplayer>();
         services.AddSingleton<Parsing.AiSelectorDeriver>();
         // Hand-written company parsers. Registration order = priority order — more-specific
@@ -220,6 +229,7 @@ internal static class ServiceRegistration
         services.AddSingleton<JobSources.IJobSource>(sp => sp.GetRequiredService<JobSources.AvatureJobSource>());
         services.AddSingleton<JobSources.IJobSource>(sp => sp.GetRequiredService<JobSources.EightfoldJobSource>());
         services.AddSingleton<JobSources.IJobSource>(sp => sp.GetRequiredService<JobSources.SiSystemsJobSource>());
+        services.AddSingleton<JobSources.IJobSource>(sp => sp.GetRequiredService<JobSources.DayforceJobSource>());
         services.AddSingleton<JobSources.IJobSource>(sp => sp.GetRequiredService<JobSources.AiFallbackJobSource>());
         services.AddSingleton<JobSources.IJobRefresher, JobSources.JobRefresher>();
 
