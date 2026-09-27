@@ -20,13 +20,15 @@ public sealed class QueueBackfillCommand : ICliCommand
     public string Name => "queue-backfill";
     public string Description =>
         "Enqueue summary + resume-match + company-profile tasks for any entity missing one. " +
-        "Flags: --summary-only, --match-only, --profile-only";
+        "Flags: --summary-only, --match-only, --profile-only, --requeue-stuck (also reset failed/" +
+        "completed resume-match rows for jobs still missing a score — same as Stats > Rescore stuck)";
 
     public int Run(string[] args, IServiceProvider services)
     {
         var summaryOnly = args.Contains("--summary-only");
         var matchOnly = args.Contains("--match-only");
         var profileOnly = args.Contains("--profile-only");
+        var requeueStuck = args.Contains("--requeue-stuck");
         // If a specific --*-only flag is set, the others are skipped. No --*-only flags = run all.
         var runSummary  = !matchOnly && !profileOnly;
         var runMatch    = !summaryOnly && !profileOnly;
@@ -45,6 +47,11 @@ public sealed class QueueBackfillCommand : ICliCommand
         if (runMatch)
         {
             var ids = jobs.GetActiveIdsMissingResumeMatch();
+            if (requeueStuck)
+            {
+                var reset = queue.Requeue(ids, JobProcessingTaskTypes.ResumeMatch);
+                Console.WriteLine($"resume_match    : {reset,5} stuck rows reset to pending");
+            }
             var n = queue.EnqueueMissing(ids, JobProcessingTaskTypes.ResumeMatch);
             Console.WriteLine($"resume_match    : {n,5} enqueued ({ids.Count - n} already in queue)");
         }

@@ -190,6 +190,12 @@ internal static class ServiceRegistration
         // HttpClient (see the class doc comment for why) and only needs the usage/rate-limit
         // services, registered elsewhere.
         services.AddSingleton<JobSources.SiSystemsJobSource>();
+        services.AddHttpClient<JobSources.RandstadJobSource>(client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(20);
+            client.DefaultRequestHeaders.UserAgent.ParseAdd(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+        });
         services.AddHttpClient<JobSources.DayforceJobSource>(client =>
         {
             client.Timeout = TimeSpan.FromSeconds(15);
@@ -231,6 +237,7 @@ internal static class ServiceRegistration
         services.AddSingleton<JobSources.IJobSource>(sp => sp.GetRequiredService<JobSources.EightfoldJobSource>());
         services.AddSingleton<JobSources.IJobSource>(sp => sp.GetRequiredService<JobSources.SiSystemsJobSource>());
         services.AddSingleton<JobSources.IJobSource>(sp => sp.GetRequiredService<JobSources.DayforceJobSource>());
+        services.AddSingleton<JobSources.IJobSource>(sp => sp.GetRequiredService<JobSources.RandstadJobSource>());
         services.AddSingleton<JobSources.IJobSource>(sp => sp.GetRequiredService<JobSources.AiFallbackJobSource>());
         services.AddSingleton<JobSources.IJobRefresher, JobSources.JobRefresher>();
 
