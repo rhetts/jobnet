@@ -87,11 +87,19 @@ public sealed class LLamaClient : IAiClient, IDisposable
         // prompt. Reserve room for the chat-template scaffolding and the output, then truncate the
         // user message (the large, variable-size part) to whatever's left. Keeps the system prompt
         // intact since that's small and carries the task instructions.
+        //
+        // The output reservation is capped at a quarter of the context. Callers size maxTokens
+        // for cloud models (resume_match asks for 8192), and reserving that verbatim on a
+        // 4096-token context left the prompt the 256-token floor — the model never saw the
+        // jobs it was asked to score, and every resume-match batch failed. Once the prompt is
+        // built, the output gets whatever context it leaves, still capped at what was asked.
         var ctxSize = (int)(_loadedParams!.ContextSize ?? 4096);
         var scaffoldTokens = ApproxTokens(BuildPrompt(system, ""));
-        var budget = Math.Max(256, ctxSize - scaffoldTokens - maxOut);
+        var outReserve = Math.Min(maxOut, ctxSize / 4);
+        var budget = Math.Max(256, ctxSize - scaffoldTokens - outReserve);
         var userForPrompt = TruncateToApproxTokens(userMessage, budget);
         var prompt = BuildPrompt(system, userForPrompt);
+        maxOut = Math.Max(64, Math.Min(maxOut, ctxSize - ApproxTokens(prompt)));
 
         _usage.RecordCall(Provider);
 
