@@ -35,6 +35,7 @@ public sealed class DiscoverCommand : ICliCommand
         Console.WriteLine($"Results skipped (filter): {report.ResultsSkippedFiltered}");
         Console.WriteLine($"Companies added:        {report.CompaniesAdded}");
         Console.WriteLine($"Companies already in DB:  {report.CompaniesSkippedExisting}");
+        Console.WriteLine($"  ...given an ATS:      {report.CompaniesAtsLinked}");
 
         if (report.AddedDomains.Count > 0)
         {

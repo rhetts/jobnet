@@ -343,21 +343,14 @@
                 <Button Content="Profile..."
                         Style="{StaticResource ToolbarButton}"
                         Command="{Binding OpenResumeCommand}"/>
-                <Button Content="Runs..."
-                        Style="{StaticResource ToolbarButton}"
-                        Command="{Binding OpenRunsCommand}"/>
                 <Button Content="Monitor..."
                         Style="{StaticResource ToolbarButton}"
                         Command="{Binding OpenStatsCommand}"
-                        ToolTip="Stats (companies, jobs, queue backlog, extraction systems), API usage (RPM/RPD/TPD vs caps), and the live log."/>
+                        ToolTip="Stats (companies, jobs, queue backlog, extraction systems), run history, API usage (RPM/RPD/TPD vs caps), and the live log."/>
                 <Button Content="Sources..."
                         Style="{StaticResource ToolbarButton}"
                         Command="{Binding OpenSourcesCommand}"
-                        ToolTip="Browse every company we track plus the discovery seeds &amp; aggregator boards. Filter by type or company size."/>
-                <Button Content="Parsers..."
-                        Style="{StaticResource ToolbarButton}"
-                        Command="{Binding OpenParserReportCommand}"
-                        ToolTip="Shows which extraction system each company uses, plus health of cached selector profiles."/>
+                        ToolTip="Browse every company we track plus the discovery seeds &amp; aggregator boards (Sources tab), and which extraction system each company uses plus the health of cached selector profiles (Parsers tab)."/>
                 <Button Content="Cover from URL..."
                         Style="{StaticResource ToolbarButton}"
                         Command="{Binding OpenCoverFromUrlCommand}"
@@ -488,6 +481,13 @@
                                                 ToolTip="Recruitment agency — postings here are on behalf of other employers.">
                                             <TextBlock Text="Agency" FontSize="9" Foreground="#7A5810"/>
                                         </Border>
+                                        <TextBlock Text="⚠"
+                                                   Foreground="#D9822B"
+                                                   FontSize="12"
+                                                   Margin="6,0,0,0"
+                                                   VerticalAlignment="Center"
+                                                   Visibility="{Binding HasHealthIssue, Converter={StaticResource BoolToVis}}"
+                                                   ToolTip="{Binding HealthTooltip}"/>
                                     </StackPanel>
                                     <TextBlock Text="{Binding City}"
                                                FontSize="10"

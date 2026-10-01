@@ -61,6 +61,9 @@ public static class JobProcessingTaskTypes
     public const string Summary         = "summary";
     public const string ResumeMatch     = "resume_match";
     public const string CompanyProfile  = "company_profile";
+    /// <summary>AI title classification for jobs the heuristic couldn't place. Runs in the
+    /// background instead of inline in the refresh loop, so a scan never waits on the AI.</summary>
+    public const string Classify        = "classify";
 }
 
 public static class JobProcessingStatus

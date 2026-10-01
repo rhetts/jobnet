@@ -19,8 +19,8 @@ public sealed class QueueBackfillCommand : ICliCommand
 {
     public string Name => "queue-backfill";
     public string Description =>
-        "Enqueue summary + resume-match + company-profile tasks for any entity missing one. " +
-        "Flags: --summary-only, --match-only, --profile-only, --requeue-stuck (also reset failed/" +
+        "Enqueue summary + resume-match + company-profile + classify tasks for any entity missing one. " +
+        "Flags: --summary-only, --match-only, --profile-only, --classify-only, --requeue-stuck (also reset failed/" +
         "completed resume-match rows for jobs still missing a score — same as Stats > Rescore stuck)";
 
     public int Run(string[] args, IServiceProvider services)
@@ -28,11 +28,14 @@ public sealed class QueueBackfillCommand : ICliCommand
         var summaryOnly = args.Contains("--summary-only");
         var matchOnly = args.Contains("--match-only");
         var profileOnly = args.Contains("--profile-only");
+        var classifyOnly = args.Contains("--classify-only");
         var requeueStuck = args.Contains("--requeue-stuck");
         // If a specific --*-only flag is set, the others are skipped. No --*-only flags = run all.
-        var runSummary  = !matchOnly && !profileOnly;
-        var runMatch    = !summaryOnly && !profileOnly;
-        var runProfile  = !summaryOnly && !matchOnly;
+        var anyOnly     = summaryOnly || matchOnly || profileOnly || classifyOnly;
+        var runSummary  = !anyOnly || summaryOnly;
+        var runMatch    = !anyOnly || matchOnly;
+        var runProfile  = !anyOnly || profileOnly;
+        var runClassify = !anyOnly || classifyOnly;
 
         var jobs = services.GetRequiredService<IJobRepository>();
         var companies = services.GetRequiredService<ICompanyRepository>();
@@ -54,6 +57,12 @@ public sealed class QueueBackfillCommand : ICliCommand
             }
             var n = queue.EnqueueMissing(ids, JobProcessingTaskTypes.ResumeMatch);
             Console.WriteLine($"resume_match    : {n,5} enqueued ({ids.Count - n} already in queue)");
+        }
+        if (runClassify)
+        {
+            var ids = jobs.GetActiveIdsUnclassified();
+            var n = queue.EnqueueMissing(ids, JobProcessingTaskTypes.Classify);
+            Console.WriteLine($"classify        : {n,5} enqueued ({ids.Count - n} already in queue)");
         }
         if (runProfile)
         {

@@ -19,11 +19,19 @@ public sealed class DiscoveryService : IDiscoveryService
     private readonly IDbConnectionFactory _connections;
     private readonly ICompanyDiscoveryRepository _sightings;
     private readonly Filters.FilterRuleProvider _filters;
+    private readonly System.Net.Http.HttpClient _http;
+
+    /// <summary>search_terms.type for the `site:jobs.ashbyhq.com Vancouver`-style queries (062).</summary>
+    public const string AtsSiteTermType = "ats_site";
+
+    /// <summary>company_discoveries.source_type for companies found via an ATS board URL.</summary>
+    public const string AtsSiteSource = "ats_site_search";
 
     public DiscoveryService(ISearchClient cse, ICompanyRepository companies, IConfigRepository config,
                              IDbConnectionFactory connections, ICompanyDiscoveryRepository sightings,
-                             Filters.FilterRuleProvider filters)
+                             Filters.FilterRuleProvider filters, System.Net.Http.HttpClient http)
     {
+        _http = http;
         _search = cse;
         _companies = companies;
         _config = config;
@@ -44,13 +52,18 @@ public sealed class DiscoveryService : IDiscoveryService
         var resultsSkipped = 0;
         var companiesAdded = 0;
         var companiesSkippedExisting = 0;
+        var companiesAtsLinked = 0;
         var errors = new List<string>();
         var addedDomains = new List<string>();
         var domainsSeenThisRun = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var atsBoardsSeenThisRun = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        foreach (var term in terms)
+        foreach (var (term, type) in terms)
         {
-            for (var page = 1; page <= maxQueriesPerTerm; page++)
+            // ATS site: terms get one page each — they run first and Brave's soft cap is ~60
+            // calls/day, so paginating them would starve the generic terms.
+            var pages = type == AtsSiteTermType ? 1 : maxQueriesPerTerm;
+            for (var page = 1; page <= pages; page++)
             {
                 ct.ThrowIfCancellationRequested();
                 List<SearchResult> results;
@@ -81,6 +94,46 @@ public sealed class DiscoveryService : IDiscoveryService
                 foreach (var result in results)
                 {
                     resultsExamined++;
+
+                    // An ATS board URL already names the ATS and the account — handle it directly
+                    // instead of treating jobs.lever.co etc. as the company's domain. Applies to
+                    // every term (generic ones surface board URLs too), not just ats_site ones.
+                    if (AtsDetection.AtsDetector.TryMatchAtsUrl(result.Url, out var atsType, out var atsSlug, out var boardUrl))
+                    {
+                        if (!atsBoardsSeenThisRun.Add($"{atsType}:{atsSlug}"))
+                            continue; // several postings from one board in the same results
+
+                        var outcome = await HandleAtsHitAsync(term, result.Url, atsType, atsSlug, boardUrl,
+                                                              filters, domainsSeenThisRun, ct);
+                        switch (outcome.Kind)
+                        {
+                            case AtsHitKind.Added:
+                                companiesAdded++;
+                                addedDomains.Add(outcome.Domain!);
+                                break;
+                            case AtsHitKind.LinkedExisting:
+                                companiesAtsLinked++;
+                                companiesSkippedExisting++;
+                                break;
+                            case AtsHitKind.Existing:
+                                companiesSkippedExisting++;
+                                break;
+                            default:
+                                resultsSkipped++;
+                                break;
+                        }
+                        if (outcome.Note is not null) errors.Add($"[{term}] {outcome.Note}");
+                        continue;
+                    }
+
+                    // An ats_site query should only return board URLs; anything else is off-site
+                    // noise, not a company homepage.
+                    if (type == AtsSiteTermType)
+                    {
+                        resultsSkipped++;
+                        continue;
+                    }
+
                     var extracted = DomainExtractor.Extract(result.Url);
                     if (extracted is null)
                     {
@@ -149,17 +202,79 @@ public sealed class DiscoveryService : IDiscoveryService
             ResultsExamined = resultsExamined,
             CompaniesAdded = companiesAdded,
             CompaniesSkippedExisting = companiesSkippedExisting,
+            CompaniesAtsLinked = companiesAtsLinked,
             ResultsSkippedFiltered = resultsSkipped,
             Errors = errors,
             AddedDomains = addedDomains,
         };
     }
 
-    private IReadOnlyList<string> GetActiveDiscoveryTerms()
+    /// <summary>Active discovery terms, ATS site: terms first (see RunAsync for why).</summary>
+    private IReadOnlyList<(string Term, string Type)> GetActiveDiscoveryTerms()
     {
         using var conn = _connections.Open();
-        return conn.Query<string>(
-            "SELECT term FROM search_terms WHERE type = 'company_discovery' AND is_active = 1 ORDER BY id").ToList();
+        return conn.Query<(string, string)>(@"
+            SELECT term, type FROM search_terms
+            WHERE type IN ('company_discovery', @ats) AND is_active = 1
+            ORDER BY CASE type WHEN @ats THEN 0 ELSE 1 END, id",
+            new { ats = AtsSiteTermType }).ToList();
+    }
+
+    private enum AtsHitKind { Added, LinkedExisting, Existing, Skipped }
+
+    private sealed record AtsHitOutcome(AtsHitKind Kind, string? Domain = null, string? Note = null);
+
+    /// <summary>Turn one ATS board hit into a company. Order: already tracked on this ATS account
+    /// → just a sighting; resolve the real domain from the board page (none → skip, the ATS host
+    /// is never the company); domain already tracked without an ATS → attach the ATS to it;
+    /// otherwise insert with ats_type/ats_slug set so it never needs detection.</summary>
+    private async Task<AtsHitOutcome> HandleAtsHitAsync(string term, string url, string atsType, string atsSlug,
+                                                        string boardUrl, Filters.FilterRuleSet filters,
+                                                        HashSet<string> domainsSeenThisRun, CancellationToken ct)
+    {
+        var byAts = _companies.GetByAts(atsType, atsSlug);
+        if (byAts is not null)
+        {
+            _sightings.Record(byAts.Id, AtsSiteSource, term, url, runId: null);
+            return new AtsHitOutcome(AtsHitKind.Existing);
+        }
+
+        var domain = await AtsBoardDomainResolver.ResolveAsync(_http, filters, atsType, atsSlug, boardUrl, ct);
+        if (domain is null)
+            return new AtsHitOutcome(AtsHitKind.Skipped,
+                Note: $"skipped {atsType}:{atsSlug} ({boardUrl}) — no company domain found on the board page");
+
+        // Keeps the generic path below from re-handling this domain later in the run.
+        domainsSeenThisRun.Add(domain);
+
+        var existing = _companies.GetByDomain(domain);
+        if (existing is not null)
+        {
+            _sightings.Record(existing.Id, AtsSiteSource, term, url, runId: null);
+            if (!string.IsNullOrEmpty(existing.AtsType))
+                return new AtsHitOutcome(AtsHitKind.Existing);
+
+            _companies.SetAtsInfo(existing.Id, atsType, atsSlug, boardUrl);
+            return new AtsHitOutcome(AtsHitKind.LinkedExisting,
+                Note: $"linked existing {existing.Name} ({domain}) to {atsType}:{atsSlug}");
+        }
+
+        var company = new Company
+        {
+            Id = 0,
+            Name = NameFromDomain(domain),
+            Domain = domain,
+            WebsiteUrl = $"https://{domain}",
+            CareersUrl = boardUrl,
+            AtsType = atsType,
+            AtsSlug = atsSlug,
+            DateDiscovered = DateTime.UtcNow,
+        };
+        var newId = _companies.Insert(company);
+        // Insert doesn't persist ats_slug — same follow-up SeedCompaniesCommand does.
+        _companies.SetAtsInfo(newId, atsType, atsSlug, boardUrl);
+        _sightings.Record(newId, AtsSiteSource, term, url, runId: null);
+        return new AtsHitOutcome(AtsHitKind.Added, Domain: domain);
     }
 
     private long StartScanLog()

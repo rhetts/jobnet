@@ -26,13 +26,16 @@ public sealed class DirectoryCrawlRepository : IDirectoryCrawlRepository
     }
 
     public void Record(string url, DateTime fetchedAtUtc, int? durationMs,
-                        int candidatesFound, int candidatesAdded, bool success, string? error)
+                        int candidatesFound, int candidatesAdded, bool success, string? error,
+                        string? failureStage = null, string? sourceName = null)
     {
         using var conn = _connections.Open();
         conn.Execute(@"
             INSERT INTO directory_crawls
-                (url, fetched_at, duration_ms, candidates_found, candidates_added, success, error_message)
-            VALUES (@url, @fetchedAt, @durationMs, @candidatesFound, @candidatesAdded, @success, @error)",
+                (url, fetched_at, duration_ms, candidates_found, candidates_added, success, error_message,
+                 failure_stage, source_name)
+            VALUES (@url, @fetchedAt, @durationMs, @candidatesFound, @candidatesAdded, @success, @error,
+                    @failureStage, @sourceName)",
             new
             {
                 url,
@@ -42,6 +45,8 @@ public sealed class DirectoryCrawlRepository : IDirectoryCrawlRepository
                 candidatesAdded,
                 success = success ? 1 : 0,
                 error,
+                failureStage,
+                sourceName,
             });
     }
 

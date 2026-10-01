@@ -14,6 +14,9 @@ public interface IJobRepository
     /// <summary>Active job ids missing the field used by the corresponding queue worker. Backfill
     /// helpers — feed the result into <see cref="IJobProcessingQueueRepository.EnqueueMissing"/>.</summary>
     IReadOnlyList<int> GetActiveIdsMissingSummary();
+    /// <summary>Active jobs with no level and no areas — the ones the heuristic couldn't place
+    /// and the AI classify worker hasn't filled in yet.</summary>
+    IReadOnlyList<int> GetActiveIdsUnclassified();
     IReadOnlyList<int> GetActiveIdsMissingResumeMatch();
     int Insert(Job job, int hashTier);
 

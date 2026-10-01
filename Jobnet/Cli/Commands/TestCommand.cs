@@ -187,6 +187,8 @@ public sealed class TestCommand : ICliCommand
         AssertLocationRejected("Remote U.S.");
         AssertLocationRejected("Remote US");
         AssertLocationRejected("United States - Remote");
+        AssertLocationKept("Remote-NAMER");
+        AssertLocationKept("NAMER");
         AssertLocationRejected("USA - Remote");
         AssertLocationRejected("Remote UK");
         AssertLocationRejected("Remote - United Kingdom");

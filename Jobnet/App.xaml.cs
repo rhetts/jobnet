@@ -38,6 +38,10 @@ public partial class App : Application
             LogException("Dispatcher.UnhandledException", e.Exception);
             e.Handled = false;
         };
+        // Faults in fire-and-forget tasks never reach the two handlers above — without this they
+        // vanish silently. Log only; .NET 8 doesn't crash on these, so behaviour is unchanged.
+        TaskScheduler.UnobservedTaskException += (_, e) =>
+            LogException("TaskScheduler.UnobservedTaskException", e.Exception);
 
         // Route WPF binding/trace errors to the same log so we can see them post-mortem. Wrap
         // an explicit FileStream so the share mode is ReadWrite|Delete — otherwise the listener
@@ -92,16 +96,12 @@ public partial class App : Application
                 services.AddSingleton<Func<Views.ServiceLimitsWindow>>(sp => () => sp.GetRequiredService<Views.ServiceLimitsWindow>());
 
                 services.AddTransient<RunsViewModel>();
-                services.AddTransient<Views.RunsWindow>();
-                services.AddSingleton<Func<Views.RunsWindow>>(sp => () => sp.GetRequiredService<Views.RunsWindow>());
 
                 services.AddTransient<StatsViewModel>();
                 services.AddTransient<Views.StatsWindow>();
                 services.AddSingleton<Func<Views.StatsWindow>>(sp => () => sp.GetRequiredService<Views.StatsWindow>());
 
                 services.AddTransient<ParserReportViewModel>();
-                services.AddTransient<Views.ParserReportWindow>();
-                services.AddSingleton<Func<Views.ParserReportWindow>>(sp => () => sp.GetRequiredService<Views.ParserReportWindow>());
 
                 services.AddTransient<CoverLetterViewModel>();
                 services.AddTransient<Views.CoverLetterWindow>();

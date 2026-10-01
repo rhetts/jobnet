@@ -85,4 +85,33 @@ public sealed class Company
     /// continues (unlike <see cref="IsActive"/>) — this flag only affects display.
     /// Defaults to true on insert (see migration 056 default).</summary>
     public bool IsVisible { get; set; } = true;
+
+    /// <summary>Null when the company's config is fine. Otherwise why it needs attention:
+    /// board_gone | board_empty | fetch_failing | site_dead | site_moved | no_careers_page — see
+    /// <see cref="CompanyHealth"/>. Drives the ⚠ in the sidebar.</summary>
+    public string? HealthStatus { get; set; }
+    public string? HealthReason { get; set; }
+    public DateTime? HealthSince { get; set; }
+}
+
+/// <summary>Values for <see cref="Company.HealthStatus"/>.</summary>
+public static class CompanyHealth
+{
+    public const string BoardGone     = "board_gone";      // ATS board 404s / returns garbage repeatedly
+    public const string BoardEmpty    = "board_empty";     // board used to have jobs, now has none
+    public const string FetchFailing  = "fetch_failing";   // repeated timeouts / connection failures
+    public const string SiteDead      = "site_dead";       // homepage unreachable
+    public const string SiteMoved     = "site_moved";      // homepage redirects to another domain
+    public const string NoCareersPage = "no_careers_page"; // site has no careers link at all
+
+    public static string Label(string? status) => status switch
+    {
+        BoardGone     => "Job board gone",
+        BoardEmpty    => "Job board suddenly empty",
+        FetchFailing  => "Keeps failing to load",
+        SiteDead      => "Website unreachable",
+        SiteMoved     => "Website moved",
+        NoCareersPage => "No careers page found",
+        _             => "OK",
+    };
 }

@@ -32,6 +32,9 @@ public partial class StatsViewModel : ObservableObject
     /// publicly so the XAML can DataContext-bind a TabItem's content to it.</summary>
     public ServiceLimitsViewModel ApiUsage { get; }
 
+    /// <summary>Backs the Runs tab (run history + per-run steps).</summary>
+    public RunsViewModel Runs { get; }
+
     /// <summary>Last ~500 lines of jobnet.log, shown on the Log tab. Re-read on every Refresh
     /// so the user always sees the latest. Read with shared file access so the open trace
     /// listener doesn't block us.</summary>
@@ -44,7 +47,7 @@ public partial class StatsViewModel : ObservableObject
     public StatsViewModel(ICompanyRepository companies, IJobRepository jobs,
                           IJobProcessingQueueRepository queue, IDiscoverySeedRepository seeds,
                           IDirectoryCrawlRepository crawls, ServiceLimitsViewModel apiUsage,
-                          IAppPaths paths)
+                          RunsViewModel runs, IAppPaths paths)
     {
         _companies = companies;
         _jobs = jobs;
@@ -52,6 +55,7 @@ public partial class StatsViewModel : ObservableObject
         _seeds = seeds;
         _crawls = crawls;
         ApiUsage = apiUsage;
+        Runs = runs;
         _paths = paths;
         LogPath = Path.Combine(_paths.DataDirectory, "jobnet.log");
         Refresh();
@@ -132,6 +136,7 @@ public partial class StatsViewModel : ObservableObject
 
         // Refresh the API-usage tab in lockstep so a single "Refresh" click updates both views.
         ApiUsage?.Refresh();
+        Runs?.Refresh();
 
         // And reload the log tail. Read with FileShare.ReadWrite | Delete so the running trace
         // listener (which holds the file open for writes) doesn't block us.

@@ -67,7 +67,7 @@ public abstract class QueueWorker
                     config.GetOrDefault($"worker.{WorkerName}.enabled", "true"),
                     "true", StringComparison.OrdinalIgnoreCase);
 
-                if (enabled && ShouldRunCycle(sp))
+                if (enabled && !RefreshActivity.IsRefreshRunning(sp) && ShouldRunCycle(sp))
                 {
                     var batchSize = ReadInt(config, $"worker.{WorkerName}.batch_size", DefaultBatchSize);
                     var maxAttempts = ReadInt(config, "worker.max_attempts", 3);

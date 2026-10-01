@@ -35,6 +35,11 @@ public sealed class AshbyJobSource : IJobSource
         _usage.RecordCall(Provider);
 
         using var resp = await _http.GetAsync(url, ct);
+        // Some boards (Lime) have the public posting API switched off — it 404s even though the
+        // hosted board at jobs.ashbyhq.com/{slug} is live. Fall back to the GraphQL query that
+        // hosted page itself makes.
+        if (resp.StatusCode == System.Net.HttpStatusCode.NotFound)
+            return await FetchViaHostedBoardAsync(slug, ct);
         if (!resp.IsSuccessStatusCode) throw new HttpRequestException($"Ashby HTTP {(int)resp.StatusCode}");
         var payload = await resp.Content.ReadFromJsonAsync<Response>(cancellationToken: ct);
         var items = payload?.Jobs ?? new();
@@ -57,6 +62,68 @@ public sealed class AshbyJobSource : IJobSource
                 EmploymentType = j.EmploymentType?.ToLowerInvariant(),
                 Department = j.Department ?? j.Team,
                 DescriptionSnippet = SnippetCleaner.Clean(j.DescriptionPlain, maxChars: 500),
+            });
+        }
+        return results;
+    }
+
+    private const string HostedBoardEndpoint = "https://jobs.ashbyhq.com/api/non-user-graphql?op=ApiJobBoardWithTeams";
+
+    // Same operation the hosted board page sends (captured from a HAR of li.me/about/careers),
+    // trimmed to the fields we map. No description in this payload — the per-posting page has it.
+    private const string HostedBoardQuery = @"query ApiJobBoardWithTeams($organizationHostedJobsPageName: String!) {
+  jobBoard: jobBoardWithTeams(organizationHostedJobsPageName: $organizationHostedJobsPageName) {
+    teams { id name }
+    jobPostings { id title teamId locationName workplaceType employmentType secondaryLocations { locationName } }
+  }
+}";
+
+    /// <summary>Fallback for boards whose public posting API is disabled. Unlike the posting API
+    /// the page name is case-sensitive ("Lime", not "lime"), so the stored slug must match the
+    /// jobs.ashbyhq.com URL exactly. A null jobBoard means no such board — thrown as a 404 so the
+    /// refresher's stale-slug handling treats it like any other missing board.</summary>
+    private async Task<IReadOnlyList<RawJobPosting>> FetchViaHostedBoardAsync(string slug, CancellationToken ct)
+    {
+        await _rateLimiter.WaitAsync(Provider, ct);
+        _usage.RecordCall(Provider);
+
+        using var resp = await _http.PostAsJsonAsync(HostedBoardEndpoint, new
+        {
+            operationName = "ApiJobBoardWithTeams",
+            variables = new { organizationHostedJobsPageName = slug },
+            query = HostedBoardQuery,
+        }, ct);
+        if (!resp.IsSuccessStatusCode)
+            throw new HttpRequestException($"Ashby hosted-board HTTP {(int)resp.StatusCode}", null, resp.StatusCode);
+
+        var payload = await resp.Content.ReadFromJsonAsync<HostedBoardResponse>(cancellationToken: ct);
+        var board = payload?.Data?.JobBoard
+            ?? throw new HttpRequestException($"Ashby board '{slug}' not found (posting API and hosted board both empty)",
+                                              null, System.Net.HttpStatusCode.NotFound);
+
+        var teams = (board.Teams ?? new())
+            .Where(t => !string.IsNullOrEmpty(t.Id))
+            .GroupBy(t => t.Id!)
+            .ToDictionary(g => g.Key, g => g.First().Name);
+        var results = new List<RawJobPosting>();
+        foreach (var j in board.JobPostings ?? new())
+        {
+            if (string.IsNullOrEmpty(j.Id) || string.IsNullOrEmpty(j.Title)) continue;
+            results.Add(new RawJobPosting
+            {
+                NativeId = j.Id!,
+                Title = j.Title!,
+                Url = $"https://jobs.ashbyhq.com/{Uri.EscapeDataString(slug)}/{j.Id}",
+                Location = j.LocationName,
+                SecondaryLocations = j.SecondaryLocations?
+                    .Select(x => x.LocationName)
+                    .Where(l => !string.IsNullOrEmpty(l))
+                    .Select(l => l!)
+                    .ToList(),
+                RemoteType = GuessRemoteType(j.WorkplaceType, null, j.LocationName),
+                EmploymentType = j.EmploymentType?.ToLowerInvariant(),
+                Department = j.TeamId is not null && teams.TryGetValue(j.TeamId, out var team) ? team : null,
+                DescriptionSnippet = null,
             });
         }
         return results;
@@ -102,6 +169,44 @@ public sealed class AshbyJobSource : IJobSource
         [JsonPropertyName("department")]       public string? Department { get; set; }
         [JsonPropertyName("team")]             public string? Team { get; set; }
         [JsonPropertyName("descriptionPlain")] public string? DescriptionPlain { get; set; }
+    }
+
+    private sealed class HostedBoardResponse
+    {
+        [JsonPropertyName("data")] public HostedBoardData? Data { get; set; }
+    }
+
+    private sealed class HostedBoardData
+    {
+        [JsonPropertyName("jobBoard")] public HostedBoard? JobBoard { get; set; }
+    }
+
+    private sealed class HostedBoard
+    {
+        [JsonPropertyName("teams")]       public List<HostedTeam>? Teams { get; set; }
+        [JsonPropertyName("jobPostings")] public List<HostedPosting>? JobPostings { get; set; }
+    }
+
+    private sealed class HostedTeam
+    {
+        [JsonPropertyName("id")]   public string? Id { get; set; }
+        [JsonPropertyName("name")] public string? Name { get; set; }
+    }
+
+    private sealed class HostedPosting
+    {
+        [JsonPropertyName("id")]                 public string? Id { get; set; }
+        [JsonPropertyName("title")]              public string? Title { get; set; }
+        [JsonPropertyName("teamId")]             public string? TeamId { get; set; }
+        [JsonPropertyName("locationName")]       public string? LocationName { get; set; }
+        [JsonPropertyName("workplaceType")]      public string? WorkplaceType { get; set; }
+        [JsonPropertyName("employmentType")]     public string? EmploymentType { get; set; }
+        [JsonPropertyName("secondaryLocations")] public List<HostedSecondaryLocation>? SecondaryLocations { get; set; }
+    }
+
+    private sealed class HostedSecondaryLocation
+    {
+        [JsonPropertyName("locationName")] public string? LocationName { get; set; }
     }
 
     private sealed class SecondaryLocation

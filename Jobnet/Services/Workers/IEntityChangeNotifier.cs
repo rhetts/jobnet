@@ -64,4 +64,5 @@ public static class EntityChangeKinds
     public const string Summary    = "summary";
     public const string ResumeMatch = "resume_match";
     public const string Profile    = "profile";
+    public const string Classification = "classification";
 }

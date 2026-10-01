@@ -466,7 +466,7 @@
                                   FontWeight="SemiBold"
                                   Foreground="#333"/>
                         <TextBlock Style="{StaticResource HintText}"
-                                   Text="When on, the first AI extraction of a company also derives a reusable CSS-selector profile. Future refreshes replay the profile instead of calling the AI — much faster. See the Parser Report screen to monitor health and override per company."/>
+                                   Text="When on, the first AI extraction of a company also derives a reusable CSS-selector profile. Future refreshes replay the profile instead of calling the AI — much faster. See Sources → Parsers to monitor health and override per company."/>
 
                         <TextBlock Style="{StaticResource FieldLabel}" Text="Extraction prompt (used by Phase 7 careers-page parser)"/>
                         <TextBox Text="{Binding ClaudeExtractionPrompt, UpdateSourceTrigger=PropertyChanged}"

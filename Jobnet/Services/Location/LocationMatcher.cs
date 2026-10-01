@@ -38,6 +38,9 @@ public static class LocationMatcher
         // Bare region tag with no city/country qualifier (e.g. Ashby's plain "North America"
         // location) — same treatment as bare " canada " above: no negative signal, so keep it.
         " north america ",
+        // "NAMER" = North America (Ashby tenants like Amplitude use "Remote-NAMER"). Delimited
+        // forms only, so no ordinary word containing "namer" can match.
+        "-namer ", " namer ", "(namer)", "/namer ", ",namer ",
     };
 
     // Cities that are clearly NOT Vancouver area. Used to detect "definitely elsewhere"

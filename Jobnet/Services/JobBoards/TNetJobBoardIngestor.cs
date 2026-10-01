@@ -49,14 +49,14 @@ public sealed class TNetJobBoardIngestor : IJobBoardSource
     private readonly IPlaywrightFetcher _fetcher;
     private readonly ICompanyRepository _companies;
     private readonly IJobRepository _jobs;
-    private readonly IJobClassifier _classifier;
+    private readonly HeuristicClassifier _classifier;
     private readonly ITechnologyMatcher _techMatcher;
     private readonly ITechnologyRepository _techs;
     private readonly Filters.FilterRuleProvider _filters;
     private readonly IJobBoardCompanyMapRepository _companyMap;
 
     public TNetJobBoardIngestor(IPlaywrightFetcher fetcher, ICompanyRepository companies, IJobRepository jobs,
-                                 IJobClassifier classifier, ITechnologyMatcher techMatcher,
+                                 HeuristicClassifier classifier, ITechnologyMatcher techMatcher,
                                  ITechnologyRepository techs, Filters.FilterRuleProvider filters,
                                  IJobBoardCompanyMapRepository companyMap)
     {

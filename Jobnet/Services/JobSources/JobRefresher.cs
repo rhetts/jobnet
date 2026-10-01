@@ -24,7 +24,7 @@ public sealed class JobRefresher : IJobRefresher
     private readonly ICompanyUrlsRepository _urls;
     private readonly IJobRepository _jobs;
     private readonly IAreaRepository _areas;
-    private readonly IJobClassifier _classifier;
+    private readonly HeuristicClassifier _classifier;
     private readonly IDbConnectionFactory _connections;
     private readonly Jobnet.Services.AtsDetection.IAtsDetector _atsDetector;
     private readonly IConfigRepository _config;
@@ -36,7 +36,7 @@ public sealed class JobRefresher : IJobRefresher
     public JobRefresher(IEnumerable<IJobSource> sources, AiFallbackJobSource aiSource,
                          ICompanyRepository companies, ICompanyUrlsRepository urls,
                          IJobRepository jobs, IAreaRepository areas,
-                         IJobClassifier classifier, IDbConnectionFactory connections,
+                         HeuristicClassifier classifier, IDbConnectionFactory connections,
                          Jobnet.Services.AtsDetection.IAtsDetector atsDetector,
                          IConfigRepository config,
                          ITechnologyMatcher techMatcher,
@@ -257,7 +257,10 @@ public sealed class JobRefresher : IJobRefresher
                 skipped++;
                 outcomeKind = Logging.OutcomeKind.NoAdapter;
             }
-            catch (OperationCanceledException)
+            // Only a real Stop or Skip lands here. An HttpClient timeout also throws
+            // (Task)CanceledException but fires neither token — it falls through to the generic
+            // catch below and is recorded as a fetch timeout, not "Skipped by user".
+            catch (OperationCanceledException) when (companyCts.IsCancellationRequested)
             {
                 // Run cancelled outright — unwind everything.
                 if (ct.IsCancellationRequested)
@@ -274,7 +277,7 @@ public sealed class JobRefresher : IJobRefresher
             catch (Exception ex)
             {
                 errors.Add($"[{c.Domain}] {ex.Message}");
-                errorMessage = $"{ex.GetType().Name}: {ex.Message}";
+                errorMessage = ex.ToString(); // full text incl. stack trace — the step row is where post-mortems start
                 // Classify the exception so the step row gets a useful outcome_kind even though
                 // the refresher itself didn't reach the per-stage classification path.
                 outcomeKind = ClassifyException(ex);
@@ -330,6 +333,7 @@ public sealed class JobRefresher : IJobRefresher
         string sourceType;      // ats_type-style key used in the job hash
         string sourceStage;     // refresh_attempt.stage value — finer-grained for telemetry
         var stageHadFailure = false;
+        var healthTouched = false;     // SetHealth called earlier in this refresh (ATS detection)
         var lastStageResult = Logging.AttemptResult.Success;
         var lastStageHttp = (int?)null;
 
@@ -349,7 +353,7 @@ public sealed class JobRefresher : IJobRefresher
                 _runs.LogAttempt(runId, company.Id, Logging.AttemptStage.AtsApi, native.AtsType,
                                   lastStageResult, null, jobs.Count, sw.ElapsedMilliseconds, null);
             }
-            catch (OperationCanceledException) { throw; }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
             catch (HttpRequestException hex)
             {
                 sw.Stop();
@@ -367,10 +371,10 @@ public sealed class JobRefresher : IJobRefresher
             {
                 sw.Stop();
                 stageHadFailure = true;
-                lastStageResult = Logging.AttemptResult.ParseException;
+                lastStageResult = FailureResult(ex);
                 _runs.LogAttempt(runId, company.Id, Logging.AttemptStage.AtsApi, native.AtsType,
                                   lastStageResult, null, 0, sw.ElapsedMilliseconds,
-                                  $"{ex.GetType().Name}: {ex.Message}");
+                                  ex.ToString());
                 errors.Add($"[{company.Domain}] {ex.Message}");
             }
             sourceType = native.AtsType;
@@ -385,6 +389,12 @@ public sealed class JobRefresher : IJobRefresher
             {
                 var det = await _atsDetector.DetectViaHttpAsync(company, ct);
                 detectSw.Stop();
+                var health = det.HealthUpdate();
+                if (health.Apply && (health.Status is not null || company.HealthStatus is not null))
+                {
+                    _companies.SetHealth(company.Id, health.Status, health.Reason);
+                    healthTouched = true;
+                }
                 if (det.AtsType is not null && det.AtsSlug is not null
                     && _sources.TryGetValue(det.AtsType, out var maybeNative))
                 {
@@ -400,12 +410,12 @@ public sealed class JobRefresher : IJobRefresher
                                       Logging.AttemptResult.Empty, null, 0, detectSw.ElapsedMilliseconds, det.Notes);
                 }
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (Exception ex) when (!ct.IsCancellationRequested)
             {
                 detectSw.Stop();
                 _runs.LogAttempt(runId, company.Id, Logging.AttemptStage.DetectAts, null,
-                                  Logging.AttemptResult.ParseException, null, 0, detectSw.ElapsedMilliseconds,
-                                  $"{ex.GetType().Name}: {ex.Message}");
+                                  FailureResult(ex), null, 0, detectSw.ElapsedMilliseconds,
+                                  ex.ToString());
                 errors.Add($"[{company.Domain}] ats-detect: {ex.GetType().Name}: {ex.Message}");
             }
 
@@ -422,13 +432,13 @@ public sealed class JobRefresher : IJobRefresher
                                       jobs.Count == 0 ? Logging.AttemptResult.Empty : Logging.AttemptResult.Success,
                                       null, jobs.Count, sw2.ElapsedMilliseconds, null);
                 }
-                catch (Exception ex) when (ex is not OperationCanceledException)
+                catch (Exception ex) when (!ct.IsCancellationRequested)
                 {
                     sw2.Stop();
                     stageHadFailure = true;
                     _runs.LogAttempt(runId, company.Id, Logging.AttemptStage.AtsApi, detectedNative.AtsType,
-                                      Logging.AttemptResult.ParseException, null, 0, sw2.ElapsedMilliseconds,
-                                      $"{ex.GetType().Name}: {ex.Message}");
+                                      FailureResult(ex), null, 0, sw2.ElapsedMilliseconds,
+                                      ex.ToString());
                     errors.Add($"[{company.Domain}] {ex.Message}");
                 }
                 sourceType = detectedNative.AtsType;
@@ -466,13 +476,13 @@ public sealed class JobRefresher : IJobRefresher
                                       jobs.Count == 0 ? Logging.AttemptResult.Empty : Logging.AttemptResult.Success,
                                       null, jobs.Count, sw3.ElapsedMilliseconds, null);
                 }
-                catch (Exception ex) when (ex is not OperationCanceledException)
+                catch (Exception ex) when (!ct.IsCancellationRequested)
                 {
                     sw3.Stop();
                     stageHadFailure = true;
                     _runs.LogAttempt(runId, company.Id, Logging.AttemptStage.AiExtract, startUrl,
-                                      Logging.AttemptResult.ParseException, null, 0, sw3.ElapsedMilliseconds,
-                                      $"{ex.GetType().Name}: {ex.Message}");
+                                      FailureResult(ex), null, 0, sw3.ElapsedMilliseconds,
+                                      ex.ToString());
                     errors.Add($"[{company.Domain}] {ex.Message}");
                 }
             }
@@ -502,7 +512,7 @@ public sealed class JobRefresher : IJobRefresher
                                               Logging.AttemptResult.Empty, null, 0, sw4.ElapsedMilliseconds, null);
                         }
                     }
-                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    catch (Exception ex) when (!ct.IsCancellationRequested)
                     {
                         sw4.Stop();
                         // A URL that threw may have held jobs no other URL lists — don't let the
@@ -510,8 +520,8 @@ public sealed class JobRefresher : IJobRefresher
                         stageHadFailure = true;
                         _urls.RecordFailure(company.Id, u.Url);
                         _runs.LogAttempt(runId, company.Id, Logging.AttemptStage.CachedUrl, u.Kind.ToString(),
-                                          Logging.AttemptResult.ParseException, null, 0, sw4.ElapsedMilliseconds,
-                                          $"{ex.GetType().Name}: {ex.Message}");
+                                          FailureResult(ex), null, 0, sw4.ElapsedMilliseconds,
+                                          ex.ToString());
                         errors.Add($"[{company.Domain} via cached {u.Kind}] {ex.Message}");
                     }
                 }
@@ -554,6 +564,11 @@ public sealed class JobRefresher : IJobRefresher
             if (!isVancouverArea) continue;
 
             var hashKey = $"{sourceType}:{company.Id}:{r.NativeId}";
+            // Heuristic only — no AI in the refresh loop. It used to be the composite classifier,
+            // whose AI fallback blocked on the shared local model once per unplaceable title on
+            // every scan (behind 60s resume-match batches, one company took 30+ minutes). New
+            // unplaceable jobs are queued for the classify worker by Upsert; existing ones keep
+            // their stored level/areas (Upsert COALESCEs level and skips empty area lists).
             var classified = _classifier.Classify(r.Title, r.Department);
 
             var job = new Job
@@ -632,6 +647,10 @@ public sealed class JobRefresher : IJobRefresher
         var totalSeen = added + updated;
         _companies.RecordRefreshResult(company.Id, totalSeen, stageHadFailure);
 
+        // Jobs came back cleanly → whatever was flagged before is fixed.
+        if (totalSeen > 0 && !stageHadFailure && (company.HealthStatus is not null || healthTouched))
+            _companies.SetHealth(company.Id, null, null);
+
         // Auto-clear stale slug at threshold. ConsecutiveFailures was just incremented if this
         // refresh was empty/failed, so the threshold check uses the *new* expected value (+1).
         // Covers ParseException as well as Http4xx: a wrong subdomain guess on a platform like
@@ -648,6 +667,9 @@ public sealed class JobRefresher : IJobRefresher
         {
             _companies.ClearAtsSlug(company.Id,
                 $"{projectedFailures} consecutive {lastStageResult} (last HTTP {lastStageHttp})");
+            _companies.SetHealth(company.Id, CompanyHealth.BoardGone,
+                $"{company.AtsType} board '{company.AtsSlug}' failed {projectedFailures} refreshes in a row " +
+                $"({lastStageResult}{(lastStageHttp is int h ? $", HTTP {h}" : "")}) — cleared for re-detection");
             errors.Add($"[{company.Domain}] cleared stale {company.AtsType} slug '{company.AtsSlug}' after {projectedFailures} {lastStageResult} failures");
         }
 
@@ -660,7 +682,17 @@ public sealed class JobRefresher : IJobRefresher
         {
             _companies.ClearAtsSlug(company.Id,
                 $"0-yield drift: was {company.LastRefreshJobsCount}, now 0");
+            _companies.SetHealth(company.Id, CompanyHealth.BoardEmpty,
+                $"{company.AtsType} board '{company.AtsSlug}' had {company.LastRefreshJobsCount} jobs, now 0 — cleared for re-detection");
             errors.Add($"[{company.Domain}] 0-yield drift: was producing {company.LastRefreshJobsCount} jobs, now 0 — re-detect queued");
+        }
+
+        // Repeated timeouts / connection failures: nothing to clear (the slug may be fine), but
+        // the user should know this company isn't actually being scanned.
+        if (projectedFailures >= StaleSlugThreshold && lastStageResult == Logging.AttemptResult.Timeout)
+        {
+            _companies.SetHealth(company.Id, CompanyHealth.FetchFailing,
+                $"{projectedFailures} refreshes in a row timed out");
         }
 
         // Classify the company-level outcome_kind for the run_step_log row.
@@ -704,10 +736,15 @@ public sealed class JobRefresher : IJobRefresher
             if (c is >= 400 and < 500) return Logging.OutcomeKind.Fetch4xx;
             if (c is >= 500 and < 600) return Logging.OutcomeKind.Fetch5xx;
         }
-        if (ex is TaskCanceledException || msg.Contains("timeout")) return Logging.OutcomeKind.FetchTimeout;
+        if (ex is OperationCanceledException || msg.Contains("timeout")) return Logging.OutcomeKind.FetchTimeout;
         if (msg.Contains("403") || msg.Contains("forbidden")) return Logging.OutcomeKind.FetchBlocked;
         return Logging.OutcomeKind.ParseException;
     }
+
+    /// <summary>refresh_attempt.result for a stage that threw. Callers filter out real Stop/Skip
+    /// cancellations first, so a cancellation that still reaches here is an HttpClient timeout.</summary>
+    private static string FailureResult(Exception ex)
+        => ex is OperationCanceledException ? Logging.AttemptResult.Timeout : Logging.AttemptResult.ParseException;
 
     private static readonly System.Text.RegularExpressions.Regex AtsApiUrlRe = new(
         @"^https?://(?:boards-api\.greenhouse\.io/v1/boards|api\.lever\.co/v0/postings|api\.ashbyhq\.com/posting-api/job-board)/(?<slug>[a-zA-Z0-9-]+)",
