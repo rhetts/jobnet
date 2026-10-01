@@ -23,7 +23,8 @@ public sealed class CompanyRepository : ICompanyRepository
                parser_strategy_last_error,
                last_company_parser,
                consecutive_failures, last_success_at, last_refresh_jobs_count,
-               is_blacklisted, is_visible
+               is_blacklisted, is_visible,
+               health_status, health_reason, health_since
         FROM companies";
 
     private readonly IDbConnectionFactory _connections;
@@ -55,6 +56,15 @@ public sealed class CompanyRepository : ICompanyRepository
         using var conn = _connections.Open();
         var row = conn.QuerySingleOrDefault<CompanyRow>(
             $"{SelectAll} WHERE LOWER(domain) = LOWER(@domain)", new { domain });
+        return row is null ? null : MapToCompany(row);
+    }
+
+    public Company? GetByAts(string atsType, string atsSlug)
+    {
+        using var conn = _connections.Open();
+        var row = conn.QueryFirstOrDefault<CompanyRow>(
+            $"{SelectAll} WHERE ats_type = @atsType AND LOWER(ats_slug) = LOWER(@atsSlug) ORDER BY id",
+            new { atsType, atsSlug });
         return row is null ? null : MapToCompany(row);
     }
 
@@ -206,6 +216,9 @@ public sealed class CompanyRepository : ICompanyRepository
         LastRefreshJobsCount = r.LastRefreshJobsCount,
         IsBlacklisted = r.IsBlacklisted != 0,
         IsVisible = r.IsVisible != 0,
+        HealthStatus = r.HealthStatus,
+        HealthReason = r.HealthReason,
+        HealthSince = ParseUtc(r.HealthSince),
     };
 
     private static DateTime? ParseUtc(string? value)
@@ -298,6 +311,22 @@ public sealed class CompanyRepository : ICompanyRepository
                 hadFailure = hadFailure ? 1 : 0,
                 now = DateTime.UtcNow.ToString("o")
             });
+    }
+
+    public void SetHealth(int id, string? status, string? reason)
+    {
+        // health_since only moves when the status itself changes, so "since" means "broken since",
+        // not "last re-confirmed at". Null status clears all three.
+        using var conn = _connections.Open();
+        conn.Execute(@"
+            UPDATE companies SET
+                health_since  = CASE WHEN @status IS NULL THEN NULL
+                                     WHEN health_status IS @status THEN health_since
+                                     ELSE @now END,
+                health_status = @status,
+                health_reason = CASE WHEN @status IS NULL THEN NULL ELSE @reason END
+            WHERE id = @id",
+            new { id, status, reason, now = DateTime.UtcNow.ToString("o") });
     }
 
     public void ClearAtsSlug(int id, string reason)
@@ -417,5 +446,8 @@ public sealed class CompanyRepository : ICompanyRepository
         public int? LastRefreshJobsCount { get; set; }
         public int IsBlacklisted { get; set; }
         public int IsVisible { get; set; }
+        public string? HealthStatus { get; set; }
+        public string? HealthReason { get; set; }
+        public string? HealthSince { get; set; }
     }
 }

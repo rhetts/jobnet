@@ -5,10 +5,11 @@ namespace Jobnet.Views;
 
 public partial class SourcesWindow : Window
 {
-    public SourcesWindow(SourcesViewModel viewModel)
+    public SourcesWindow(SourcesViewModel sources, ParserReportViewModel parsers)
     {
         InitializeComponent();
-        DataContext = viewModel;
+        SourcesTab.DataContext = sources;
+        ParsersTab.DataContext = parsers;
     }
 
     private void Close_Click(object sender, RoutedEventArgs e) => Close();

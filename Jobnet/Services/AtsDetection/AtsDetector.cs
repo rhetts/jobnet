@@ -16,7 +16,7 @@ namespace Jobnet.Services.AtsDetection;
 /// by following redirects from candidate careers URLs and pattern-matching the final URL, with HTML
 /// fingerprinting as fallback.
 /// </summary>
-public sealed class AtsDetector : IAtsDetector
+public sealed partial class AtsDetector : IAtsDetector
 {
     public const string Provider = "http_fetch";
 
@@ -52,13 +52,18 @@ public sealed class AtsDetector : IAtsDetector
         (new Regex(@"^https?://(?<slug>[a-z0-9-]+)\.pinpointhq\.com",                                                                RegexOptions.IgnoreCase), "pinpoint"),
         // Workday — slug is host + first path segment (e.g. aritzia.wd3.myworkdayjobs.com/External).
         // We capture both via separate groups, then assemble in CombineWorkdaySlug below.
-        (new Regex(@"^https?://(?<wdhost>[a-z0-9-]+\.wd\d+\.myworkdayjobs\.com)/(?<wdsite>[a-zA-Z0-9_-]+)",                          RegexOptions.IgnoreCase), "workday"),
+        // Posting URLs often carry a locale first (/en-US/External/job/...) — skip it, or the
+        // locale would be taken as the site.
+        (new Regex(@"^https?://(?<wdhost>[a-z0-9-]+\.wd\d+\.myworkdayjobs\.com)/(?:[a-z]{2}-[a-z]{2}/)?(?<wdsite>[a-zA-Z0-9_-]+)",     RegexOptions.IgnoreCase), "workday"),
 
         // Rise People — Canadian HRIS, careers.risepeople.com/{slug}/en. The public API at
         // gateway.risepeople.com/applicant_tracking/public/careers?company_uri={slug} accepts
         // anonymous GETs — the Basic-auth path in the bundle is only for applicant submission.
         // Slug = the first URL segment after the host.
         (new Regex(@"^https?://careers\.risepeople\.com/(?<slug>[a-z0-9-]+)",                                       RegexOptions.IgnoreCase), "risepeople"),
+        // Cornerstone OnDemand — {tenant}.csod.com/ux/ats/careersite/{siteId}/... Slug = tenant, plus
+        // "/siteId" when it isn't site 1 (see CornerstoneJobSource / SlugFromMatch).
+        (new Regex(@"^https?://(?<slug>[a-z0-9-]+)\.csod\.com/ux/ats/careersite/(?<csite>\d+)",                     RegexOptions.IgnoreCase), "cornerstone"),
     };
 
     // HTML fingerprints — found in the page body when a company embeds a third-party board.
@@ -77,6 +82,7 @@ public sealed class AtsDetector : IAtsDetector
         (new Regex(@"(?:src|href)=[""']https?://(?<slug>[a-z0-9-]+)\.bamboohr\.com",                                                        RegexOptions.IgnoreCase), "bamboohr"),
         (new Regex(@"(?:src|href)=[""']https?://(?<slug>[a-z0-9-]+)\.pinpointhq\.com",                                                       RegexOptions.IgnoreCase), "pinpoint"),
         (new Regex(@"(?:src|href)=[""']https?://careers\.risepeople\.com/(?<slug>[a-z0-9-]+)",                                              RegexOptions.IgnoreCase), "risepeople"),
+        (new Regex(@"(?:src|href)=[""']https?://(?<slug>[a-z0-9-]+)\.csod\.com/ux/ats/careersite/(?<csite>\d+)",                          RegexOptions.IgnoreCase), "cornerstone"),
         (new Regex(@"(?:src|href)=[""']https?://(?<wdhost>[a-z0-9-]+\.wd\d+\.myworkdayjobs\.com)/(?<wdsite>[a-zA-Z0-9_-]+)",                 RegexOptions.IgnoreCase), "workday"),
     };
 
@@ -108,6 +114,7 @@ public sealed class AtsDetector : IAtsDetector
         (new Regex(@"https?://(?<slug>[a-z0-9][a-z0-9-]{1,60})\.pinpointhq\.com",                      RegexOptions.IgnoreCase), "pinpoint"),
         (new Regex(@"https?://careers\.risepeople\.com/(?<slug>[a-z0-9][a-z0-9-]{1,60})",              RegexOptions.IgnoreCase), "risepeople"),
         (new Regex(@"https?://gateway\.risepeople\.com/applicant_tracking/public/careers\?company_uri=(?<slug>[a-z0-9-]+)", RegexOptions.IgnoreCase), "risepeople"),
+        (new Regex(@"https?://(?<slug>[a-z0-9][a-z0-9-]{1,60})\.csod\.com/ux/ats/careersite/(?<csite>\d+)", RegexOptions.IgnoreCase), "cornerstone"),
         (new Regex(@"https?://(?<wdhost>[a-z0-9-]+\.wd\d+\.myworkdayjobs\.com)/(?<wdsite>[a-zA-Z0-9_-]+)",  RegexOptions.IgnoreCase), "workday"),
     };
 
@@ -122,7 +129,10 @@ public sealed class AtsDetector : IAtsDetector
         @"<a\b[^>]*\bhref\s*=\s*[""'](?<href>[^""']+)[""'][^>]*>(?<text>.{0,200}?)</a>",
         RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.Compiled);
 
-    public async Task<AtsDetectionResult> DetectViaHttpAsync(Company company, CancellationToken ct = default)
+    /// <summary>The original guess-every-URL flow: ~46 guessed careers URLs over HTTP, then up
+    /// to five Playwright renders. Kept so <c>detect-ats --eval --legacy</c> can compare it against
+    /// the homepage-first flow; nothing else calls it.</summary>
+    private async Task<AtsDetectionResult> DetectViaHttpLegacyAsync(Company company, CancellationToken ct = default)
     {
         // Probe candidate URLs over plain HTTP, accept confirmed (URL or HTML pattern with slug).
         // Track hint-only matches to fall back to slug-guess verification.
@@ -208,9 +218,9 @@ public sealed class AtsDetector : IAtsDetector
         return new AtsDetectionResult { Source = "none", Notes = "no ATS fingerprint via HTTP probing" };
     }
 
-    public async Task<AtsDetectionResult> DetectAsync(Company company, CancellationToken ct = default)
+    private async Task<AtsDetectionResult> DetectLegacyAsync(Company company, CancellationToken ct = default)
     {
-        var http = await DetectViaHttpAsync(company, ct);
+        var http = await DetectViaHttpLegacyAsync(company, ct);
         if (http.AtsType is not null && http.AtsSlug is not null) return http;
 
         // Last resort: render the most likely candidate with Playwright (JS-aware) and re-run pattern matching.
@@ -247,6 +257,23 @@ public sealed class AtsDetector : IAtsDetector
         try
         {
             var rendered = await _playwright.FetchAsync(url, ct);
+            return await ScanRenderedAsync(company, rendered, ct);
+        }
+        catch
+        {
+            // Playwright not available or fetch failed; fall through.
+            return null;
+        }
+    }
+
+    /// <summary>ATS checks on an already-rendered page: observed network calls, final URL,
+    /// rendered DOM, and hint-only slug guessing. Split out so the homepage-first flow can reuse a
+    /// render it also mines for careers links.</summary>
+    private async Task<AtsDetectionResult?> ScanRenderedAsync(Company company, Playwright.PlaywrightFetchResult rendered,
+                                                             CancellationToken ct)
+    {
+        try
+        {
             if (!rendered.Success && rendered.NetworkRequests.Count == 0) return null;
 
             // **The big win**: scan captured XHR/fetch URLs for ATS API patterns.
@@ -373,6 +400,8 @@ public sealed class AtsDetector : IAtsDetector
             return await VerifyBambooHRAsync(slug, ct);
         if (ats == "workday")
             return await VerifyWorkdayAsync(slug, ct);
+        if (ats == "cornerstone")
+            return await VerifyCornerstoneAsync(slug, ct);
 
         var verifyUrl = ats switch
         {
@@ -447,6 +476,23 @@ public sealed class AtsDetector : IAtsDetector
         catch { return false; }
     }
 
+    private async Task<bool> VerifyCornerstoneAsync(string slug, CancellationToken ct)
+    {
+        // The career site page itself carries the anonymous API token — if it's there, the
+        // tenant + site are real and CornerstoneJobSource can search them.
+        var (tenant, siteId) = JobSources.CornerstoneJobSource.ParseSlug(slug);
+        await _rateLimiter.WaitAsync(Provider, ct);
+        _usage.RecordCall(Provider);
+        try
+        {
+            using var resp = await _http.GetAsync(JobSources.CornerstoneJobSource.CareerSiteUrl(tenant, siteId), ct);
+            if (!resp.IsSuccessStatusCode) return false;
+            var body = await resp.Content.ReadAsStringAsync(ct);
+            return JobSources.CornerstoneJobSource.ExtractSession(body) is not null;
+        }
+        catch { return false; }
+    }
+
     /// <summary>Pulls the ATS slug from a regex match. For most ATSes this is the literal
     /// <c>slug</c> capture; Workday is special-cased because it has two captures (<c>wdhost</c>
     /// + <c>wdsite</c>) that combine into the opaque slug stored on the company.</summary>
@@ -458,7 +504,55 @@ public sealed class AtsDetector : IAtsDetector
             var site = m.Groups["wdsite"].Value;   // case-sensitive — Workday paths can be CamelCase
             return $"{host}/{site}";
         }
+        if (ats == "cornerstone")
+        {
+            var tenant = m.Groups["slug"].Value.ToLowerInvariant();
+            var site = m.Groups["csite"].Value;
+            return site is "" or "1" ? tenant : $"{tenant}/{site}";
+        }
         return m.Groups["slug"].Value.ToLowerInvariant();
+    }
+
+    // The subdomain-as-slug patterns (workable, bamboohr, recruitee, pinpoint) also match the
+    // vendor's own hosts — www.bamboohr.com would yield slug "www". Detection never hits this
+    // because it verifies every slug against the ATS API; URL-only callers need it filtered.
+    private static readonly HashSet<string> VendorSubdomains = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "www", "apply", "api", "app", "jobs", "careers", "help", "support",
+    };
+
+    /// <summary>Match a URL against the ATS board hosts in <see cref="UrlPatterns"/> and pull out
+    /// the ATS type + slug, with no network call. Used by discovery to turn an ATS search hit
+    /// (jobs.ashbyhq.com/klue/...) straight into ats_type/ats_slug.</summary>
+    public static bool TryMatchAtsUrl(string url, out string atsType, out string slug)
+        => TryMatchAtsUrl(url, out atsType, out slug, out _);
+
+    /// <summary>As above, plus <paramref name="boardUrl"/>: the board's root URL (the matched
+    /// prefix, e.g. https://jobs.lever.co/skyboxlabs), suitable as a careers_url.</summary>
+    public static bool TryMatchAtsUrl(string url, out string atsType, out string slug, out string boardUrl)
+    {
+        foreach (var (pattern, ats) in UrlPatterns)
+        {
+            var m = pattern.Match(url ?? "");
+            if (!m.Success) continue;
+            var s = SlugFromMatch(m, ats);
+            if (s.Length == 0 || VendorSubdomains.Contains(s)) continue;
+            atsType = ats;
+            slug = s;
+            // Cornerstone's bare /careersite/N doesn't render; use the URL its job source loads.
+            if (ats == "cornerstone")
+            {
+                var (tenant, siteId) = JobSources.CornerstoneJobSource.ParseSlug(s);
+                boardUrl = JobSources.CornerstoneJobSource.CareerSiteUrl(tenant, siteId);
+            }
+            else
+            {
+                boardUrl = m.Value;
+            }
+            return true;
+        }
+        atsType = slug = boardUrl = "";
+        return false;
     }
 
     /// <summary>Plausible slug candidates from the company domain — most common ATS slug patterns.</summary>
@@ -481,7 +575,8 @@ public sealed class AtsDetector : IAtsDetector
     }
 
     private async Task<AtsDetectionResult> ProbeUrlAsync(string url, CancellationToken ct,
-                                                          List<(string Url, string Body)>? anchorFollowPool = null)
+                                                          List<(string Url, string Body)>? anchorFollowPool = null,
+                                                          PageInfo? info = null)
     {
         await _rateLimiter.WaitAsync(Provider, ct);
         _usage.RecordCall(Provider);
@@ -491,13 +586,15 @@ public sealed class AtsDetector : IAtsDetector
         {
             response = await _http.GetAsync(url, ct);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (!ct.IsCancellationRequested)
         {
+            if (info is not null) info.Error = ex.Message;
             return new AtsDetectionResult { Source = "none", Notes = $"fetch failed: {ex.Message}" };
         }
 
         using var _ = response;
         var finalUrl = response.RequestMessage?.RequestUri?.ToString() ?? url;
+        if (info is not null) { info.FinalUrl = finalUrl; info.Status = (int)response.StatusCode; }
 
         // Try URL pattern first. A redirect landing on a recognized ATS host is a strong signal,
         // but not proof the board is still live — companies leave stale links/redirects in place
@@ -532,6 +629,7 @@ public sealed class AtsDetector : IAtsDetector
         {
             return new AtsDetectionResult { Source = "none", Notes = $"could not read body of {finalUrl}" };
         }
+        if (info is not null) info.Body = body;
 
         // Same reasoning as the redirect check above: an embedded widget src is what the company's
         // own page still references, not proof the ATS's public API still answers for it.

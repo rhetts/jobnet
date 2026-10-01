@@ -64,6 +64,16 @@ public sealed class JobRepository : IJobRepository
         return Hydrate(conn, rows);
     }
 
+    public IReadOnlyList<int> GetActiveIdsUnclassified()
+    {
+        using var conn = _connections.Open();
+        return conn.Query<int>(@"
+            SELECT j.id FROM jobs j
+            WHERE j.is_active = 1 AND j.level_id IS NULL
+              AND NOT EXISTS (SELECT 1 FROM job_areas a WHERE a.job_id = j.id)
+            ORDER BY j.date_first_seen DESC").ToList();
+    }
+
     public IReadOnlyList<int> GetActiveIdsMissingSummary()
     {
         using var conn = _connections.Open();
@@ -187,6 +197,10 @@ public sealed class JobRepository : IJobRepository
             {
                 _queue.Enqueue(newId, JobProcessingTaskTypes.Summary);
                 _queue.Enqueue(newId, JobProcessingTaskTypes.ResumeMatch);
+                // Callers classify with the heuristic only; titles it couldn't place get the
+                // AI pass later from the classify worker instead of blocking the refresh.
+                if (job.LevelId is null && job.AreaIds.Count == 0)
+                    _queue.Enqueue(newId, JobProcessingTaskTypes.Classify);
             }
 
             return (newId, true);

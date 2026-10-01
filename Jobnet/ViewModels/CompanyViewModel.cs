@@ -41,6 +41,15 @@ public partial class CompanyViewModel : ObservableObject
     /// and on job cards so the user can spot agency postings at a glance.</summary>
     public bool IsAgency => !IsAllJobsSentinel && (Company?.IsAgency ?? false);
 
+    /// <summary>True when refresh or ATS detection flagged this company's config as broken
+    /// (dead site, moved domain, board gone…). Shows a ⚠ next to the name.</summary>
+    public bool HasHealthIssue => !IsAllJobsSentinel && Company?.HealthStatus is not null;
+
+    public string? HealthTooltip => !HasHealthIssue ? null
+        : $"{CompanyHealth.Label(Company!.HealthStatus)}"
+          + (Company.HealthSince is DateTime since ? $" (since {since.ToLocalTime():MMM d})" : "")
+          + (string.IsNullOrWhiteSpace(Company.HealthReason) ? "" : $"\n{Company.HealthReason}");
+
     public InterestLevel InterestLevel => IsAllJobsSentinel ? InterestLevel.Neutral : Company!.InterestLevel;
 
     public string InterestGlyph => InterestLevel switch

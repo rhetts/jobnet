@@ -35,7 +35,7 @@ public sealed class ResumeMatchWorker
                     config.GetOrDefault("worker.resume_match.enabled", "true"),
                     "true", StringComparison.OrdinalIgnoreCase);
 
-                if (enabled)
+                if (enabled && !RefreshActivity.IsRefreshRunning(sp))
                 {
                     hadWork = await RunOneCycleAsync(sp, ct);
                 }

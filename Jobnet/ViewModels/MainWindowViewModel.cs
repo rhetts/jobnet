@@ -31,9 +31,7 @@ public partial class MainWindowViewModel : ObservableObject
     private readonly ISavedFilterRepository? _savedFilters;
     private readonly Func<ResumeWindow>? _resumeWindowFactory;
     private readonly Func<ServiceLimitsWindow>? _limitsWindowFactory;
-    private readonly Func<RunsWindow>? _runsWindowFactory;
     private readonly Func<StatsWindow>? _statsWindowFactory;
-    private readonly Func<ParserReportWindow>? _parserReportWindowFactory;
     private readonly Func<CoverLetterWindow>? _coverLetterWindowFactory;
     private readonly Func<SourcesWindow>? _sourcesWindowFactory;
     private List<JobViewModel> _allJobs = new();
@@ -143,6 +141,7 @@ public partial class MainWindowViewModel : ObservableObject
     {
         new CompanySortOption("A → Z",      "name"),
         new CompanySortOption("Most jobs",  "jobs"),
+        new CompanySortOption("Needs attention", "health"),
     };
 
     [ObservableProperty]
@@ -180,10 +179,8 @@ public partial class MainWindowViewModel : ObservableObject
                                 ISavedFilterRepository? savedFilters = null,
                                 Func<ResumeWindow>? resumeWindowFactory = null,
                                 Func<ServiceLimitsWindow>? limitsWindowFactory = null,
-                                Func<RunsWindow>? runsWindowFactory = null,
                                 Func<CoverLetterWindow>? coverLetterWindowFactory = null,
                                 ITechnologyRepository? techsRepo = null,
-                                Func<ParserReportWindow>? parserReportWindowFactory = null,
                                 Func<StatsWindow>? statsWindowFactory = null,
                                 Func<SourcesWindow>? sourcesWindowFactory = null,
                                 Services.Workers.IEntityChangeNotifier? entityChanges = null)
@@ -203,10 +200,8 @@ public partial class MainWindowViewModel : ObservableObject
         _savedFilters = savedFilters;
         _resumeWindowFactory = resumeWindowFactory;
         _limitsWindowFactory = limitsWindowFactory;
-        _runsWindowFactory = runsWindowFactory;
         _coverLetterWindowFactory = coverLetterWindowFactory;
         _techsRepo = techsRepo;
-        _parserReportWindowFactory = parserReportWindowFactory;
         _statsWindowFactory = statsWindowFactory;
         _sourcesWindowFactory = sourcesWindowFactory;
 
@@ -510,9 +505,13 @@ public partial class MainWindowViewModel : ObservableObject
         var key = SelectedCompanySort?.Key ?? "name";
         CompaniesView.SortDescriptions.Add(key switch
         {
-            "jobs" => new SortDescription(nameof(CompanyViewModel.ActiveJobCount), ListSortDirection.Descending),
-            _      => new SortDescription(nameof(CompanyViewModel.Name),           ListSortDirection.Ascending),
+            "jobs"   => new SortDescription(nameof(CompanyViewModel.ActiveJobCount), ListSortDirection.Descending),
+            "health" => new SortDescription(nameof(CompanyViewModel.HasHealthIssue), ListSortDirection.Descending),
+            _        => new SortDescription(nameof(CompanyViewModel.Name),           ListSortDirection.Ascending),
         });
+        // Flagged companies first, then A → Z within each group.
+        if (key == "health")
+            CompaniesView.SortDescriptions.Add(new SortDescription(nameof(CompanyViewModel.Name), ListSortDirection.Ascending));
         CompaniesView.Refresh();
     }
 
@@ -645,8 +644,11 @@ public partial class MainWindowViewModel : ObservableObject
         // is the only place they're still visible (so the user can unblacklist).
         if (vm.Company is not null && _blacklistedCompanyIds.Contains(vm.Company.Id)) return false;
 
-        // Default view: hide companies with 0 active jobs. Toggle via ShowAllCompanies.
-        if (!ShowAllCompanies && vm.ActiveJobCount == 0) return false;
+        // Default view: hide companies with 0 active jobs. Toggle via ShowAllCompanies. Under the
+        // "Needs attention" sort, flagged companies stay visible anyway — a dead site usually has
+        // 0 jobs, and that's exactly the one to show.
+        if (!ShowAllCompanies && vm.ActiveJobCount == 0
+            && !(SelectedCompanySort?.Key == "health" && vm.HasHealthIssue)) return false;
 
         if (string.IsNullOrWhiteSpace(CompanySearchText)) return true;
         return vm.Name.Contains(CompanySearchText, StringComparison.OrdinalIgnoreCase);
@@ -813,24 +815,6 @@ public partial class MainWindowViewModel : ObservableObject
         var window = _resumeWindowFactory();
         if (window.DataContext is ResumeViewModel rvm)
             rvm.Completed += LoadFromDataService;
-        window.Owner = Application.Current.MainWindow;
-        window.ShowDialog();
-    }
-
-    [RelayCommand]
-    private void OpenParserReport()
-    {
-        if (_parserReportWindowFactory is null) return;
-        var window = _parserReportWindowFactory();
-        window.Owner = Application.Current.MainWindow;
-        window.ShowDialog();
-    }
-
-    [RelayCommand]
-    private void OpenRuns()
-    {
-        if (_runsWindowFactory is null) return;
-        var window = _runsWindowFactory();
         window.Owner = Application.Current.MainWindow;
         window.ShowDialog();
     }

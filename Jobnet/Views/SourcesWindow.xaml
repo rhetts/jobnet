@@ -3,161 +3,319 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="clr-namespace:Jobnet.ViewModels"
         Title="Jobnet — Sources"
-        Width="900" Height="720"
+        Width="1100" Height="720"
         WindowStartupLocation="CenterOwner"
         ShowInTaskbar="False"
         Background="#FAFAFA">
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVis"/>
+    </Window.Resources>
     <Grid Margin="16">
         <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <!-- Title row -->
-        <Grid Grid.Row="0" Margin="0,0,0,8">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="Auto"/>
-            </Grid.ColumnDefinitions>
-            <StackPanel Grid.Column="0">
-                <TextBlock Text="Sources" FontSize="16" FontWeight="SemiBold"/>
-                <TextBlock Text="{Binding SummaryLine}" Foreground="#666" FontSize="11" Margin="0,2,0,0"/>
-            </StackPanel>
-            <Button Grid.Column="1" Content="Refresh" Padding="14,4" Command="{Binding RefreshCommand}"/>
-        </Grid>
+        <!-- Two views of where jobs come from: the sources themselves (companies, seeds, boards)
+             and how each company is parsed (was the separate Parser Report window). Each tab has
+             its own view model, set in code-behind. -->
+        <TabControl Grid.Row="0">
+            <TabItem Header="Sources" x:Name="SourcesTab">
+                <Grid Margin="10,8">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
 
-        <!-- Filter row -->
-        <Border Grid.Row="1" Background="White" BorderBrush="#DDD" BorderThickness="1"
-                CornerRadius="3" Padding="10,8" Margin="0,0,0,8">
-            <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="*"/>
-                </Grid.ColumnDefinitions>
-                <TextBlock Grid.Column="0" Text="Type:" Foreground="#666" FontSize="11"
-                           VerticalAlignment="Center" Margin="0,0,6,0"/>
-                <ComboBox Grid.Column="1"
-                          ItemsSource="{Binding KindOptions}"
-                          SelectedItem="{Binding SelectedKind}"
-                          DisplayMemberPath="Label"
-                          MinWidth="130" Margin="0,0,16,0"/>
+                <!-- Title row -->
+                <Grid Grid.Row="0" Margin="0,0,0,8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Grid.Column="0">
+                        <TextBlock Text="Sources" FontSize="16" FontWeight="SemiBold"/>
+                        <TextBlock Text="{Binding SummaryLine}" Foreground="#666" FontSize="11" Margin="0,2,0,0"/>
+                    </StackPanel>
+                    <Button Grid.Column="1" Content="Refresh" Padding="14,4" Command="{Binding RefreshCommand}"/>
+                </Grid>
 
-                <TextBlock Grid.Column="2" Text="Size:" Foreground="#666" FontSize="11"
-                           VerticalAlignment="Center" Margin="0,0,6,0"/>
-                <ComboBox Grid.Column="3"
-                          ItemsSource="{Binding SizeOptions}"
-                          SelectedItem="{Binding SelectedSize}"
-                          DisplayMemberPath="Label"
-                          MinWidth="170" Margin="0,0,16,0"
-                          ToolTip="Companies only — size buckets are derived from the AI profile's employee-count hint."/>
-
-                <TextBox Grid.Column="4"
-                         Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
-                         Padding="6,4" BorderBrush="#CCC"
-                         VerticalAlignment="Center"/>
-            </Grid>
-        </Border>
-
-        <!-- List -->
-        <ListBox Grid.Row="2"
-                 ItemsSource="{Binding View}"
-                 BorderBrush="#DDD"
-                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                 HorizontalContentAlignment="Stretch">
-            <ListBox.ItemContainerStyle>
-                <Style TargetType="ListBoxItem">
-                    <Setter Property="Padding" Value="0"/>
-                    <Setter Property="BorderThickness" Value="0,0,0,1"/>
-                    <Setter Property="BorderBrush" Value="#EEE"/>
-                </Style>
-            </ListBox.ItemContainerStyle>
-            <ListBox.ItemTemplate>
-                <DataTemplate DataType="{x:Type vm:SourceRow}">
-                    <Grid Margin="10,8">
+                <!-- Filter row -->
+                <Border Grid.Row="1" Background="White" BorderBrush="#DDD" BorderThickness="1"
+                        CornerRadius="3" Padding="10,8" Margin="0,0,0,8">
+                    <Grid>
                         <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="90"/>
-                            <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                        </Grid.RowDefinitions>
+                        <TextBlock Grid.Column="0" Text="Type:" Foreground="#666" FontSize="11"
+                                   VerticalAlignment="Center" Margin="0,0,6,0"/>
+                        <ComboBox Grid.Column="1"
+                                  ItemsSource="{Binding KindOptions}"
+                                  SelectedItem="{Binding SelectedKind}"
+                                  DisplayMemberPath="Label"
+                                  MinWidth="130" Margin="0,0,16,0"/>
 
-                        <!-- Kind chip -->
-                        <Border Grid.Column="0" Grid.Row="0" Grid.RowSpan="3"
-                                Background="#F0F4F8" CornerRadius="3"
-                                Padding="6,3" HorizontalAlignment="Left" VerticalAlignment="Top"
-                                Margin="0,0,12,0">
-                            <TextBlock Text="{Binding KindLabel}" FontSize="10"
-                                       FontWeight="SemiBold" Foreground="#1976D2"/>
-                        </Border>
+                        <TextBlock Grid.Column="2" Text="Size:" Foreground="#666" FontSize="11"
+                                   VerticalAlignment="Center" Margin="0,0,6,0"/>
+                        <ComboBox Grid.Column="3"
+                                  ItemsSource="{Binding SizeOptions}"
+                                  SelectedItem="{Binding SelectedSize}"
+                                  DisplayMemberPath="Label"
+                                  MinWidth="170" Margin="0,0,16,0"
+                                  ToolTip="Companies only — size buckets are derived from the AI profile's employee-count hint."/>
 
-                        <!-- Name (links open the URL via the row's OpenLinkCommand) -->
-                        <TextBlock Grid.Column="1" Grid.Row="0"
-                                   FontSize="13" FontWeight="SemiBold"
-                                   TextTrimming="CharacterEllipsis">
-                            <Hyperlink Command="{Binding OpenLinkCommand}"
-                                       ToolTip="{Binding Url}">
-                                <Run Text="{Binding Name}"/>
-                            </Hyperlink>
-                        </TextBlock>
-
-                        <TextBlock Grid.Column="1" Grid.Row="1"
-                                   Text="{Binding Url}"
-                                   FontFamily="Consolas" FontSize="11"
-                                   Foreground="#1976D2"
-                                   TextTrimming="CharacterEllipsis"
-                                   Margin="0,2,0,0"/>
-
-                        <TextBlock Grid.Column="1" Grid.Row="2"
-                                   Text="{Binding Secondary}"
-                                   FontSize="11" Foreground="#888"
-                                   TextWrapping="Wrap"
-                                   Margin="0,2,0,0">
-                            <TextBlock.Style>
-                                <Style TargetType="TextBlock">
-                                    <Setter Property="Visibility" Value="Visible"/>
-                                    <Style.Triggers>
-                                        <DataTrigger Binding="{Binding Secondary}" Value="">
-                                            <Setter Property="Visibility" Value="Collapsed"/>
-                                        </DataTrigger>
-                                        <DataTrigger Binding="{Binding Secondary}" Value="{x:Null}">
-                                            <Setter Property="Visibility" Value="Collapsed"/>
-                                        </DataTrigger>
-                                    </Style.Triggers>
-                                </Style>
-                            </TextBlock.Style>
-                        </TextBlock>
-
-                        <!-- Size chip (companies only) -->
-                        <Border Grid.Column="2" Grid.Row="0"
-                                Background="#F5F5F5" CornerRadius="3"
-                                Padding="6,3" VerticalAlignment="Top">
-                            <Border.Style>
-                                <Style TargetType="Border">
-                                    <Setter Property="Visibility" Value="Visible"/>
-                                    <Style.Triggers>
-                                        <DataTrigger Binding="{Binding SizeCategory}" Value="{x:Null}">
-                                            <Setter Property="Visibility" Value="Collapsed"/>
-                                        </DataTrigger>
-                                    </Style.Triggers>
-                                </Style>
-                            </Border.Style>
-                            <TextBlock Text="{Binding SizeLabel}" FontSize="10" Foreground="#555"/>
-                        </Border>
+                        <TextBox Grid.Column="4"
+                                 Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
+                                 Padding="6,4" BorderBrush="#CCC"
+                                 VerticalAlignment="Center"/>
                     </Grid>
-                </DataTemplate>
-            </ListBox.ItemTemplate>
-        </ListBox>
+                </Border>
 
-        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
+                <!-- List -->
+                <ListBox Grid.Row="2"
+                         ItemsSource="{Binding View}"
+                         BorderBrush="#DDD"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                         HorizontalContentAlignment="Stretch">
+                    <ListBox.ItemContainerStyle>
+                        <Style TargetType="ListBoxItem">
+                            <Setter Property="Padding" Value="0"/>
+                            <Setter Property="BorderThickness" Value="0,0,0,1"/>
+                            <Setter Property="BorderBrush" Value="#EEE"/>
+                        </Style>
+                    </ListBox.ItemContainerStyle>
+                    <ListBox.ItemTemplate>
+                        <DataTemplate DataType="{x:Type vm:SourceRow}">
+                            <Grid Margin="10,8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="90"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
+
+                                <!-- Kind chip -->
+                                <Border Grid.Column="0" Grid.Row="0" Grid.RowSpan="3"
+                                        Background="#F0F4F8" CornerRadius="3"
+                                        Padding="6,3" HorizontalAlignment="Left" VerticalAlignment="Top"
+                                        Margin="0,0,12,0">
+                                    <TextBlock Text="{Binding KindLabel}" FontSize="10"
+                                               FontWeight="SemiBold" Foreground="#1976D2"/>
+                                </Border>
+
+                                <!-- Name (links open the URL via the row's OpenLinkCommand) -->
+                                <TextBlock Grid.Column="1" Grid.Row="0"
+                                           FontSize="13" FontWeight="SemiBold"
+                                           TextTrimming="CharacterEllipsis">
+                                    <Hyperlink Command="{Binding OpenLinkCommand}"
+                                               ToolTip="{Binding Url}">
+                                        <Run Text="{Binding Name}"/>
+                                    </Hyperlink>
+                                </TextBlock>
+
+                                <TextBlock Grid.Column="1" Grid.Row="1"
+                                           Text="{Binding Url}"
+                                           FontFamily="Consolas" FontSize="11"
+                                           Foreground="#1976D2"
+                                           TextTrimming="CharacterEllipsis"
+                                           Margin="0,2,0,0"/>
+
+                                <TextBlock Grid.Column="1" Grid.Row="2"
+                                           Text="{Binding Secondary}"
+                                           FontSize="11" Foreground="#888"
+                                           TextWrapping="Wrap"
+                                           Margin="0,2,0,0">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Visibility" Value="Visible"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Secondary}" Value="">
+                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding Secondary}" Value="{x:Null}">
+                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+
+                                <!-- Size chip (companies only) -->
+                                <Border Grid.Column="2" Grid.Row="0"
+                                        Background="#F5F5F5" CornerRadius="3"
+                                        Padding="6,3" VerticalAlignment="Top">
+                                    <Border.Style>
+                                        <Style TargetType="Border">
+                                            <Setter Property="Visibility" Value="Visible"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding SizeCategory}" Value="{x:Null}">
+                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Border.Style>
+                                    <TextBlock Text="{Binding SizeLabel}" FontSize="10" Foreground="#555"/>
+                                </Border>
+                            </Grid>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+                </Grid>
+            </TabItem>
+
+            <TabItem Header="Parsers" x:Name="ParsersTab">
+                <Grid Margin="10,8">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="220"/>
+                    </Grid.RowDefinitions>
+
+                <StackPanel Grid.Row="0" Margin="0,0,0,10">
+                    <TextBlock Text="Parser report" FontSize="16" FontWeight="SemiBold"/>
+                    <TextBlock Foreground="#666" FontSize="11" FontFamily="Consolas" Margin="0,2,0,0">
+                        <Run Text="Registered hand-written parsers: "/>
+                        <Run Text="{Binding RegisteredParsersDisplay, Mode=OneWay}" FontWeight="SemiBold"/>
+                    </TextBlock>
+                </StackPanel>
+
+                <Grid Grid.Row="1" Margin="0,0,0,10">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="System:" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                    <ComboBox  Grid.Column="1" Width="140" Padding="6,2"
+                               ItemsSource="{Binding SystemFilters}"
+                               SelectedItem="{Binding SelectedSystem}"/>
+                    <TextBlock Grid.Column="2" Text="Status:" VerticalAlignment="Center" Margin="14,0,6,0"/>
+                    <ComboBox  Grid.Column="3" Width="140" Padding="6,2"
+                               ItemsSource="{Binding StatusFilters}"
+                               SelectedItem="{Binding SelectedStatus}"/>
+                    <TextBlock Grid.Column="4" Text="{Binding Summary}" VerticalAlignment="Center" Margin="14,0,0,0" Foreground="#666"/>
+                    <Button    Grid.Column="5" Content="Refresh" Padding="14,4" Command="{Binding RefreshCommand}"/>
+                </Grid>
+
+                <DataGrid Grid.Row="2"
+                          ItemsSource="{Binding Rows}"
+                          AutoGenerateColumns="False"
+                          HeadersVisibility="Column"
+                          CanUserAddRows="False"
+                          CanUserDeleteRows="False"
+                          IsReadOnly="True"
+                          GridLinesVisibility="Horizontal"
+                          HorizontalGridLinesBrush="#EEE"
+                          BorderBrush="#DDD" BorderThickness="1"
+                          Background="White"
+                          RowBackground="White"
+                          AlternatingRowBackground="#FAFAFA"
+                          RowHeight="36"
+                          FontSize="12">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="Company" Binding="{Binding Name}" Width="200"/>
+                        <DataGridTextColumn Header="Domain"  Binding="{Binding Domain}" Width="180" FontFamily="Consolas"/>
+                        <DataGridTextColumn Header="System"  Binding="{Binding ParserSystem}" Width="100" FontWeight="SemiBold"/>
+                        <!-- SortMemberPath tells DataGrid which property to sort by when the user clicks
+                             the header — without it the templated column is non-sortable. -->
+                        <DataGridTemplateColumn Header="Status" Width="140" SortMemberPath="StatusBadge">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate DataType="{x:Type vm:ParserReportRow}">
+                                    <Border Background="{Binding StatusBrush}"
+                                            CornerRadius="3"
+                                            Padding="6,2"
+                                            HorizontalAlignment="Left"
+                                            VerticalAlignment="Center">
+                                        <TextBlock Text="{Binding StatusBadge}"
+                                                   Foreground="White"
+                                                   FontSize="11"
+                                                   FontWeight="SemiBold"/>
+                                    </Border>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTextColumn Header="Derived"     Binding="{Binding DerivedDisplay}" Width="140"/>
+                        <DataGridTextColumn Header="Last result" Binding="{Binding LastResultDisplay}" Width="180"/>
+                        <DataGridTextColumn Header="Error" Binding="{Binding LastError}" Width="*"/>
+                        <DataGridTemplateColumn Header="Actions" Width="100">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate DataType="{x:Type vm:ParserReportRow}">
+                                    <Button Content="{Binding DisabledToggleLabel}"
+                                            Padding="6,2"
+                                            VerticalAlignment="Center"
+                                            Command="{Binding DataContext.ToggleDisabledCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                            CommandParameter="{Binding}"
+                                            ToolTip="When disabled, this company always uses AI extraction (slower) regardless of cached selectors."/>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                    </DataGrid.Columns>
+                </DataGrid>
+
+                <TextBlock Grid.Row="3" Margin="0,14,0,4">
+                    <Run Text="Directories" FontSize="13" FontWeight="SemiBold" Foreground="#444"/>
+                    <Run Text="  ·  registered: " FontSize="11" Foreground="#888"/>
+                    <Run Text="{Binding RegisteredDirectoryParsersDisplay, Mode=OneWay}" FontSize="11" FontFamily="Consolas" Foreground="#666"/>
+                </TextBlock>
+
+                <DataGrid Grid.Row="4"
+                          ItemsSource="{Binding DirectoryRows}"
+                          AutoGenerateColumns="False"
+                          HeadersVisibility="Column"
+                          CanUserAddRows="False"
+                          CanUserDeleteRows="False"
+                          IsReadOnly="True"
+                          GridLinesVisibility="Horizontal"
+                          HorizontalGridLinesBrush="#EEE"
+                          BorderBrush="#DDD" BorderThickness="1"
+                          Background="White"
+                          RowBackground="White"
+                          AlternatingRowBackground="#FAFAFA"
+                          RowHeight="32"
+                          FontSize="12">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="Directory" Binding="{Binding Name}" Width="220"/>
+                        <DataGridTextColumn Header="URL" Binding="{Binding Url}" Width="*" FontFamily="Consolas" FontSize="11"/>
+                        <DataGridTextColumn Header="Parser" Binding="{Binding Parser}" Width="160" FontWeight="SemiBold"/>
+                        <DataGridTemplateColumn Header="Status" Width="90" SortMemberPath="StatusBadge">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate DataType="{x:Type vm:DirectoryParserReportRow}">
+                                    <Border Background="{Binding StatusBrush}"
+                                            CornerRadius="3"
+                                            Padding="6,2"
+                                            HorizontalAlignment="Left"
+                                            VerticalAlignment="Center">
+                                        <TextBlock Text="{Binding StatusBadge}"
+                                                   Foreground="White"
+                                                   FontSize="11"
+                                                   FontWeight="SemiBold"/>
+                                    </Border>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTextColumn Header="Last result" Binding="{Binding LastResultDisplay}" Width="180"/>
+                        <DataGridTextColumn Header="Error" Binding="{Binding LastError}" Width="240"/>
+                    </DataGrid.Columns>
+                </DataGrid>
+                </Grid>
+            </TabItem>
+        </TabControl>
+
+        <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
             <Button Content="Close" Padding="14,4" Click="Close_Click"/>
         </StackPanel>
     </Grid>

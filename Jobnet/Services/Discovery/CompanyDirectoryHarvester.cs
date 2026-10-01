@@ -121,15 +121,26 @@ public sealed class CompanyDirectoryHarvester : ICompanyDirectoryHarvester
             var beforeAdds  = report.CompaniesAdded;
             var beforeCands = report.CandidatesFound;
             var sw = System.Diagnostics.Stopwatch.StartNew();
+            var failure = new PageFailure();
 
-            var pageOk = await HarvestSinglePageAsync(pageUrl, sourceName, sourceType,
-                                                       report, existing, domainsThisRun, seedId, ct);
+            bool pageOk;
+            try
+            {
+                pageOk = await HarvestSinglePageAsync(pageUrl, sourceName, sourceType,
+                                                       report, existing, domainsThisRun, seedId, failure, ct);
+            }
+            catch (Exception ex) when (!ct.IsCancellationRequested)
+            {
+                // Anything the page code didn't anticipate (candidate processing, DB insert) — still
+                // leave a crawl row behind so the failure is findable, then let the caller see it.
+                RecordCrawl(pageUrl, sw, report, beforeCands, beforeAdds, false,
+                            "exception", ex.ToString(), sourceName);
+                throw;
+            }
 
-            sw.Stop();
+            RecordCrawl(pageUrl, sw, report, beforeCands, beforeAdds, pageOk,
+                        failure.Stage, failure.Error, sourceName);
             var pageCands = report.CandidatesFound - beforeCands;
-            var pageAdded = report.CompaniesAdded - beforeAdds;
-            _crawls.Record(pageUrl, DateTime.UtcNow, (int)sw.ElapsedMilliseconds, pageCands, pageAdded,
-                            success: pageOk, error: pageOk ? null : "fetch or AI failed");
 
             if (!pageOk) break;
 
@@ -145,13 +156,41 @@ public sealed class CompanyDirectoryHarvester : ICompanyDirectoryHarvester
         return report;
     }
 
-    /// <summary>Fetch + extract + process one page. Updates <paramref name="report"/> in place.
-    /// Returns false if the fetch itself failed (caller should stop iterating pages).</summary>
+    /// <summary>Which step of a page harvest broke and the full error text, for the
+    /// <c>directory_crawls</c> row. Stays empty when the page went cleanly.</summary>
+    private sealed class PageFailure
+    {
+        public string? Stage { get; set; }
+        public string? Error { get; set; }
+    }
+
+    private void RecordCrawl(string pageUrl, System.Diagnostics.Stopwatch sw, HarvestReport report,
+                             int beforeCands, int beforeAdds, bool success,
+                             string? failureStage, string? error, string sourceName)
+    {
+        sw.Stop();
+        // Telemetry must never break the harvest it's reporting on.
+        try
+        {
+            _crawls.Record(pageUrl, DateTime.UtcNow, (int)sw.ElapsedMilliseconds,
+                            report.CandidatesFound - beforeCands, report.CompaniesAdded - beforeAdds,
+                            success, error, failureStage, sourceName);
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[directory_crawls] insert failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>Fetch + extract + process one page. Updates <paramref name="report"/> in place and
+    /// fills <paramref name="failure"/> with the step that broke. Returns false if the fetch or AI
+    /// call failed (caller should stop iterating pages).</summary>
     private async Task<bool> HarvestSinglePageAsync(string url, string sourceName, string sourceType,
                                                      HarvestReport report,
                                                      HashSet<string> existing,
                                                      HashSet<string> domainsThisRun,
                                                      int? seedId,
+                                                     PageFailure failure,
                                                      CancellationToken ct)
     {
         PlaywrightFetchResult fetch;
@@ -159,14 +198,18 @@ public sealed class CompanyDirectoryHarvester : ICompanyDirectoryHarvester
         {
             fetch = await _fetcher.FetchAsync(url, ct);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (!ct.IsCancellationRequested)
         {
-            report.Errors.Add($"[{url}] Playwright fetch threw: {ex.Message}");
+            report.Errors.Add($"[{url}] Playwright fetch threw: {ex.GetType().Name}: {ex.Message}");
+            failure.Stage = "fetch";
+            failure.Error = ex.ToString();
             return false;
         }
         if (!fetch.Success || string.IsNullOrEmpty(fetch.Html))
         {
             report.Errors.Add($"[{url}] Page fetch failed: {fetch.Error ?? "(empty)"}");
+            failure.Stage = "fetch";
+            failure.Error = fetch.Error ?? "(empty page)";
             return false;
         }
 
@@ -199,6 +242,9 @@ public sealed class CompanyDirectoryHarvester : ICompanyDirectoryHarvester
                 if (seedId is int errSeedId)
                     _seeds.SetParserResult(errSeedId, customParser.Name, "error",
                         $"{ex.GetType().Name}: {ex.Message}", DateTime.UtcNow);
+                // Kept even if the AI fallback below succeeds — a throwing parser is a real break.
+                failure.Stage = "custom_parser";
+                failure.Error = $"Parser '{customParser.Name}': {ex}";
                 // Fall through to the AI path below.
             }
         }
@@ -244,9 +290,11 @@ public sealed class CompanyDirectoryHarvester : ICompanyDirectoryHarvester
         {
             response = await _ai.CompleteAsync(user, system, maxTokens: 8192, ct, task: "directory");
         }
-        catch (Exception ex)
+        catch (Exception ex) when (!ct.IsCancellationRequested)
         {
-            report.Errors.Add($"[{url}] AI call failed: {ex.Message}");
+            report.Errors.Add($"[{url}] AI call failed: {ex.GetType().Name}: {ex.Message}");
+            failure.Stage = "ai_call";
+            failure.Error = failure.Error is null ? ex.ToString() : $"{failure.Error}\n---\n{ex}";
             return false; // AI failed — stop iterating, more pages will fail the same way
         }
 

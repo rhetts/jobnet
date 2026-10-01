@@ -9,6 +9,10 @@ public interface ICompanyRepository
     IReadOnlyList<Company> GetAll();
     Company? GetById(int id);
     Company? GetByDomain(string domain);
+
+    /// <summary>The company already tracked on this ATS account, if any. Slug match is
+    /// case-insensitive (Workday slugs keep the site path's original casing).</summary>
+    Company? GetByAts(string atsType, string atsSlug);
     int Insert(Company company);
     void Update(Company company);
     void SetInterestLevel(int id, InterestLevel level);
@@ -53,6 +57,10 @@ public interface ICompanyRepository
     /// auto-clear-stale-slug rule when consecutive_failures hits the threshold for a company
     /// with a 4xx-returning slug. Appends a reason to <c>notes</c> so the user can see why.</summary>
     void ClearAtsSlug(int id, string reason);
+
+    /// <summary>Set or clear (<paramref name="status"/> null) the company's health flag — see
+    /// <see cref="Models.CompanyHealth"/>. Keeps <c>health_since</c> while the status is unchanged.</summary>
+    void SetHealth(int id, string? status, string? reason);
 
     /// <summary>Flip a company's blacklist flag. When true, the refresh loop skips it and the
     /// main job view hides every job posted by it. Set to false to bring it back.</summary>

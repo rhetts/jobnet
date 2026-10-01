@@ -14,14 +14,18 @@ public sealed class WorkerHost
     private readonly SummaryWorker _summary;
     private readonly ResumeMatchWorker _resumeMatch;
     private readonly CompanyProfileWorker _companyProfile;
+    private readonly ClassifyWorker _classify;
     private readonly CancellationTokenSource _cts = new();
     private Task? _summaryTask;
     private Task? _resumeMatchTask;
     private Task? _companyProfileTask;
+    private Task? _classifyTask;
     private bool _started;
 
-    public WorkerHost(SummaryWorker summary, ResumeMatchWorker resumeMatch, CompanyProfileWorker companyProfile)
+    public WorkerHost(SummaryWorker summary, ResumeMatchWorker resumeMatch, CompanyProfileWorker companyProfile,
+                      ClassifyWorker classify)
     {
+        _classify = classify;
         _summary = summary;
         _resumeMatch = resumeMatch;
         _companyProfile = companyProfile;
@@ -35,6 +39,7 @@ public sealed class WorkerHost
         _summaryTask        = Task.Run(() => _summary.RunAsync(_cts.Token));
         _resumeMatchTask    = Task.Run(() => _resumeMatch.RunAsync(_cts.Token));
         _companyProfileTask = Task.Run(() => _companyProfile.RunAsync(_cts.Token));
+        _classifyTask       = Task.Run(() => _classify.RunAsync(_cts.Token));
     }
 
     /// <summary>Signal cancellation and wait briefly for all workers to drain. Called on app
@@ -48,7 +53,8 @@ public sealed class WorkerHost
         {
             var all = Task.WhenAll(_summaryTask ?? Task.CompletedTask,
                                     _resumeMatchTask ?? Task.CompletedTask,
-                                    _companyProfileTask ?? Task.CompletedTask);
+                                    _companyProfileTask ?? Task.CompletedTask,
+                                    _classifyTask ?? Task.CompletedTask);
             await Task.WhenAny(all, Task.Delay(5000));
         }
         catch { /* worker exceptions on cancellation are swallowed — they're not actionable */ }

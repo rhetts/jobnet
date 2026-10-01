@@ -8,9 +8,12 @@ public interface IDirectoryCrawlRepository
     /// <summary>Most recent successful crawl time for a URL, or null if never crawled.</summary>
     DateTime? GetLastCrawlUtc(string url);
 
-    /// <summary>Insert a crawl record. duration_ms may be null if not measured.</summary>
+    /// <summary>Insert a crawl record. duration_ms may be null if not measured.
+    /// <paramref name="failureStage"/> names the step that broke (fetch | custom_parser | ai_call |
+    /// exception) — set on success rows too when a custom parser threw and AI covered for it.</summary>
     void Record(string url, DateTime fetchedAtUtc, int? durationMs,
-                 int candidatesFound, int candidatesAdded, bool success, string? error);
+                 int candidatesFound, int candidatesAdded, bool success, string? error,
+                 string? failureStage = null, string? sourceName = null);
 
     /// <summary>All-time candidate/added totals grouped by exact crawled URL (paginated URLs like
     /// "...?page=2" stay separate rows — callers that want per-source totals across pages should

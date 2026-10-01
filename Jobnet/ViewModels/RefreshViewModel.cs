@@ -495,13 +495,20 @@ public partial class RefreshViewModel : ObservableObject
                     summary.CompaniesSkippedFiltered += r.CompaniesSkippedFiltered;
                     foreach (var e in r.Errors) summary.Errors.Add($"[{s.Name}] {e}");
 
+                    // Keep every real error on the step row (it used to stop at 3). "[filtered]"
+                    // lines are one per rejected candidate — routine noise that would bury them.
+                    var realErrors = r.Errors.Where(e => !e.Contains("[filtered]")).ToList();
+                    var filteredNoise = r.Errors.Count - realErrors.Count;
+                    var stepError = r.Errors.Count == 0 ? null
+                        : string.Join("\n", realErrors)
+                          + (filteredNoise > 0 ? $"{(realErrors.Count > 0 ? "\n" : "")}({filteredNoise} candidate(s) filtered)" : "");
                     _runs.FinishStep(stepId,
                         status: r.Errors.Count == 0 ? "completed" : "partial",
                         examined: r.CandidatesExamined,
                         added:    r.CompaniesAdded,
                         skipped:  r.CompaniesSkippedExisting,
                         failed:   r.CompaniesSkippedFiltered,
-                        errorMessage: r.Errors.Count == 0 ? null : string.Join(" | ", r.Errors.Take(3)));
+                        errorMessage: stepError);
                     if (r.Errors.Count > 0) runStatus = "partial";
                 }
                 catch (OperationCanceledException)
@@ -513,7 +520,7 @@ public partial class RefreshViewModel : ObservableObject
                 catch (Exception ex)
                 {
                     summary.Errors.Add($"[{s.Name}] {ex.GetType().Name}: {ex.Message}");
-                    _runs.FinishStep(stepId, status: "failed", errorMessage: $"{ex.GetType().Name}: {ex.Message}");
+                    _runs.FinishStep(stepId, status: "failed", errorMessage: ex.ToString());
                     runStatus = "partial";
                 }
             }
@@ -560,7 +567,9 @@ public partial class RefreshViewModel : ObservableObject
                 skipped: summary.CompaniesSkippedExisting,
                 failed: summary.CompaniesSkippedFiltered,
                 errorCount: summary.Errors.Count,
-                notes: summary.Errors.Count == 0 ? null : string.Join(" | ", summary.Errors.Take(5)));
+                // First 5 real errors as a headline; the full list lives on each step row.
+                notes: summary.Errors.Count == 0 ? null
+                    : string.Join(" | ", summary.Errors.Where(e => !e.Contains("[filtered]")).DefaultIfEmpty(summary.Errors[0]).Take(5)));
             IsBusy = false;
         }
     }
@@ -719,7 +728,7 @@ public partial class RefreshViewModel : ObservableObject
                 catch (Exception ex)
                 {
                     boardsErrors = 1;
-                    _runs.FinishStep(stepId, status: "failed", errorMessage: $"{ex.GetType().Name}: {ex.Message}");
+                    _runs.FinishStep(stepId, status: "failed", errorMessage: ex.ToString());
                     StatusText += $"  Boards failed: {ex.GetType().Name}: {ex.Message}";
                 }
             }

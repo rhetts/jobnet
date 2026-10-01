@@ -59,7 +59,13 @@ internal static class ServiceRegistration
             client.DefaultRequestHeaders.UserAgent.ParseAdd("Jobnet/0.4 (+https://github.com/jobnet)");
         });
         services.AddSingleton<Discovery.ISearchClient, Discovery.RoutingSearchClient>();
-        services.AddSingleton<Discovery.IDiscoveryService, Discovery.DiscoveryService>();
+        // Typed HttpClient for fetching ATS board pages to find the company's real domain
+        // (AtsBoardDomainResolver) when a search hit is an ATS URL.
+        services.AddHttpClient<Discovery.IDiscoveryService, Discovery.DiscoveryService>(c =>
+        {
+            c.Timeout = TimeSpan.FromSeconds(12);
+            c.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (compatible; Jobnet/0.7; +https://github.com/jobnet)");
+        });
         // Hand-written directory parsers — the directory-harvest analogue of the company
         // HtmlPatternParsers above. Registration order = priority order. A miss falls through to
         // the AI-extract path inside CompanyDirectoryHarvester.
@@ -176,6 +182,11 @@ internal static class ServiceRegistration
             client.Timeout = TimeSpan.FromSeconds(15);
             client.DefaultRequestHeaders.UserAgent.ParseAdd("Jobnet/1.0");
         });
+        services.AddHttpClient<JobSources.CornerstoneJobSource>(client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(15);
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (compatible; Jobnet/1.0)");
+        });
         services.AddHttpClient<JobSources.AvatureJobSource>(client =>
         {
             client.Timeout = TimeSpan.FromSeconds(15);
@@ -233,6 +244,7 @@ internal static class ServiceRegistration
         services.AddSingleton<JobSources.IJobSource>(sp => sp.GetRequiredService<JobSources.AmazonJobSource>());
         services.AddSingleton<JobSources.IJobSource>(sp => sp.GetRequiredService<JobSources.RisePeopleJobSource>());
         services.AddSingleton<JobSources.IJobSource>(sp => sp.GetRequiredService<JobSources.RecruiteeJobSource>());
+        services.AddSingleton<JobSources.IJobSource>(sp => sp.GetRequiredService<JobSources.CornerstoneJobSource>());
         services.AddSingleton<JobSources.IJobSource>(sp => sp.GetRequiredService<JobSources.AvatureJobSource>());
         services.AddSingleton<JobSources.IJobSource>(sp => sp.GetRequiredService<JobSources.EightfoldJobSource>());
         services.AddSingleton<JobSources.IJobSource>(sp => sp.GetRequiredService<JobSources.SiSystemsJobSource>());
@@ -263,6 +275,7 @@ internal static class ServiceRegistration
         services.AddSingleton<Workers.SummaryWorker>();
         services.AddSingleton<Workers.ResumeMatchWorker>();
         services.AddSingleton<Workers.CompanyProfileWorker>();
+        services.AddSingleton<Workers.ClassifyWorker>();
         services.AddSingleton<Workers.WorkerHost>();
         return services;
     }
