@@ -28,7 +28,7 @@ public partial class RefreshWindow : Window
         if (_filtersWindowFactory is null) return;
         var win = _filtersWindowFactory();
         win.Owner = this;
-        win.ShowDialog();
+        win.Show();
     }
 
     /// <summary>Open the Scan Times report. The window is transient, so each open builds a fresh
@@ -38,6 +38,6 @@ public partial class RefreshWindow : Window
         if (_scanTimesWindowFactory is null) return;
         var win = _scanTimesWindowFactory();
         win.Owner = this;
-        win.ShowDialog();
+        win.Show();
     }
 }

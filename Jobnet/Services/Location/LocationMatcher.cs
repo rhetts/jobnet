@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.RegularExpressions;
 
 namespace Jobnet.Services.Location;
 
@@ -37,10 +38,16 @@ public static class LocationMatcher
         "remote, na", "remote, usa & canada", "us & canada", "us/canada", "u.s. & canada",
         // Bare region tag with no city/country qualifier (e.g. Ashby's plain "North America"
         // location) — same treatment as bare " canada " above: no negative signal, so keep it.
-        " north america ",
+        // Any delimiter: "Remote (North America)" used to pass only via the old bare-"remote" fallback.
+        " north america ", " north america)", " north america,", "(north america",
         // "NAMER" = North America (Ashby tenants like Amplitude use "Remote-NAMER"). Delimited
         // forms only, so no ordinary word containing "namer" can match.
         "-namer ", " namer ", "(namer)", "/namer ", ",namer ",
+        // "CAN" = Canada (Workday/iCIMS tenants: "Remote CAN"). Delimited so the word "can" in
+        // ordinary text doesn't match.
+        "remote can ", "remote - can ", "remote, can ", "(can)",
+        // Pacific-time remote roles are workable from Vancouver; "Americas" includes Canada.
+        " pst ", " pst,", "(pst", "pacific time", "americas",
     };
 
     // Cities that are clearly NOT Vancouver area. Used to detect "definitely elsewhere"
@@ -90,11 +97,23 @@ public static class LocationMatcher
         if (Contains(n, OtherCities)) return false;
         if (Contains(n, OtherCountriesExclusive)) return false;
 
-        // Pure "Remote" with no positive or negative geography signal — accept.
-        if (n.Contains(" remote ")) return true;
-
-        return false;
+        // Remote with no place attached ("Remote", "Fully remote", "Remote (global)") — accept.
+        // Remote *somewhere* we don't recognise ("Remote - DC", "Remote - Colombia", "Illinois
+        // Remote Work") — reject. This used to accept anything containing "remote" that missed the
+        // city/country lists, which let ~500 US-state and non-Canada remote jobs through.
+        return IsPlaceFreeRemote(n);
     }
+
+    // Words that can sit next to "remote" without naming a place. Whatever is left after
+    // stripping these (and punctuation) is a place we didn't recognise.
+    private static readonly Regex PlaceFreeRemoteNoise = new(
+        @"\b(remote|fully|full|100|percent|work|working|from|home|wfh|anywhere|global|globally|worldwide|world|international|flexible|first|friendly|position|role|based|opportunity|or|and|the|in|any|location|locations)\b|[^a-z]+",
+        RegexOptions.Compiled);
+
+    /// <summary>True when <paramref name="n"/> says remote and names no place at all.</summary>
+    private static bool IsPlaceFreeRemote(string n)
+        => n.Contains("remote", StringComparison.Ordinal)
+           && PlaceFreeRemoteNoise.Replace(n, "").Length == 0;
 
     /// <summary>True if "canada" appears as a word (preceded by space, followed by space,
     /// comma, paren, slash, etc. — anything non-letter). Catches "Canada", "Canada,", "Canada)",
@@ -132,7 +151,6 @@ public static class LocationMatcher
         if (Contains(n, OtherCities)) return false;
         if (Contains(n, OtherCountriesExclusive)) return false;
         if (HasCanadaToken(n) || Contains(n, AcceptableRemote)) return true;
-        if (n.Contains(" remote ", StringComparison.Ordinal)) return true;  // pure "Remote"
-        return false;
+        return IsPlaceFreeRemote(n);  // "Remote" with no place named
     }
 }
