@@ -35,7 +35,7 @@ namespace Jobnet.Services.JobSources;
 /// that's ~23 round trips per refresh — still fast (50–200ms each) and dwarfed by Playwright's
 /// 3–30s on the AI-extract path.
 /// </summary>
-public sealed class WorkdayJobSource : IJobSource
+public sealed class WorkdayJobSource : IJobSource, IKeywordFilteredJobSource
 {
     public const string Provider = "ats_workday";
     public string AtsType => "workday";
@@ -59,7 +59,15 @@ public sealed class WorkdayJobSource : IJobSource
         _rateLimiter = rateLimiter;
     }
 
-    public async Task<IReadOnlyList<RawJobPosting>> FetchAsync(string slug, CancellationToken ct = default)
+    public Task<IReadOnlyList<RawJobPosting>> FetchAsync(string slug, CancellationToken ct = default)
+        => FetchCoreAsync(slug, "", ct);
+
+    /// <summary>Only postings matching <paramref name="keyword"/> in Workday's own search (title and
+    /// description) — for a company whose jobs share a parent's tenant.</summary>
+    public Task<IReadOnlyList<RawJobPosting>> FetchAsync(string slug, string keyword, CancellationToken ct = default)
+        => FetchCoreAsync(slug, keyword.Trim(), ct);
+
+    private async Task<IReadOnlyList<RawJobPosting>> FetchCoreAsync(string slug, string searchText, CancellationToken ct)
     {
         // Slug format: "{tenant}.wd{N}.myworkdayjobs.com/{site}". Split on the first '/' so the
         // site segment can itself contain dashes / underscores / digits.
@@ -83,7 +91,7 @@ public sealed class WorkdayJobSource : IJobSource
         // only way to learn its location facet ids. If it has one, re-query filtered to the
         // Vancouver-area values so we don't page through a global board (Mastercard: ~1050
         // postings, ~17 in the area) just to drop almost everything at the location gate.
-        var first = await PostPageAsync(endpoint, slug, new Dictionary<string, object>(), 0, 0, ct);
+        var first = await PostPageAsync(endpoint, slug, new Dictionary<string, object>(), searchText, 0, 0, ct);
         var areaFacet = PickAreaLocationFacet(first?.Facets);
         IReadOnlyList<string>? inAreaLocations = null;
         var applied = new Dictionary<string, object>();
@@ -109,7 +117,7 @@ public sealed class WorkdayJobSource : IJobSource
 
             var payload = page == 0 && first is not null
                 ? first
-                : await PostPageAsync(endpoint, slug, applied, offset, page, ct);
+                : await PostPageAsync(endpoint, slug, applied, searchText, offset, page, ct);
             var batch = ParseBatch(payload, siteBase, inAreaLocations);
             all.AddRange(batch);
 
@@ -124,7 +132,7 @@ public sealed class WorkdayJobSource : IJobSource
     }
 
     private async Task<Response?> PostPageAsync(string endpoint, string slug, Dictionary<string, object> appliedFacets,
-                                                int offset, int page, CancellationToken ct)
+                                                string searchText, int offset, int page, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
         await _rateLimiter.WaitAsync(Provider, ct);
@@ -137,7 +145,7 @@ public sealed class WorkdayJobSource : IJobSource
                 AppliedFacets = appliedFacets,
                 Limit = PageLimit,
                 Offset = offset,
-                SearchText = "",
+                SearchText = searchText,
             }),
         };
         req.Headers.Add("Accept", "application/json");
