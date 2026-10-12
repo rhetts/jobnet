@@ -129,7 +129,7 @@
                         <TextBlock>
                             <Run Text="{Binding Title, Mode=OneWay}" FontWeight="SemiBold" FontSize="14"/>
                             <Run Text=" — " Foreground="#888"/>
-                            <Run Text="{Binding CompanyName, Mode=OneWay}" Foreground="#666"/>
+                            <Run Text="{Binding CompanyDisplay, Mode=OneWay}" Foreground="#666"/>
                         </TextBlock>
                         <StackPanel Orientation="Horizontal" Margin="0,1,0,0">
                             <Border CornerRadius="2"

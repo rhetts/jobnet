@@ -22,4 +22,7 @@ public sealed class RawJobPosting
     public int? SalaryMax { get; init; }
     public string? SalaryCurrency { get; init; }
     public string? SalaryPeriod { get; init; }   // 'year' | 'month' | 'hour' | null
+    /// <summary>The actual employer when the source is a staffing agency that names its client
+    /// (S.i. Systems' "companyName"). Null for direct-employer postings.</summary>
+    public string? HiringCompany { get; init; }
 }

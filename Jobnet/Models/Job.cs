@@ -21,6 +21,10 @@ public sealed class Job
     public int? SalaryMax { get; init; }
     public string? SalaryCurrency { get; init; }
     public string? SalaryPeriod { get; init; }
+
+    /// <summary>The real employer when <see cref="CompanyId"/> is a staffing agency posting on a
+    /// client's behalf (e.g. "BC Hydro" via S.i. Systems). Null for direct postings.</summary>
+    public string? HiringCompany { get; set; }
     public int? ResumeMatchScore { get; set; }
     public string? ResumeMatchReason { get; set; }
     public InterestLevel InterestLevel { get; set; }

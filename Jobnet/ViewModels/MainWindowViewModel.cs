@@ -565,7 +565,7 @@ public partial class MainWindowViewModel : ObservableObject
     {
         if (_keywordTokens.Length == 0) return 0;
         var title   = jvm.Job.Title?.ToLowerInvariant() ?? "";
-        var company = jvm.CompanyName?.ToLowerInvariant() ?? "";
+        var company = jvm.CompanyDisplay.ToLowerInvariant();
         var desc    = jvm.Job.DescriptionSnippet?.ToLowerInvariant() ?? "";
         var summary = jvm.Job.Summary?.ToLowerInvariant() ?? "";
         var loc     = jvm.Job.Location?.ToLowerInvariant() ?? "";
@@ -870,7 +870,7 @@ public partial class MainWindowViewModel : ObservableObject
         if (job is null || _coverLetterWindowFactory is null) return;
         var window = _coverLetterWindowFactory();
         if (window.DataContext is CoverLetterViewModel vm)
-            vm.Load(job.Job, job.CompanyName);
+            vm.Load(job.Job, job.EmployerName);
         window.Owner = Application.Current.MainWindow;
         window.Show();   // non-modal — user may switch back to the job list
     }
