@@ -781,22 +781,37 @@ public partial class MainWindowViewModel : ObservableObject
         }
     }
 
-    [RelayCommand]
-    private void OpenSettings()
+    /// <summary>Windows opened from the toolbar, by type. All of them are non-modal, so a second
+    /// click on the same button brings the open one to the front instead of stacking a copy.</summary>
+    private readonly Dictionary<Type, Window> _openWindows = new();
+
+    /// <summary>Show a toolbar window non-modally, or re-activate it if it's already open.
+    /// <paramref name="init"/> runs once, on a freshly created window only.</summary>
+    private void ShowSingle<T>(Func<T>? factory, Action<T>? init = null) where T : Window
     {
-        if (_settingsWindowFactory is null) return;
-        var window = _settingsWindowFactory();
+        if (factory is null) return;
+        if (_openWindows.TryGetValue(typeof(T), out var open))
+        {
+            if (open.WindowState == WindowState.Minimized) open.WindowState = WindowState.Normal;
+            open.Activate();
+            return;
+        }
+        var window = factory();
+        init?.Invoke(window);
         window.Owner = Application.Current.MainWindow;
-        window.ShowDialog();
+        window.Closed += (_, _) => _openWindows.Remove(typeof(T));
+        _openWindows[typeof(T)] = window;
+        window.Show();
     }
+
+    [RelayCommand]
+    private void OpenSettings() => ShowSingle(_settingsWindowFactory);
 
     private bool _refreshVmSubscribed;
 
     [RelayCommand]
-    private void OpenRefresh()
+    private void OpenRefresh() => ShowSingle(_refreshWindowFactory, window =>
     {
-        if (_refreshWindowFactory is null) return;
-        var window = _refreshWindowFactory();
         // The RefreshViewModel is a singleton — only subscribe Completed once, otherwise
         // every reopen would add another LoadFromDataService handler.
         if (!_refreshVmSubscribed && window.DataContext is RefreshViewModel rvm)
@@ -804,29 +819,17 @@ public partial class MainWindowViewModel : ObservableObject
             rvm.Completed += LoadFromDataService;
             _refreshVmSubscribed = true;
         }
-        window.Owner = Application.Current.MainWindow;
-        window.ShowDialog();
-    }
+    });
 
     [RelayCommand]
-    private void OpenResume()
+    private void OpenResume() => ShowSingle(_resumeWindowFactory, window =>
     {
-        if (_resumeWindowFactory is null) return;
-        var window = _resumeWindowFactory();
         if (window.DataContext is ResumeViewModel rvm)
             rvm.Completed += LoadFromDataService;
-        window.Owner = Application.Current.MainWindow;
-        window.ShowDialog();
-    }
+    });
 
     [RelayCommand]
-    private void OpenSources()
-    {
-        if (_sourcesWindowFactory is null) return;
-        var window = _sourcesWindowFactory();
-        window.Owner = Application.Current.MainWindow;
-        window.ShowDialog();
-    }
+    private void OpenSources() => ShowSingle(_sourcesWindowFactory);
 
     /// <summary>Ask the user to paste a job-posting URL, then open the Cover Letter window in
     /// URL mode so the AI fetches the page and writes a letter on the spot.</summary>
@@ -855,13 +858,7 @@ public partial class MainWindowViewModel : ObservableObject
     }
 
     [RelayCommand]
-    private void OpenStats()
-    {
-        if (_statsWindowFactory is null) return;
-        var window = _statsWindowFactory();
-        window.Owner = Application.Current.MainWindow;
-        window.ShowDialog();
-    }
+    private void OpenStats() => ShowSingle(_statsWindowFactory);
 
 
     [RelayCommand]
@@ -999,10 +996,8 @@ public partial class MainWindowViewModel : ObservableObject
     }
 
     [RelayCommand]
-    private void OpenSavedFilters()
+    private void OpenSavedFilters() => ShowSingle(_savedFiltersWindowFactory, window =>
     {
-        if (_savedFiltersWindowFactory is null) return;
-        var window = _savedFiltersWindowFactory();
         if (window.DataContext is SavedFiltersViewModel vm)
         {
             vm.Reload();
@@ -1021,10 +1016,9 @@ public partial class MainWindowViewModel : ObservableObject
                 window.Close();
             };
         }
-        window.Owner = Application.Current.MainWindow;
-        window.ShowDialog();
-        ReloadSavedFilterList();
-    }
+        // Non-modal now: refresh the dropdown when the window closes, not right after opening it.
+        window.Closed += (_, _) => ReloadSavedFilterList();
+    });
 
     public void OpenCompanyProfile(int companyId)
     {

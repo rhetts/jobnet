@@ -195,6 +195,20 @@ public sealed class TestCommand : ICliCommand
         AssertLocationRejected("Remote, EMEA");
         AssertLocationRejected("New York, NY");
         AssertLocationRejected("Toronto, ON");
+        // Remote somewhere unrecognised — used to slip through the bare-"remote" fallback.
+        AssertLocationRejected("Remote - DC");
+        AssertLocationRejected("Remote - TX");
+        AssertLocationRejected("Remote - Colombia");
+        AssertLocationRejected("Illinois Remote Work, More...");
+        AssertLocationRejected("Remote - US: Select locations");
+        AssertLocationRejected("Pakistan - Remote");
+        // Remote with no place named stays in.
+        AssertLocationKept("Fully Remote");
+        AssertLocationKept("Remote (global)");
+        AssertLocationKept("Remote - Anywhere");
+        AssertLocationKept("Remote - Canada Only");
+        AssertLocationKept("Remote CAN");
+        AssertLocationKept("Remote (PST or MT timezone)");
         Console.WriteLine();
     }
 

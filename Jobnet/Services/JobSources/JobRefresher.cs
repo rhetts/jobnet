@@ -334,6 +334,19 @@ public sealed class JobRefresher : IJobRefresher
         string sourceStage;     // refresh_attempt.stage value — finer-grained for telemetry
         var stageHadFailure = false;
         var healthTouched = false;     // SetHealth called earlier in this refresh (ATS detection)
+        var brandFilteredAtSource = false;
+
+        // Shared-board brand filter: on a source that can search server-side, pass the company's
+        // ats_department_filter as the keyword instead of filtering by department afterwards.
+        async Task<IReadOnlyList<RawJobPosting>> FetchNativeAsync(IJobSource src, Company c, string slug, CancellationToken token)
+        {
+            if (!string.IsNullOrWhiteSpace(c.AtsDepartmentFilter) && src is IKeywordFilteredJobSource kw)
+            {
+                brandFilteredAtSource = true;
+                return await kw.FetchAsync(slug, c.AtsDepartmentFilter!, token);
+            }
+            return await src.FetchAsync(slug, token);
+        }
         var lastStageResult = Logging.AttemptResult.Success;
         var lastStageHttp = (int?)null;
 
@@ -346,7 +359,7 @@ public sealed class JobRefresher : IJobRefresher
             sourceStage = $"ats_{native.AtsType}";
             try
             {
-                var jobs = await native.FetchAsync(company.AtsSlug, ct);
+                var jobs = await FetchNativeAsync(native, company, company.AtsSlug, ct);
                 sw.Stop();
                 allRaw.AddRange(jobs);
                 lastStageResult = jobs.Count == 0 ? Logging.AttemptResult.Empty : Logging.AttemptResult.Success;
@@ -425,7 +438,7 @@ public sealed class JobRefresher : IJobRefresher
                 sourceStage = $"ats_{detectedNative.AtsType}";
                 try
                 {
-                    var jobs = await detectedNative.FetchAsync(detectedSlug, ct);
+                    var jobs = await FetchNativeAsync(detectedNative, company, detectedSlug, ct);
                     sw2.Stop();
                     allRaw.AddRange(jobs);
                     _runs.LogAttempt(runId, company.Id, Logging.AttemptStage.AtsApi, detectedNative.AtsType,
@@ -533,8 +546,10 @@ public sealed class JobRefresher : IJobRefresher
 
         // Some ATS boards are shared across brands (e.g. Match Group's Lever slug lists
         // Hinge, Tinder, Plenty of Fish, etc.). If the company has a department filter set,
-        // keep only postings whose ATS-reported department matches.
-        if (!string.IsNullOrWhiteSpace(company.AtsDepartmentFilter))
+        // keep only postings whose ATS-reported department matches. Sources that searched by
+        // the filter server-side (FetchNativeAsync) already narrowed the list — and report no
+        // department to match on — so they skip this.
+        if (!string.IsNullOrWhiteSpace(company.AtsDepartmentFilter) && !brandFilteredAtSource)
         {
             var brand = company.AtsDepartmentFilter!;
             allRaw = allRaw

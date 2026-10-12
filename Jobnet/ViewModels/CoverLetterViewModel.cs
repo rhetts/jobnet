@@ -81,7 +81,7 @@ public partial class CoverLetterViewModel : ObservableObject
             {
                 LetterText = "";
                 _lastModel = null;
-                StatusLine = "Click Generate to create a cover letter for this job.";
+                StatusLine = "Generating cover letter...";
             }
             else
             {
@@ -93,6 +93,10 @@ public partial class CoverLetterViewModel : ObservableObject
             }
         }
         finally { _suppressTextSave = false; }
+
+        // No letter yet → start generating straight away, same as the URL flow. A saved letter
+        // is left alone (it may have been hand-edited); Generate regenerates it on request.
+        if (existing is null) GenerateCommand.Execute(null);
     }
 
     /// <summary>URL-based entry point. No Job exists yet; the AI is asked to identify the role
