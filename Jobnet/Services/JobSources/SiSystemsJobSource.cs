@@ -167,7 +167,7 @@ public sealed class SiSystemsJobSource : IJobSource
                 RemoteType = null, // not exposed by this endpoint
                 EmploymentType = j.JobType,
                 Department = j.Expertise,
-                DescriptionSnippet = string.IsNullOrWhiteSpace(j.CompanyName) ? null : $"Client: {j.CompanyName}",
+                HiringCompany = string.IsNullOrWhiteSpace(j.CompanyName) ? null : j.CompanyName!.Trim(),
                 SalaryRange = string.IsNullOrWhiteSpace(j.PayRate) ? null : j.PayRate!.Trim(),
             });
         }

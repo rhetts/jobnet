@@ -20,7 +20,8 @@ public sealed class JobRepository : IJobRepository
                applied_at AS AppliedAt,
                viewed_at AS ViewedAt,
                source, interest_level, notes,
-               extraction_version, date_first_seen, date_last_seen, date_removed, is_active
+               extraction_version, date_first_seen, date_last_seen, date_removed, is_active,
+               hiring_company AS HiringCompany
         FROM jobs";
 
     private readonly IDbConnectionFactory _connections;
@@ -165,13 +166,13 @@ public sealed class JobRepository : IJobRepository
                                   description_snippet, salary_range,
                                   salary_min, salary_max, salary_currency, salary_period,
                                   source, source_stage, interest_level,
-                                  date_first_seen, date_last_seen, is_active)
+                                  date_first_seen, date_last_seen, is_active, hiring_company)
                 VALUES (@CompanyId, @HashKey, @HashTier, @Title, @Url, @Location,
                         @RemoteType, @EmploymentType, @LevelId,
                         @DescriptionSnippet, @SalaryRange,
                         @SalaryMin, @SalaryMax, @SalaryCurrency, @SalaryPeriod,
                         @Source, @SourceStage, @InterestLevelText,
-                        @DateFirstSeenText, @DateLastSeenText, 1);
+                        @DateFirstSeenText, @DateLastSeenText, 1, @HiringCompany);
                 SELECT last_insert_rowid();",
                 new
                 {
@@ -184,6 +185,7 @@ public sealed class JobRepository : IJobRepository
                     InterestLevelText = ToDbText(job.InterestLevel),
                     DateFirstSeenText = job.DateFirstSeen.ToUniversalTime().ToString("o"),
                     DateLastSeenText = job.DateLastSeen.ToUniversalTime().ToString("o"),
+                    job.HiringCompany,
                 });
 
             if (job.AreaIds.Count > 0) _areas.SetAreasForJob(newId, job.AreaIds);
@@ -225,6 +227,7 @@ public sealed class JobRepository : IJobRepository
                 salary_period   = COALESCE(@SalaryPeriod, salary_period),
                 url = COALESCE(@Url, url),
                 source_stage = COALESCE(@SourceStage, source_stage),
+                hiring_company = COALESCE(@HiringCompany, hiring_company),
                 is_active = 1,
                 date_removed = NULL
             WHERE id = @Id",
@@ -236,6 +239,7 @@ public sealed class JobRepository : IJobRepository
                 job.LevelId, Description = job.DescriptionSnippet, job.Url,
                 job.SalaryMin, job.SalaryMax, job.SalaryCurrency, job.SalaryPeriod,
                 SourceStage = job.SourceStage,
+                job.HiringCompany,
             });
         if (job.AreaIds.Count > 0) _areas.SetAreasForJob(existingId.Value, job.AreaIds);
         return (existingId.Value, false);
@@ -440,6 +444,7 @@ public sealed class JobRepository : IJobRepository
         DateLastSeen = DateTime.Parse(r.DateLastSeen).ToUniversalTime(),
         DateRemoved = string.IsNullOrEmpty(r.DateRemoved) ? null : DateTime.Parse(r.DateRemoved).ToUniversalTime(),
         IsActive = r.IsActive != 0,
+        HiringCompany = r.HiringCompany,
     };
 
     public int ApplyGreylist(string? rawGreylist)
@@ -529,5 +534,6 @@ public sealed class JobRepository : IJobRepository
         public string DateLastSeen { get; set; } = string.Empty;
         public string? DateRemoved { get; set; }
         public int IsActive { get; set; }
+        public string? HiringCompany { get; set; }
     }
 }

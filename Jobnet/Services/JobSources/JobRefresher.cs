@@ -603,6 +603,7 @@ public sealed class JobRefresher : IJobRefresher
                 SalaryMax = r.SalaryMax,
                 SalaryCurrency = r.SalaryCurrency,
                 SalaryPeriod = r.SalaryPeriod,
+                HiringCompany = r.HiringCompany,
                 InterestLevel = InterestLevel.Neutral,
                 DateFirstSeen = DateTime.UtcNow,
                 DateLastSeen = DateTime.UtcNow,

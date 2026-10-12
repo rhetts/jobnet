@@ -12,6 +12,14 @@ public partial class JobViewModel : ObservableObject
 {
     public Job Job { get; }
     public string CompanyName { get; }
+
+    /// <summary>Who the job is actually for: the agency's client when known, else the company
+    /// it was scanned from. Used for cover letters.</summary>
+    public string EmployerName => Job.HiringCompany ?? CompanyName;
+
+    /// <summary>Card label. "BC Hydro (via S.i. Systems)" for agency postings that name the
+    /// client, otherwise just the company.</summary>
+    public string CompanyDisplay => Job.HiringCompany is { } client ? $"{client} (via {CompanyName})" : CompanyName;
     public string? CompanyCity { get; }
     public int CompositeScore { get; }
     public string LevelName { get; }
