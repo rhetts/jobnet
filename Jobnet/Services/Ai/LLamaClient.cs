@@ -42,6 +42,13 @@ public sealed class LLamaClient : IAiClient, IDisposable
     private string? _loadedPath;
     private bool _disposed;
 
+    /// <summary>Last time an inference finished. The idle timer unloads the model once it has gone
+    /// unused for <c>llama_idle_unload_minutes</c> (default 10) — the 8B model holds ~5 GB, and the
+    /// workers only touch it in bursts.</summary>
+    private DateTime _lastUsedUtc = DateTime.UtcNow;
+    private Timer? _idleTimer;
+    private static readonly TimeSpan IdleCheckInterval = TimeSpan.FromMinutes(1);
+
     public LLamaClient(IConfigRepository config, IApiUsageTracker usage)
     {
         _config = config;
@@ -144,6 +151,7 @@ public sealed class LLamaClient : IAiClient, IDisposable
         }
         finally
         {
+            _lastUsedUtc = DateTime.UtcNow;
             _inferenceGate.Release();
         }
     }
@@ -282,6 +290,8 @@ public sealed class LLamaClient : IAiClient, IDisposable
                     "Either install the missing dependency or switch to AI mode = Online in Settings.");
             }
             _loadedPath = path;
+            _lastUsedUtc = DateTime.UtcNow;
+            _idleTimer ??= new Timer(_ => UnloadIfIdle(), null, IdleCheckInterval, IdleCheckInterval);
             return _weights;
         }
     }
@@ -337,10 +347,40 @@ public sealed class LLamaClient : IAiClient, IDisposable
     /// already-disposed <see cref="_inferenceGate"/> and threw ObjectDisposedException — unhandled,
     /// mid-shutdown, which crashed the shutdown sequence itself and left Jobnet.exe running forever
     /// after every window closed (see jobnet.log entries 2026-08-20 / 2026-09-01).</summary>
+    /// <summary>Timer callback: free the model if nothing has used it for the configured idle time
+    /// and no inference is running right now. The next call reloads it (a few seconds). Set
+    /// <c>llama_idle_unload_minutes</c> to 0 to keep it loaded for the life of the app.</summary>
+    private void UnloadIfIdle()
+    {
+        if (_disposed || _weights is null) return;
+        var minutes = int.TryParse(_config.GetOrDefault("llama_idle_unload_minutes", "10"), out var m) ? m : 10;
+        if (minutes <= 0 || DateTime.UtcNow - _lastUsedUtc < TimeSpan.FromMinutes(minutes)) return;
+
+        try
+        {
+            if (!_inferenceGate.Wait(0)) return;   // in use right now — try again next tick
+        }
+        catch (ObjectDisposedException) { return; }  // raced with app shutdown
+        try
+        {
+            lock (_loadLock)
+            {
+                if (_weights is null) return;
+                _weights.Dispose();
+                _weights = null;
+                _loadedParams = null;
+                _loadedPath = null;
+            }
+        }
+        finally { _inferenceGate.Release(); }
+        GC.Collect();
+    }
+
     public void Dispose()
     {
         if (_disposed) return;
         _disposed = true;
+        _idleTimer?.Dispose();
 
         var acquired = _inferenceGate.Wait(TimeSpan.FromSeconds(10));
         try
